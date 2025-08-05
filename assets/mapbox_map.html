@@ -1,0 +1,83 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Mapbox GL JS Map</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+    #map {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    // REPLACE THIS WITH YOUR ACTUAL MAPBOX ACCESS TOKEN
+    mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
+
+    const map = new mapboxgl.Map({
+      container: 'map', // container ID
+      style: 'mapbox://styles/mapbox/streets-v12', // style URL
+      center: [78.9629, 20.5937], // starting position [lng, lat] (India)
+      zoom: 5 // starting zoom
+    });
+
+    // Add a simple marker
+    new mapboxgl.Marker()
+      .setLngLat([78.4867, 17.3850]) // Hyderabad coordinates
+      .setPopup(new mapboxgl.Popup().setHTML("<h1>Hello from Mapbox!</h1>")) // add popup
+      .addTo(map);
+
+    // Function to handle messages from React Native
+    function handleMessage(event) {
+      console.log("Message received in WebView:", event.data);
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'initialLoad' && data.initialRegion) {
+        const { latitude, longitude } = data.initialRegion;
+        map.flyTo({ center: [longitude, latitude], zoom: 13 });
+      } else if (data.type === 'markerUpdate' && data.markerCoordinate) {
+        const { latitude, longitude } = data.markerCoordinate;
+        // For simplicity, we'll just fly to the new marker location
+        map.flyTo({ center: [longitude, latitude], zoom: map.getZoom() });
+        // You would typically update an existing marker or add a new one here
+      }
+    }
+
+    // Add event listener for messages from React Native
+    if (window.ReactNativeWebView) {
+      window.addEventListener('message', handleMessage);
+    } else {
+      window.addEventListener('message', (event) => {
+         handleMessage(event)
+      });
+    }
+
+    map.on('load', () => {
+      console.log("Mapbox GL JS map loaded.");
+      // You can send a message back to React Native here if needed
+    });
+
+    map.on('click', (e) => {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          latitude: e.lngLat.lat,
+          longitude: e.lngLat.lng
+        }));
+      }
+    });
+
+  </script>
+</body>
+</html>

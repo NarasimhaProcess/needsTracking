@@ -1,0 +1,118 @@
+ <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Customer Map</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+        <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+        <style>
+            body { margin: 0; padding: 0; }
+            #mapid { width: 100vw; height: 100vh; background-color: #f0f0f0; border: 2px solid red; }
+            .leaflet-routing-container { display: none; } /* Hide routing control UI */
+            #totalDistance {
+                position: absolute;
+                bottom: 10px;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: white;
+                padding: 3px 8px; /* Reduced padding */
+                border-radius: 3px; /* Reduced border-radius */
+                z-index: 1000;
+                font-weight: bold;
+                white-space: nowrap; /* Ensure it stays on one line */
+                font-size: 14px; /* Slightly smaller font size */
+            }
+        </style>
+    </head>
+    <body>
+        <div id="mapid"></div>
+        <div id="totalDistance"></div>
+        <script>
+            var map = L.map('mapid').setView([0, 0], 2); // Default view, will be adjusted
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            var customerLocations = [{"latitude":17.394721,"longitude":78.3755374,"name":"Test 25th 1","mobile":"9594949","book_no":"5556","id":23},{"latitude":17.3955531,"longitude":78.3762232,"name":"Narasimhaapp1_cus1","mobile":"979797974","book_no":"123","id":7},{"latitude":17.3948704,"longitude":78.3754672,"name":"Narasimha","mobile":"65689","book_no":"123","id":10},{"latitude":17.3946776,"longitude":78.3755598,"name":"Rgh","mobile":"35555","book_no":"5644","id":21},{"latitude":17.3955948,"longitude":78.3769343,"name":"Ffguj","mobile":"5586","book_no":"5555","id":22},{"latitude":17.3947049,"longitude":78.3754526,"name":"Tesrf 420p","mobile":"565","book_no":"4444","id":25},{"latitude":17.3964758638706,"longitude":78.3759817108512,"name":"Subhash","mobile":"9826853589","book_no":"1234","id":27},{"latitude":17.3994388057585,"longitude":78.3766167238355,"name":"Test 638pm","mobile":"89595959","book_no":"444","id":26},{"latitude":17.3961827839095,"longitude":78.375563621521,"name":"JYOTSNA","mobile":"8985947253","book_no":"65","id":28},{"latitude":17.3937553816801,"longitude":78.3778446533564,"name":"JYOTSNA 2","mobile":"8985947253","book_no":"678","id":32},{"latitude":16.3532406670295,"longitude":78.0311670305673,"name":"JYO","mobile":"96939291942","book_no":"098","id":33},{"latitude":17.45104411914,"longitude":78.4690761566162,"name":"Test 25_3.18p","mobile":"66494848","book_no":"456","id":24}];
+
+            console.log('WebView: customerLocations received:', customerLocations);
+            alert('WebView script is running!');
+
+            if (customerLocations.length > 0) {
+                var waypoints = customerLocations.map(function(loc) {
+                    return L.latLng(loc.latitude, loc.longitude);
+                });
+
+                // Create routing control
+                var routingControl = L.Routing.control({
+                    waypoints: waypoints,
+                    routeWhileDragging: false,
+                    showAlternatives: false,
+                    addWaypoints: false,
+                    draggableWaypoints: false,
+                    fitSelectedRoutes: true,
+                    show: false, // Hide the routing instructions panel
+                    lineOptions: {
+                        styles: [{
+                            color: 'blue',
+                            weight: 5
+                        }]
+                    },
+                    router: L.Routing.osrmv1({
+                        serviceUrl: 'https://router.project-osrm.org/route/v1'
+                    })
+                }).addTo(map);
+
+                // Fit map to all markers and the route
+                routingControl.on('routesfound', function(e) {
+                    var routes = e.routes;
+                    console.log('Leaflet Routing Machine: Routes found', routes);
+                    if (routes.length > 0) {
+                        var bounds = L.latLngBounds([]);
+                        routes[0].coordinates.forEach(function(coord) {
+                            bounds.extend(coord);
+                        });
+                        customerLocations.forEach(function(loc) {
+                            bounds.extend(L.latLng(loc.latitude, loc.longitude));
+                        });
+                        map.fitBounds(bounds);
+
+                        // Add markers with popups
+                        customerLocations.forEach(function(location) {
+                            L.marker([location.latitude, location.longitude])
+                                .addTo(map)
+                                .bindPopup(
+                                   '<b>' + (location.name || 'Customer') + '</b><br/>' +
+'Mobile: ' + (location.mobile || 'N/A') + '<br/>' +
+'Card No: ' + (location.book_no || 'N/A') + '<br/>' +
+'<button onclick="window.ReactNativeWebView.postMessage(\'view_details:\' + location.id)">View Details</button>'
+
+                                );
+                        });
+
+                        // Display total distance
+                        var totalDistance = (routes[0].summary.totalDistance / 1000).toFixed(2);
+                        document.getElementById('totalDistance').innerHTML = 'Total Distance: ' + totalDistance + ' km';
+
+                        // Display total duration (optional)
+                        var totalTime = (routes[0].summary.totalTime / 60).toFixed(0);
+                        console.log('Total Time:', totalTime, 'minutes');
+                    } else {
+                        console.log('Leaflet Routing Machine: No routes found.');
+                        document.getElementById('totalDistance').innerHTML = 'No route found.';
+                    }
+                });
+                routingControl.on('routingerror', function(e) {
+                    console.error('Leaflet Routing Machine Error:', e.error.message);
+                    document.getElementById('totalDistance').innerHTML = 'Routing Error: ' + e.error.message;
+                });
+            } else {
+                console.log('No customer locations to display.');
+                document.getElementById('totalDistance').innerHTML = 'No customer locations to display.';
+            }
+        </script>
+    </body>
+    </html>

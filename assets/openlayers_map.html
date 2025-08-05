@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OpenLayers Map</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* Prevent scrolling issues */
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      background-color: #e0e0e0; /* Light gray background to see if div renders */
+    }
+    #error-message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: red;
+      font-size: 18px;
+      text-align: center;
+      background-color: rgba(255, 255, 255, 0.8);
+      padding: 20px;
+      border-radius: 10px;
+      display: none; /* Hidden by default */
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="error-message"></div>
+  <script>
+    const errorMessageDiv = document.getElementById('error-message');
+
+    try {
+      const map = new ol.Map({
+        target: 'map',
+        layers: [
+          new ol.layer.Tile({
+            source: new ol.source.OSM()
+          })
+        ],
+        view: new ol.View({
+          center: ol.proj.fromLonLat([78.9629, 20.5937]), // Centered on India [longitude, latitude]
+          zoom: 5
+        })
+      });
+
+      let markerVectorLayer;
+
+      function addOrUpdateMarker(longitude, latitude) {
+        if (markerVectorLayer) {
+          map.removeLayer(markerVectorLayer);
+        }
+
+        const markerFeature = new ol.Feature({
+          geometry: new ol.geom.Point(ol.proj.fromLonLat([longitude, latitude]))
+        });
+
+        const markerStyle = new ol.style.Style({
+          image: new ol.style.Circle({
+            radius: 7,
+            fill: new ol.style.Fill({
+              color: 'red'
+            }),
+            stroke: new ol.style.Stroke({
+              color: 'white',
+              width: 2
+            })
+          })
+        });
+
+        markerFeature.setStyle(markerStyle);
+
+        const vectorSource = new ol.source.Vector({
+          features: [markerFeature]
+        });
+
+        markerVectorLayer = new ol.layer.Vector({
+          source: vectorSource
+        });
+
+        map.addLayer(markerVectorLayer);
+      }
+
+      // Add a sample marker initially
+      addOrUpdateMarker(78.4867, 17.3850); // Hyderabad coordinates
+
+      // Function to handle messages from React Native
+      function handleMessage(event) {
+        console.log("Message received in WebView:", event.data);
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'initialLoad' && data.initialRegion) {
+          const { latitude, longitude, latitudeDelta, longitudeDelta } = data.initialRegion;
+          map.getView().setCenter(ol.proj.fromLonLat([longitude, latitude]));
+          map.getView().setZoom(13); // Default zoom, adjust as needed
+          addOrUpdateMarker(longitude, latitude);
+        } else if (data.type === 'markerUpdate' && data.markerCoordinate) {
+          const { latitude, longitude } = data.markerCoordinate;
+          map.getView().setCenter(ol.proj.fromLonLat([longitude, latitude]));
+          addOrUpdateMarker(longitude, latitude);
+        }
+      }
+
+      // Add event listener for messages from React Native
+      if (window.ReactNativeWebView) {
+        window.addEventListener('message', handleMessage);
+      } else {
+        window.addEventListener('message', (event) => {
+           handleMessage(event)
+        });
+      }
+
+      map.on('click', function(e) {
+        if (window.ReactNativeWebView) {
+          const coords = ol.proj.toLonLat(e.coordinate);
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            latitude: coords[1],
+            longitude: coords[0]
+          }));
+        }
+      });
+
+      map.on('rendercomplete', () => {
+        console.log("OpenLayers map render complete.");
+      });
+
+    } catch (error) {
+      console.error("Error initializing OpenLayers map:", error);
+      errorMessageDiv.style.display = 'block';
+      errorMessageDiv.innerText = `Map failed to load: ${error.message}. Check console for details.`;
+    }
+  </script>
+</body>
+</html>
