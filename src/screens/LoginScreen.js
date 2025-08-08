@@ -16,6 +16,7 @@ import { supabase } from '../services/supabase';
 export default function LoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mediaUrl, setMediaUrl] = useState(''); // Renamed from bucketUrl
   const [loading, setLoading] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
 
@@ -28,19 +29,7 @@ export default function LoginScreen({ navigation, route }) {
     setLoading(true);
     try {
       // First, check if user exists in customers table
-      const { data: customerData, error: customerError } = await supabase
-        .from('customers')
-        .select('id, email, name')
-        .eq('email', email)
-        .single();
-
-      if (customerError || !customerData) {
-        Alert.alert('Login Error', 'User not found. Please check your email or sign up.');
-        setLoading(false);
-        return;
-      }
-
-      // Now try to authenticate with Supabase auth
+      // Authenticate with Supabase auth
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -50,14 +39,47 @@ export default function LoginScreen({ navigation, route }) {
         Alert.alert('Login Error', error.message);
       } else {
         console.log('Login successful:', data.user);
-        
-        // Use the user data from customers table instead of auth user
+
+        // Check if a customer record exists for this user
+        let { data: customerData, error: customerError } = await supabase
+          .from('customers')
+          .select('id, email, name')
+          .eq('user_id', data.user.id) // Use auth user ID
+          .maybeSingle();
+
+        if (customerError) {
+          console.error("Error checking customer existence:", customerError.message);
+          Alert.alert("Error", "An error occurred while checking customer data.");
+          setLoading(false);
+          return;
+        }
+
+        // If no customer data, prevent login and show alert
+        if (!customerData) {
+          Alert.alert('Login Error', 'User not found in customer records. Please contact admin.');
+          setLoading(false);
+          return;
+        }
+
+        // Use the customer data (existing)
         const authenticatedUser = {
           id: customerData.id,
           email: customerData.email,
           name: customerData.name,
-          // Add other fields from your customer table as needed
+          customerId: customerData.id,
         };
+
+        // Update Supabase user metadata with customerId
+        const { error: updateError } = await supabase.auth.updateUser({
+          data: { customerId: customerData.id },
+        });
+
+        if (updateError) {
+          console.error("Error updating user metadata:", updateError.message);
+          Alert.alert("Error", "Failed to update user profile with customer ID.");
+          setLoading(false);
+          return;
+        }
         
         // Call the auth success callback if provided
         if (onAuthSuccess) {
@@ -65,7 +87,7 @@ export default function LoginScreen({ navigation, route }) {
         }
 
         // Navigate to Dashboard or other screen
-        
+        // The App.js navigation handles this based on session state
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
@@ -125,6 +147,18 @@ export default function LoginScreen({ navigation, route }) {
               onChangeText={setPassword}
               secureTextEntry
               autoCapitalize="none"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Media URL (Optional)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter custom media URL"
+              value={mediaUrl}
+              onChangeText={setMediaUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
           </View>
 
