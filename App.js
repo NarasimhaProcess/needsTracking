@@ -13,6 +13,7 @@ import WelcomeScreen from './src/screens/WelcomeScreen';
 import AccountScreen from './src/screens/AccountScreen';
 import ProductScreen from './src/screens/ProductScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
 // Import services
 import { supabase } from './src/services/supabase';
@@ -25,28 +26,97 @@ function AuthStack({ route }) {
   {console.log('AuthStack - customerId:', customerId)}
   return (
     <Tab.Navigator>
-      <Tab.Screen name="Account" component={AccountScreen} initialParams={{ session: session, customerId: customerId }} options={{ headerShown: false }} />
-      <Tab.Screen name="Products" component={ProductScreen} initialParams={{ session: session, customerId: customerId }} options={{ headerShown: false }} />
-      <Tab.Screen name="Profile" component={ProfileScreen} initialParams={{ session: session, customerId: customerId }} options={{ headerShown: false }} />
+      <Tab.Screen
+        name="Account"
+        component={AccountScreen}
+        initialParams={{ session: session, customerId: customerId }}
+        options={{
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="home" color={color} size={size} /> // Example icon
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Products"
+        component={ProductScreen}
+        initialParams={{ session: session, customerId: customerId }}
+        options={{
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="shopping-bag" color={color} size={size} /> // Example icon
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        initialParams={{ session: session, customerId: customerId }}
+        options={{
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="user" color={color} size={size} /> // Example icon
+          ),
+        }}
+      />
     </Tab.Navigator>
   );
 }
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [appCustomerId, setAppCustomerId] = useState(null); // New state for customerId from DB
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchSession = async () => {
+    const fetchAndSetSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
+      if (session && session.user) {
+        // Fetch customerId from customers table
+        const { data: customerData, error } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('email', session.user.email)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Error fetching customerId in App.js:", error.message);
+          setAppCustomerId(null); // Ensure it's null on error
+        } else if (customerData) {
+          setAppCustomerId(customerData.id);
+        } else {
+          setAppCustomerId(null); // User not found in customers table
+        }
+      } else {
+        setAppCustomerId(null); // No session or user
+      }
       setLoading(false);
     };
 
-    fetchSession();
+    fetchAndSetSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
+      if (session && session.user) {
+        // Fetch customerId from customers table on auth state change
+        const { data: customerData, error } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('email', session.user.email)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Error fetching customerId on auth state change in App.js:", error.message);
+          setAppCustomerId(null);
+        } else if (customerData) {
+          setAppCustomerId(customerData.id);
+        } else {
+          setAppCustomerId(null); // User not found in customers table
+        }
+      } else {
+        setAppCustomerId(null); // No session or user
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -64,8 +134,8 @@ export default function App() {
     <NavigationContainer>
       <StatusBar style="auto" />
       <Stack.Navigator>
-        {session && session.user ? (
-          <Stack.Screen name="Auth" component={AuthStack} initialParams={{ session: session, customerId: session.user.user_metadata.customerId }} options={{ headerShown: false }}/>
+        {session && session.user && appCustomerId ? (
+          <Stack.Screen name="Auth" component={AuthStack} initialParams={{ session: session, customerId: appCustomerId }} options={{ headerShown: false }}/>
         ) : (
           <>
             <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }}/>

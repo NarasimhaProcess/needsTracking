@@ -51,7 +51,7 @@ export async function createProduct(productData) {
 }
 
 export async function saveProductMedia(productId, mediaData, mediaType) {
-  const bucketToUse = 'productsmedia'; // Default bucket for uploads
+  const bucketToUse = 'locationtracker'; // Changed from 'productsmedia'
 
   // mediaData can be a file URI or a direct URL
   if (mediaType === 'url') {
@@ -71,14 +71,20 @@ export async function saveProductMedia(productId, mediaData, mediaType) {
     }
     return mediaData;
   } else { // Assume it's a file URI for upload
+    console.log("Attempting file upload for:", mediaData); // Log the URI
     const fileExtension = mediaData.split('.').pop();
     const fileName = `${Date.now()}.${fileExtension}`;
     const filePath = `product_media/${productId}/${fileName}`;
+    console.log("Uploading to filePath:", filePath); // Log the target path
 
     try {
+      console.log("Fetching mediaData to create blob..."); // Log before fetch
       const response = await fetch(mediaData);
+      console.log("Fetch response status:", response.status); // Log fetch status
       const blob = await response.blob();
+      console.log("Blob created successfully."); // Log blob creation
 
+      console.log("Attempting Supabase storage upload..."); // Log before upload
       const { data, error } = await supabase.storage
         .from(bucketToUse)
         .upload(filePath, blob, {
@@ -88,9 +94,10 @@ export async function saveProductMedia(productId, mediaData, mediaType) {
         });
 
       if (error) {
-        console.error('Error uploading media:', error.message);
+        console.error('Error uploading media (Supabase storage error):', error.message);
         return null;
       }
+      console.log("Supabase storage upload successful:", data); // Log success
 
       // Store the relative file path, not the full public URL
       const { error: insertError } = await supabase
@@ -111,7 +118,7 @@ export async function saveProductMedia(productId, mediaData, mediaType) {
       // Return the full public URL for immediate use in the UI
       return supabase.storage.from(bucketToUse).getPublicUrl(filePath).data.publicUrl;
     } catch (error) {
-      console.error('Error in saveProductMedia (file upload):', error.message);
+      console.error('Error in saveProductMedia (file upload catch block):', error.message);
       return null;
     }
   }

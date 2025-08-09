@@ -27,7 +27,6 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState([]); // Stores URIs of selected images/videos
-  const [mediaUrlInput, setMediaUrlInput] = useState(''); // New state for URL input
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -122,14 +121,9 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
     }
 
     if (productResult) {
-      if (mediaUrlInput) {
-        // If URL is provided, save it directly
-        await saveProductMedia(productResult.id, mediaUrlInput, 'url', customerMediaUrl); // Pass customMediaUrl
-      } else {
-        // Otherwise, upload new media files
-        for (const media of selectedMedia.filter(m => !m.id)) { // Only upload new media (without existing id)
-          await saveProductMedia(productResult.id, media.uri, media.type, customerMediaUrl); // Pass customMediaUrl
-        }
+      // Otherwise, upload new media files
+      for (const media of selectedMedia.filter(m => !m.id)) { // Only upload new media (without existing id)
+        await saveProductMedia(productResult.id, media.uri, media.type, customerMediaUrl); // Pass customMediaUrl
       }
       // Handle media deletion (if needed, requires a deleteMedia function in supabase.js)
 
@@ -186,14 +180,6 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
             keyboardType="numeric"
           />
 
-          <Text style={styles.label}>Media URL (Optional)</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter image or video URL"
-            value={mediaUrlInput}
-            onChangeText={setMediaUrlInput}
-          />
-
           <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
             <Text>Start Date: {startDate.toLocaleDateString()}</Text>
           </TouchableOpacity>
@@ -247,15 +233,14 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               </View>
             ))}
           </View>
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleSubmit}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Save Product'}</Text>
-          </TouchableOpacity>
         </ScrollView>
+        <TouchableOpacity
+          style={styles.bottomButton} // New style for bottom button
+          onPress={handleSubmit}
+          disabled={loading}
+        >
+          <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Save Product'}</Text>
+        </TouchableOpacity>
       </View>
     </Modal>
   );
@@ -265,12 +250,14 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#fff',
     padding: 20,
     width: '100%',
-    height: '100%',
+    flexGrow: 1,
+    maxHeight: '85%',
   },
   closeButton: {
     position: 'absolute',
@@ -369,6 +356,14 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 18,
+  },
+  bottomButton: { // New style
+    backgroundColor: '#28a745',
+    padding: 15,
+    borderRadius: 5,
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginBottom: 20,
   },
 });
 

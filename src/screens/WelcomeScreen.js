@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,13 +11,17 @@ import {
   FlatList,
   Dimensions,
 } from 'react-native';
-import MapView, { Marker, Circle } from 'react-native-maps';
+import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Location from 'expo-location';
 import Slider from '@react-native-community/slider';
 import { supabase, getAreas } from '../services/supabase'; // Import supabase client and getAreas
 
 const { width, height } = Dimensions.get('window');
+
+// The HTML file is loaded via require, but since it's a static asset,
+// we can use a static path for the webview.
+const mapHtml = require('../../assets/leaflet_map.html');
 
 const WelcomeScreen = ({ navigation }) => {
   const [location, setLocation] = useState(null);
@@ -30,6 +34,21 @@ const WelcomeScreen = ({ navigation }) => {
   const [fullScreenImageUrl, setFullScreenImageUrl] = useState(null); // New state for full screen image
   const [showAreaDropdown, setShowAreaDropdown] = useState(false); // New state for area dropdown visibility
   const [filterRadius, setFilterRadius] = useState(3); // New state for user-controlled filter radius (default 3km)
+  const [selectedArea, setSelectedArea] = useState(null); // New state for selected area
+  const webViewRef = useRef(null);
+
+  const getRoute = async (start, end) => {
+    try {
+      const response = await fetch(`http://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson`);
+      const json = await response.json();
+      if (json.routes && json.routes.length > 0) {
+        return json.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+      }
+    } catch (error) {
+      console.error(error);
+    }
+    return [];
+  };
 
   // Haversine formula to calculate distance between two lat/lon points in kilometers
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -108,23 +127,7 @@ const WelcomeScreen = ({ navigation }) => {
     })();
   }, [filterRadius]); // Re-run effect when filterRadius changes
 
-  useEffect(() => {
-    const fetchCustomers = async () => {
-      console.log("Fetching customer data from Supabase...");
-      const { data, error } = await supabase
-        .from('customers') // Assuming your table name is 'customers'
-        .select('id, name, latitude, longitude'); // Select relevant columns
-
-      if (error) {
-        console.error("Error fetching customers:", error);
-      } else {
-        console.log("Customers fetched:", data);
-        setCustomers(data);
-      }
-    };
-
-    fetchCustomers();
-  }, []);
+  
 
   const onCustomerMarkerPress = async (customer) => {
     console.log("Customer marker pressed:", customer);
@@ -133,6 +136,9 @@ const WelcomeScreen = ({ navigation }) => {
       .from('customer_documents')
       .select('file_data')
       .eq('customer_id', customer.id);
+
+    console.log("Supabase response - data:", documentData);
+    console.log("Supabase response - error:", documentError);
 
     if (documentError) {
       Alert.alert("Error fetching images", documentError.message);
@@ -162,6 +168,106 @@ const WelcomeScreen = ({ navigation }) => {
     </Text>
   );
 
+  const onMapMessage = (event) => {
+    const data = JSON.parse(event.nativeEvent.data);
+    console.log("Message from WebView:", data);
+    if (data.type === 'webviewLoaded') {
+      console.log("WebView has loaded and sent a message!");
+      // Now that WebView is loaded, we can send initial data
+      if (webViewRef.current && location) {
+        const message = {
+          type: 'initialLoad',
+          initialRegion: {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            zoom: 15
+          },
+        };
+        webViewRef.current.postMessage(JSON.stringify(message));
+      }
+    }
+    // Handle other messages from WebView (e.g., map clicks)
+  };
+
+  useEffect(() => {
+    // The initialLoad message will be sent from onMapMessage after webviewLoaded
+    // No need to send initialLoad here anymore
+  }, [location]);
+
+  useEffect(() => {
+    const fetchCustomersForArea = async () => {
+      if (!selectedArea) {
+        // If no area is selected, clear customers and markers
+        setCustomers([]);
+        if (webViewRef.current) {
+          webViewRef.current.postMessage(JSON.stringify({ type: 'clearMarkers' }));
+          webViewRef.current.postMessage(JSON.stringify({ type: 'clearRoutes' }));
+        }
+        return;
+      }
+
+      console.log("Fetching customers for selected area:", selectedArea.id);
+      const { data, error } = await supabase
+        .from('customers')
+        .select('id, name, latitude, longitude, area_id')
+        .eq('area_id', selectedArea.id); // Fetch only customers for the selected area
+
+      if (error) {
+        console.error("Error fetching customers for area:", error);
+        Alert.alert("Error", "Failed to fetch customers for the selected area.");
+        setCustomers([]);
+        return;
+      }
+
+      console.log("Customers fetched for area:", data);
+      setCustomers(data); // Update customers state with filtered data
+    };
+
+    fetchCustomersForArea();
+  }, [selectedArea]); // This useEffect now depends only on selectedArea
+
+  useEffect(() => {
+    // This useEffect will now handle displaying customers on the map
+    // It will run when 'customers' state changes (after fetchCustomersForArea)
+    if (webViewRef.current) {
+      console.log("useEffect re-running for customer display. Selected Area:", selectedArea);
+      console.log("Customers to display:", customers);
+
+      webViewRef.current.postMessage(JSON.stringify({ type: 'clearMarkers' }));
+      webViewRef.current.postMessage(JSON.stringify({ type: 'clearRoutes' }));
+
+      const processCustomers = async () => {
+        for (const customer of customers) { // Iterate over 'customers' state directly
+          if (customer.latitude && customer.longitude) {
+            const message = {
+              type: 'markerUpdate',
+              markerCoordinate: {
+                latitude: parseFloat(customer.latitude),
+                longitude: parseFloat(customer.longitude),
+                name: customer.name,
+              },
+            };
+            console.log("Sending markerUpdate message:", message);
+            setTimeout(() => {
+              webViewRef.current.postMessage(JSON.stringify(message));
+            }, 500); // 500ms delay
+
+            if (location) {
+              const route = await getRoute(location.coords, { latitude: parseFloat(customer.latitude), longitude: parseFloat(customer.longitude) });
+              if (route.length > 0) {
+                setTimeout(() => {
+                  webViewRef.current.postMessage(JSON.stringify({ type: 'drawRoute', route }));
+                }, 500); // 500ms delay
+              }
+            }
+          }
+        }
+      };
+      processCustomers(); // Call the async function
+    }
+  }, [customers, location]);
+
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -173,70 +279,16 @@ const WelcomeScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      {location && location.coords && typeof location.coords.latitude === 'number' && typeof location.coords.longitude === 'number' ? (
-        <MapView
-          style={styles.map}
-          initialRegion={{
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            latitudeDelta: 0.0922,
-            longitudeDelta: 0.0421,
-          }}
-          showsUserLocation={true}
-          showsMyLocationButton={true}
-        >
-          {areas.map((area) => (
-            area.latitude && area.longitude && typeof parseFloat(area.latitude) === 'number' && typeof parseFloat(area.longitude) === 'number' && (
-              <React.Fragment key={area.id}>
-                <Marker
-                  coordinate={{
-                    latitude: parseFloat(area.latitude),
-                    longitude: parseFloat(area.longitude),
-                  }}
-                  title={area.name}
-                  pinColor="green"
-                >
-                  <View style={styles.areaMarker}>
-                    <Text style={styles.areaMarkerText}>{area.name}</Text>
-                    <Icon name="map-marker" size={30} color="green" />
-                  </View>
-                </Marker>
-                <Circle
-                  center={{
-                    latitude: parseFloat(area.latitude),
-                    longitude: parseFloat(area.longitude),
-                  }}
-                  radius={filterRadius * 1000} // Radius in meters
-                  fillColor="rgba(0, 255, 0, 0.1)"
-                  strokeColor="rgba(0, 255, 0, 0.5)"
-                  strokeWidth={2}
-                />
-              </React.Fragment>
-            )
-          ))}
-          {customers.map((customer) => (
-            customer.latitude && customer.longitude && typeof parseFloat(customer.latitude) === 'number' && typeof parseFloat(customer.longitude) === 'number' && (
-              <Marker
-                key={customer.id}
-                coordinate={{
-                  latitude: parseFloat(customer.latitude),
-                  longitude: parseFloat(customer.longitude),
-                }}
-                title={customer.name}
-                pinColor="red"
-                onPress={() => onCustomerMarkerPress(customer)}
-              >
-                <Icon name="user" size={30} color="red" />
-              </Marker>
-            )
-          ))}
-        </MapView>
-      ) : (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text>Loading...</Text>
-        </View>
-      )}
+      <WebView
+        ref={webViewRef}
+        style={styles.map}
+        source={mapHtml}
+        javaScriptEnabled={true}
+        allowFileAccessFromFileURLs={true}
+        allowUniversalAccessFromFileURLs={true}
+        onMessage={onMapMessage}
+        originWhitelist={['*']}
+      />
 
       <View style={styles.iconContainer}>
         <TouchableOpacity onPress={() => navigation.navigate('Login')}>
@@ -270,7 +322,12 @@ const WelcomeScreen = ({ navigation }) => {
             data={areas}
             keyExtractor={(item) => item.id.toString()}
             renderItem={({ item }) => (
-              <Text style={styles.areaDropdownItem}>{item.area_name} ({calculateDistance(location.coords.latitude, location.coords.longitude, item.latitude, item.longitude).toFixed(2)} km)</Text>
+              <TouchableOpacity onPress={() => {
+                console.log("Area clicked:", item);
+                setSelectedArea(item);
+              }}>
+                <Text style={styles.areaDropdownItem}>{item.area_name} ({calculateDistance(location.coords.latitude, location.coords.longitude, item.latitude, item.longitude).toFixed(2)} km)</Text>
+              </TouchableOpacity>
             )}
             ListEmptyComponent={<Text style={styles.areaDropdownItem}>No areas found within {filterRadius.toFixed(0)}km.</Text>}
           />
@@ -343,6 +400,7 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+    backgroundColor: 'lightgray', // Add this
   },
   modalContainer: {
     flex: 1,
@@ -443,21 +501,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 40,
   },
-  areaMarker: {
-    backgroundColor: 'white',
-    padding: 5,
-    borderRadius: 5,
-    borderColor: 'green',
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  areaMarkerText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: 'green',
-  },
 });
 
 export default WelcomeScreen;
-

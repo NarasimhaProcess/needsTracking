@@ -3,7 +3,7 @@ import 'dotenv/config';
 export default {
   "expo": {
     "name": "NeedsTracking",
-    "slug": "NeedsTracking",
+    "slug": "needstracking",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -68,7 +68,7 @@ export default {
       ]
     ],
     "updates": {
-      "url": "https://u.expo.dev/e1129aeb-d49c-498a-8a68-9063bb755b96"
+      "url": "https://u.expo.dev/f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"
     },
     "runtimeVersion": {
       "policy": "appVersion"
@@ -79,7 +79,7 @@ export default {
       SUPABASE_URL: "https://wtcxhhbigmqrmqdyhzcz.supabase.co",
       SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0Y3hoaGJpZ21xcm1xZHloemN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjE3ODgsImV4cCI6MjA2NzczNzc4OH0.AIViaiRT2odHJM2wQXl3dDZ69YxEj7t_7UiRFqEgZjY",
       "eas": {
-        "projectId": "e1129aeb-d49c-498a-8a68-9063bb755b96"
+        "projectId": "f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"
       }
     }
   }

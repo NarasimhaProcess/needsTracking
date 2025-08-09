@@ -16,7 +16,6 @@ import { supabase } from '../services/supabase';
 export default function LoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [mediaUrl, setMediaUrl] = useState(''); // Renamed from bucketUrl
   const [loading, setLoading] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
 
@@ -46,6 +45,10 @@ export default function LoginScreen({ navigation, route }) {
           .select('id, email, name')
           .eq('user_id', data.user.id) // Use auth user ID
           .maybeSingle();
+
+        console.log("Login check: Auth user ID:", data.user.id);
+        console.log("Login check: Customer data from 'customers' table:", customerData);
+        console.log("Login check: Customer error:", customerError);
 
         if (customerError) {
           console.error("Error checking customer existence:", customerError.message);
@@ -147,18 +150,6 @@ export default function LoginScreen({ navigation, route }) {
               onChangeText={setPassword}
               secureTextEntry
               autoCapitalize="none"
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Media URL (Optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter custom media URL"
-              value={mediaUrl}
-              onChangeText={setMediaUrl}
-              autoCapitalize="none"
-              autoCorrect={false}
             />
           </View>
 

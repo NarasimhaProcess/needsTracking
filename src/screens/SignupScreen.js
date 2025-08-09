@@ -38,12 +38,12 @@ export default function SignupScreen({ navigation, route }) {
 
     setLoading(true);
     try {
-      // First, check if user already exists in users table
+      // First, check if user already exists in customers table
       const { data: existingUser, error: checkError } = await supabase
-        .from('users')
+        .from('customers')
         .select('*')
         .eq('email', email)
-        .single();
+        .maybeSingle();
 
       if (existingUser) {
         Alert.alert('Signup Error', 'User with this email already exists. Please login instead.');
@@ -58,7 +58,7 @@ export default function SignupScreen({ navigation, route }) {
         options: {
           data: {
             name: name,
-            user_type: 'user'
+            // user_type: 'user' // Removed as per customer table schema
           }
         }
       });
@@ -66,31 +66,31 @@ export default function SignupScreen({ navigation, route }) {
       if (error) {
         Alert.alert('Signup Error', error.message);
       } else {
-        // Create user profile in users table
-        const { data: userData, error: profileError } = await supabase
-          .from('users')
-          .insert({
-            id: data.user.id,
-            email: email,
-            name: name,
-            user_type: 'user',
-            location_status: 0
-          })
-          .select()
-          .single();
+        // Check if the signed-up email exists in the customers table
+        const { data: customerData, error: checkCustomerError } = await supabase
+          .from('customers')
+          .select('id') // Only need to check for existence
+          .eq('email', email)
+          .maybeSingle();
 
-        if (profileError) {
-          console.error('Error creating user profile:', profileError);
-          Alert.alert('Warning', 'Account created but profile setup failed. Please contact support.');
+        if (checkCustomerError) {
+          console.error('Error checking customer email in customers table:', checkCustomerError);
+          Alert.alert('Signup Error', 'An error occurred during email verification. Please try again.');
+        } else if (!customerData) {
+          // Email not found in customers table, show alert but allow auth account to be created
+          Alert.alert(
+            'Account Created',
+            'Your account has been created. Please contact the administrator for login access.',
+            [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
+          );
         } else {
-          console.log('User profile created:', userData);
+          // Email found in customers table, proceed with success message
+          Alert.alert(
+            'Success',
+            'Account created successfully! Please check your email for verification.',
+            [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
+          );
         }
-
-        Alert.alert(
-          'Success', 
-          'Account created successfully! Please check your email for verification.',
-          [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
-        );
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');

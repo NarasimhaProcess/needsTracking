@@ -33,7 +33,7 @@ const ProductScreen = ({ route }) => {
           .from('customers')
           .select('media_url')
           .eq('id', customerId)
-          .single();
+          .maybeSingle();
 
         if (customerError) {
           console.error("Error fetching customer media URL:", customerError.message);
