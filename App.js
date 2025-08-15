@@ -1,3 +1,4 @@
+import 'react-native-get-random-values'; // Polyfill for crypto.getRandomValues
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -13,6 +14,9 @@ import WelcomeScreen from './src/screens/WelcomeScreen';
 import AccountScreen from './src/screens/AccountScreen';
 import ProductScreen from './src/screens/ProductScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import FieldManagerScreen from './src/screens/FieldManagerScreen'; // New import
+import DamageReportListScreen from './src/screens/DamageReportListScreen'; // New import
+import DamageReportEditScreen from './src/screens/DamageReportEditScreen'; // New import
 import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
 // Import services
@@ -48,6 +52,41 @@ function AuthStack({ route }) {
           ),
         }}
       />
+      <Tab.Screen // "Add Report" as a tab
+        name="Add Report"
+        component={FieldManagerScreen}
+        initialParams={{ session: session, customerId: customerId, areaId: route.params.areaId }} // Pass areaId from AuthStack's params
+        options={{
+          headerShown: true, // Show header for this tab
+          title: 'Add Damage Report',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="plus-circle" color={color} size={size} /> // Example icon for adding
+          ),
+        }}
+      />
+      <Tab.Screen // Damage Report List as a tab
+        name="Reports"
+        component={DamageReportListScreen}
+        initialParams={{ session: session, customerId: customerId, areaId: route.params.areaId }} // Pass relevant params
+        options={({ navigation }) => ({ // Use navigation prop to access logout
+          headerShown: true, // Show header
+          title: 'Damage Reports', // Header title
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={async () => {
+                await supabase.auth.signOut();
+                // Navigation will be handled by App.js's auth state change listener
+              }}
+              style={{ marginRight: 15 }}
+            >
+              <Icon name="sign-out" size={24} color="#007AFF" />
+            </TouchableOpacity>
+          ),
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="list" color={color} size={size} /> // Example icon for list
+          ),
+        })}
+      />
       <Tab.Screen
         name="Profile"
         component={ProfileScreen}
@@ -65,7 +104,8 @@ function AuthStack({ route }) {
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [appCustomerId, setAppCustomerId] = useState(null); // New state for customerId from DB
+  const [appCustomerId, setAppCustomerId] = useState(null);
+  const [appAreaId, setAppAreaId] = useState(null); // New state for areaId from DB
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -73,23 +113,27 @@ export default function App() {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       if (session && session.user) {
-        // Fetch customerId from customers table
+        // Fetch customerId and area_id from customers table
         const { data: customerData, error } = await supabase
           .from('customers')
-          .select('id')
+          .select('id, area_id')
           .eq('email', session.user.email)
           .maybeSingle();
 
         if (error) {
-          console.error("Error fetching customerId in App.js:", error.message);
+          console.error("Error fetching customerId/areaId in App.js:", error.message);
           setAppCustomerId(null); // Ensure it's null on error
+          setAppAreaId(null); // Ensure it's null on error
         } else if (customerData) {
           setAppCustomerId(customerData.id);
+          setAppAreaId(customerData.area_id); // Set areaId
         } else {
           setAppCustomerId(null); // User not found in customers table
+          setAppAreaId(null); // Clear areaId
         }
       } else {
         setAppCustomerId(null); // No session or user
+        setAppAreaId(null); // Clear areaId
       }
       setLoading(false);
     };
@@ -99,23 +143,27 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       if (session && session.user) {
-        // Fetch customerId from customers table on auth state change
+        // Fetch customerId and area_id from customers table on auth state change
         const { data: customerData, error } = await supabase
           .from('customers')
-          .select('id')
+          .select('id, area_id')
           .eq('email', session.user.email)
           .maybeSingle();
 
         if (error) {
-          console.error("Error fetching customerId on auth state change in App.js:", error.message);
+          console.error("Error fetching customerId/areaId on auth state change in App.js:", error.message);
           setAppCustomerId(null);
+          setAppAreaId(null);
         } else if (customerData) {
           setAppCustomerId(customerData.id);
+          setAppAreaId(customerData.area_id);
         } else {
-          setAppCustomerId(null); // User not found in customers table
+          setAppCustomerId(null);
+          setAppAreaId(null);
         }
       } else {
-        setAppCustomerId(null); // No session or user
+        setAppCustomerId(null);
+        setAppAreaId(null);
       }
     });
 
@@ -135,7 +183,14 @@ export default function App() {
       <StatusBar style="auto" />
       <Stack.Navigator>
         {session && session.user && appCustomerId ? (
-          <Stack.Screen name="Auth" component={AuthStack} initialParams={{ session: session, customerId: appCustomerId }} options={{ headerShown: false }}/>
+          <>
+            <Stack.Screen
+              name="Auth"
+              component={AuthStack}
+              initialParams={{ session: session, customerId: appCustomerId, areaId: appAreaId }} // Pass areaId
+              options={{ headerShown: false }}
+            />
+            </>
         ) : (
           <>
             <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }}/>
@@ -161,4 +216,4 @@ const styles = StyleSheet.create({
   },
 });
 
-registerRootComponent(App); 
+registerRootComponent(App);
