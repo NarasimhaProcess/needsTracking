@@ -1,109 +1,125 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Button, Image, Alert, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, Button, Image, Alert, StyleSheet, ScrollView, FlatList, Modal, TouchableOpacity, Dimensions } from 'react-native';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from '../services/supabase'; // Assuming you have this setup
 import { v4 as uuidv4 } from 'uuid'; // For unique filenames
 import * as FileSystem from 'expo-file-system';
+import Icon from 'react-native-vector-icons/FontAwesome';
+import * as ImageManipulator from 'expo-image-manipulator';
 
-const FieldManagerScreen = ({ navigation, route }) => { // Added route to props
-  const { customerId, areaId } = route.params; // Extract customerId and areaId from route params
+const { width, height } = Dimensions.get('window');
+
+const FieldManagerScreen = ({ navigation, route }) => {
+  const { customerId, areaId } = route.params;
 
   const [description, setDescription] = useState('');
-  const [image, setImage] = useState(null);
+  const [files, setFiles] = useState([]);
   const [location, setLocation] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [loading, setLoading] = useState(false);
-  // Removed areaName state
+  const [damageReports, setDamageReports] = useState([]);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [photoModalVisible, setPhotoModalVisible] = useState(false);
+  const [selectedReport, setSelectedReport] = useState(null);
 
   useEffect(() => {
+    const fetchDamageReports = async () => {
+      let query = supabase.from('damage_reports').select(`
+        *,
+        damage_report_files (*)
+      `);
+
+      if (areaId) {
+        query = query.eq('area_id', areaId);
+      }
+
+      const { data, error } = await query.order('reported_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching damage reports:', error);
+        return;
+      }
+
+      setDamageReports(data);
+    };
+
+    fetchDamageReports();
+
     (async () => {
-      // Request Location Permissions
-      let { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
-      if (locationStatus !== 'granted') {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
         setErrorMsg('Permission to access location was denied');
-        Alert.alert('Location Permission Denied', 'Please enable location services for this app in your device settings.');
         return;
       }
 
-      // Request Camera Permissions
-      let { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
-      if (cameraStatus !== 'granted') {
-        Alert.alert('Camera Permission Denied', 'Please enable camera access for this app in your device settings.');
-        return;
-      }
-
-      // Get current location
-      let currentLocation = await Location.getCurrentPositionAsync({});
-      setLocation(currentLocation);
+      let location = await Location.getCurrentPositionAsync({});
+      setLocation(location);
     })();
-  }, []);
 
-  // Removed useEffect to fetch area name
+  }, [areaId]);
 
-  const pickImage = async () => {
-    let result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.5,
+  const pickFiles = async () => {
+    let result = await DocumentPicker.getDocumentAsync({
+      type: ['image/*', 'video/*'],
+      multiple: true,
     });
 
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
+    if (result.canceled === false) {
+      setFiles(result.assets);
     }
   };
 
+  const uploadFile = async (file) => {
+    let manipulatedFile = file;
+    if (file.mimeType.startsWith('image')) {
+      const manipResult = await ImageManipulator.manipulateAsync(
+        file.uri,
+        [],
+        { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      manipulatedFile = { ...file, uri: manipResult.uri };
+    }
 
+    const fileExt = manipulatedFile.uri.split('.').pop();
+    const fileName = `${uuidv4()}.${fileExt}`;
+    const filePath = `damage_reports/${fileName}`;
 
-const uploadImage = async (uri) => {
-  const fileExt = uri.split('.').pop();
-  const fileName = `${uuidv4()}.${fileExt}`;
-  const filePath = `damage_reports/${fileName}`;
-
-  // Read file as base64
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  const fileData = new Uint8Array(
-    atob(base64).split("").map((c) => c.charCodeAt(0))
-  );
-
-  const { data, error } = await supabase.storage
-    .from('damage_photos')
-    .upload(filePath, fileData, {
-      contentType: `image/${fileExt}`,
+    const base64 = await FileSystem.readAsStringAsync(manipulatedFile.uri, {
+      encoding: FileSystem.EncodingType.Base64,
     });
 
-  if (error) throw error;
-  return data.path;
-};
+    const fileData = new Uint8Array(
+      atob(base64).split("").map((c) => c.charCodeAt(0))
+    );
 
+    const { error: uploadError } = await supabase.storage
+      .from('damage_photos')
+      .upload(filePath, fileData, {
+        contentType: file.mimeType,
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data } = supabase.storage
+      .from('damage_photos')
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
 
   const handleSubmit = async () => {
-    console.log('Submitting report...');
-    console.log('Description:', description);
-    console.log('Image:', image);
-    console.log('Location:', location);
-    console.log('Customer ID:', customerId);
-    console.log('Area ID:', areaId);
-
-    // Removed !image from validation
+    Alert.alert('handleSubmit called!');
     if (!description || !location || !customerId || !areaId) {
-      Alert.alert('Missing Information', 'Please fill all fields, and ensure location, customer, and area info is available.');
+      Alert.alert('Missing Information', `Please fill all fields, and ensure location, customer, and area info is available. customerId: ${customerId}, areaId: ${areaId}`);
       return;
     }
 
     setLoading(true);
     try {
-      let photoPath = ''; // Default to empty string if no image
-      if (image) {
-        photoPath = await uploadImage(image);
-      }
-
       const { data: { user } } = await supabase.auth.getUser();
-      console.log('User ID from Supabase auth:', user ? user.id : 'User is null'); // Log user.id
 
       if (!user) {
         Alert.alert('Authentication Error', 'User not logged in.');
@@ -111,24 +127,53 @@ const uploadImage = async (uri) => {
         return;
       }
 
-      const { error } = await supabase.from('damage_reports').insert({
+      const { data: reportData, error: reportError } = await supabase.from('damage_reports').insert({
         manager_id: user.id,
-        area_id: areaId, // Use areaId from route.params
-        customer_id: customerId, // Use customerId from route.params
+        area_id: areaId,
+        customer_id: customerId,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
-        photo_url: photoPath, // Use the potentially empty photoPath
         description: description,
-      });
+      }).select();
 
-      if (error) {
-        throw error;
+      if (reportError) {
+        throw reportError;
+      }
+
+      const newReport = reportData[0];
+
+      if (files.length > 0) {
+        for (const file of files) {
+          const fileUrl = await uploadFile(file);
+          const { data, error } = await supabase.from('damage_report_files').insert({
+            damage_report_id: newReport.id,
+            file_url: fileUrl,
+            file_type: file.mimeType,
+            file_name: file.name,
+          });
+          console.log('insert result', { data, error });
+        }
       }
 
       Alert.alert('Success', 'Damage report submitted successfully!');
       setDescription('');
-      setImage(null);
-      // Optionally navigate back or to a list of reports
+      setFiles([]);
+      setModalVisible(false);
+      // Refresh the list of reports
+      const { data, error: fetchError } = await supabase
+        .from('damage_reports')
+        .select(`
+          *,
+          damage_report_files (*)
+        `)
+        .eq('area_id', areaId)
+        .order('reported_at', { ascending: false });
+
+      if (fetchError) {
+        console.error('Error fetching damage reports:', fetchError);
+      } else {
+        setDamageReports(data);
+      }
     } catch (error) {
       console.error('Error submitting report:', error.message);
       Alert.alert('Submission Error', `Failed to submit report: ${error.message}`);
@@ -137,43 +182,208 @@ const uploadImage = async (uri) => {
     }
   };
 
-  if (errorMsg) {
-    return <View style={styles.container}><Text>{errorMsg}</Text></View>;
-  }
+  // Move these functions inside the component
+  const handleAddNewFiles = async () => {
+    try {
+      let result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'video/*'],
+        multiple: true,
+      });
 
-  if (loading) { // Simplified loading check
-    return <View style={styles.container}><Text>Loading data...</Text></View>;
-  }
+      if (result.canceled === false) {
+        for (const file of result.assets) {
+          const fileUrl = await uploadFile(file);
+          await supabase.from('damage_report_files').insert({
+            damage_report_id: selectedReport.id,
+            file_url: fileUrl,
+            file_type: file.mimeType,
+            file_name: file.name,
+          });
+        }
+
+        // Refresh selected report
+        const { data, error } = await supabase
+          .from('damage_reports')
+          .select(`*, damage_report_files (*)`)
+          .eq('id', selectedReport.id)
+          .single();
+
+        if (!error) {
+          setSelectedReport(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error adding new files:", err.message);
+      Alert.alert("Error", "Could not add new files.");
+    }
+  };
+
+  const handleDeleteFile = async (file) => {
+    try {
+      // Delete from DB
+      const { error } = await supabase
+        .from('damage_report_files')
+        .delete()
+        .eq('id', file.id);
+
+      if (error) throw error;
+
+      // Optionally: also delete from storage bucket
+      const filePath = file.file_url.split('/').pop(); // crude extraction
+      await supabase.storage.from('damage_photos').remove([`damage_reports/${filePath}`]);
+
+      // Refresh selected report
+      const { data, error: fetchError } = await supabase
+        .from('damage_reports')
+        .select(`*, damage_report_files (*)`)
+        .eq('id', selectedReport.id)
+        .single();
+
+      if (!fetchError) {
+        setSelectedReport(data);
+        // Also update global reports list
+        setDamageReports((prev) =>
+          prev.map((r) => (r.id === data.id ? data : r))
+        );
+      }
+    } catch (err) {
+      console.error("Error deleting file:", err.message);
+      Alert.alert("Error", "Could not delete file.");
+    }
+  };
+
+  const renderFilePreview = ({ item }) => {
+    if (item.mimeType && item.mimeType.startsWith('image')) {
+      return <Image source={{ uri: item.uri }} style={styles.imagePreview} />;
+    } else if (item.mimeType && item.mimeType.startsWith('video')) {
+      return <Icon name="video-camera" size={100} color="#ccc" />;
+    } else {
+      return <Icon name="file" size={100} color="#ccc" />;
+    }
+  };
+
+  const renderReportFile = ({ item }) => {
+    if (item.file_type && item.file_type.startsWith('image')) {
+      return <Image source={{ uri: item.file_url }} style={styles.imagePreview} />;
+    } else if (item.file_type && item.file_type.startsWith('video')) {
+      return <Icon name="video-camera" size={100} color="#ccc" />;
+    } else {
+      return <Icon name="file" size={100} color="#ccc" />;
+    }
+  };
+
+  const openPhotoViewer = (report) => {
+    setSelectedReport(report);
+    setPhotoModalVisible(true);
+  };
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>New Damage Report</Text>
-
-      <Text style={styles.label}>Damage Description:</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Describe the damage..."
-        value={description}
-        onChangeText={setDescription}
-        multiline
+    <View style={styles.container}>
+      <FlatList
+        data={damageReports}
+        keyExtractor={(item) => item.id.toString()}
+        renderItem={({ item }) => (
+          <TouchableOpacity onPress={() => openPhotoViewer(item)}>
+            <View style={styles.reportItem}>
+              <Text style={styles.label}>Description: {item.description}</Text>
+              <FlatList
+                data={item.damage_report_files}
+                keyExtractor={(file) => file.id.toString()}
+                renderItem={renderReportFile}
+                horizontal
+              />
+            </View>
+          </TouchableOpacity>
+        )}
       />
-
-      <Button title="Take Photo" onPress={pickImage} />
-      {image && <Image source={{ uri: image }} style={styles.imagePreview} />}
-
-      <Text style={styles.label}>Location:</Text>
-      {location ? (
-        <Text>Location captured.</Text> // Indicate location is captured without showing coordinates
-      ) : (
-        <Text>Getting location...</Text>
-      )}
-
-      <Button
-        title={loading ? "Submitting..." : "Submit Report"}
-        onPress={handleSubmit}
-        disabled={loading}
-      />
-    </ScrollView>
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => setModalVisible(true)}
+      >
+        <Text style={styles.fabIcon}>+</Text>
+      </TouchableOpacity>
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={modalVisible}
+        onRequestClose={() => {
+          setModalVisible(!modalVisible);
+        }}
+      >
+        <View style={styles.modalView}>
+            <ScrollView contentContainerStyle={styles.scrollViewContent}>
+              <Text style={styles.modalText}>New Damage Report</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Describe the damage..."
+                value={description}
+                onChangeText={setDescription}
+                multiline
+              />
+              <Button title="Select Files" onPress={pickFiles} />
+              <FlatList
+                data={files}
+                keyExtractor={(file) => file.uri}
+                renderItem={renderFilePreview}
+                horizontal
+              />
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonSubmit]}
+                  onPress={handleSubmit}
+                  disabled={loading}
+                >
+                  <Text style={styles.textStyle}>{loading ? "Submitting..." : "Submit Report"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonClose]}
+                  onPress={() => setModalVisible(!modalVisible)}
+                >
+                  <Text style={styles.textStyle}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+      </Modal>
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={photoModalVisible}
+        onRequestClose={() => {
+          setPhotoModalVisible(!photoModalVisible);
+        }}
+      >
+        <View style={styles.modalView}>
+          <FlatList
+            data={selectedReport ? selectedReport.damage_report_files : []}
+            keyExtractor={(file) => file.id.toString()}
+            renderItem={({ item }) => (
+              <View style={styles.photoViewerItem}>
+                <Text style={styles.photoViewerDate}>{new Date(item.created_at).toLocaleString()}</Text>
+                {item.file_type && item.file_type.startsWith('image') ? (
+                  <Image source={{ uri: item.file_url }} style={styles.largeImage} />
+                ) : (
+                  <Icon name="video-camera" size={width * 0.5} color="#ccc" />
+                )}
+                <TouchableOpacity onPress={() => handleDeleteFile(item)} style={styles.deleteButton}>
+                  <Icon name="trash" size={30} color="white" />
+                </TouchableOpacity>
+              </View>
+            )}
+            horizontal
+            pagingEnabled
+          />
+          <View style={styles.photoViewerButtonContainer}>
+            <TouchableOpacity onPress={handleAddNewFiles} style={styles.photoViewerButton}>
+              <Icon name="plus" size={30} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setPhotoModalVisible(false)} style={styles.photoViewerButton}>
+              <Text style={styles.textStyle}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };
 
@@ -183,17 +393,70 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: '#f5f5f5',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
+  reportItem: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ccc',
   },
   label: {
     fontSize: 16,
     fontWeight: 'bold',
     marginTop: 10,
     marginBottom: 5,
+  },
+  imagePreview: {
+    width: 100,
+    height: 100,
+    resizeMode: 'cover',
+    margin: 5,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 5,
+  },
+  largeImage: {
+    width: width,
+    height: height - 200, // Adjust height to leave space for buttons and date
+    resizeMode: 'contain',
+  },
+  modalView: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "white",
+  },
+  scrollViewContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexGrow: 1,
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginTop: 20,
+  },
+  button: {
+    borderRadius: 20,
+    padding: 10,
+    elevation: 2,
+    width: 120,
+    alignItems: 'center',
+  },
+  buttonSubmit: {
+    backgroundColor: "#4CAF50",
+  },
+  buttonClose: {
+    backgroundColor: "#f44336",
+  },
+  textStyle: {
+    color: "white",
+    fontWeight: "bold",
+    textAlign: "center"
+  },
+  modalText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
   },
   input: {
     borderWidth: 1,
@@ -202,22 +465,54 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 15,
     backgroundColor: '#fff',
+    width: width * 0.8,
   },
-  imagePreview: {
+  fab: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    right: 20,
+    bottom: 20,
+    backgroundColor: '#03A9F4',
+    borderRadius: 30,
+    elevation: 8
+  },
+  fabIcon: {
+    fontSize: 24,
+    color: 'white'
+  },
+  photoViewerButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
     width: '100%',
-    height: 200,
-    resizeMode: 'contain',
-    marginVertical: 15,
-    backgroundColor: '#e0e0e0',
+    position: 'absolute',
+    bottom: 20,
+  },
+  photoViewerButton: {
+    backgroundColor: '#03A9F4',
+    padding: 10,
     borderRadius: 5,
   },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 5,
-    marginBottom: 15,
-    backgroundColor: '#fff',
+  photoViewerItem: {
+    width: width,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
+  photoViewerDate: {
+    color: 'black',
+    fontSize: 16,
+    marginBottom: 10,
+  },
+  deleteButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(255,0,0,0.7)',
+    borderRadius: 20,
+    padding: 5,
+  }
 });
 
 export default FieldManagerScreen;

@@ -25,6 +25,7 @@ const Tab = createBottomTabNavigator();
 
 function AuthStack({ route }) {
   const { session, customerId } = route.params;
+  console.log('AuthStack - areaId:', route.params.areaId);
   {console.log('AuthStack - customerId:', customerId)}
   return (
     <Tab.Navigator>
@@ -51,12 +52,12 @@ function AuthStack({ route }) {
         }}
       />
       <Tab.Screen // "Add Report" as a tab
-        name="Add Report"
+        name="Damage Report"
         component={FieldManagerScreen}
         initialParams={{ session: session, customerId: customerId, areaId: route.params.areaId }} // Pass areaId from AuthStack's params
         options={{
           headerShown: true, // Show header for this tab
-          title: 'Add Damage Report',
+          title: 'Damage Report',
           tabBarIcon: ({ color, size }) => (
             <Icon name="plus-circle" color={color} size={size} /> // Example icon for adding
           ),
