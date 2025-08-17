@@ -15,8 +15,6 @@ import AccountScreen from './src/screens/AccountScreen';
 import ProductScreen from './src/screens/ProductScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import FieldManagerScreen from './src/screens/FieldManagerScreen'; // New import
-import DamageReportListScreen from './src/screens/DamageReportListScreen'; // New import
-import DamageReportEditScreen from './src/screens/DamageReportEditScreen'; // New import
 import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
 // Import services
@@ -63,29 +61,6 @@ function AuthStack({ route }) {
             <Icon name="plus-circle" color={color} size={size} /> // Example icon for adding
           ),
         }}
-      />
-      <Tab.Screen // Damage Report List as a tab
-        name="Reports"
-        component={DamageReportListScreen}
-        initialParams={{ session: session, customerId: customerId, areaId: route.params.areaId }} // Pass relevant params
-        options={({ navigation }) => ({ // Use navigation prop to access logout
-          headerShown: true, // Show header
-          title: 'Damage Reports', // Header title
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={async () => {
-                await supabase.auth.signOut();
-                // Navigation will be handled by App.js's auth state change listener
-              }}
-              style={{ marginRight: 15 }}
-            >
-              <Icon name="sign-out" size={24} color="#007AFF" />
-            </TouchableOpacity>
-          ),
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="list" color={color} size={size} /> // Example icon for list
-          ),
-        })}
       />
       <Tab.Screen
         name="Profile"
