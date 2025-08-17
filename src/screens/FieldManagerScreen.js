@@ -7,8 +7,12 @@ import { v4 as uuidv4 } from 'uuid'; // For unique filenames
 import * as FileSystem from 'expo-file-system';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
+import { Video } from 'expo-av';
 
 const { width, height } = Dimensions.get('window');
+
+const MAX_VIDEO_SIZE_MB = 50; // 50 MB
 
 const FieldManagerScreen = ({ navigation, route }) => {
   const { customerId, areaId } = route.params;
@@ -22,6 +26,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
+  const [addFileOptionModalVisible, setAddFileOptionModalVisible] = useState(false);
 
   useEffect(() => {
     const fetchDamageReports = async () => {
@@ -66,7 +71,35 @@ const FieldManagerScreen = ({ navigation, route }) => {
     });
 
     if (result.canceled === false) {
-      setFiles(result.assets);
+      const newFiles = [];
+      for (const asset of result.assets) {
+        if (asset.mimeType.startsWith('video') && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+          Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+          continue;
+        }
+        newFiles.push(asset);
+      }
+      setFiles(prevFiles => [...prevFiles, ...newFiles]);
+    }
+  };
+
+  const takePhoto = async () => {
+    let result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.5, // Low quality
+    });
+
+    if (!result.canceled) {
+      // ImagePicker returns a single asset, DocumentPicker returns an array of assets
+      // Normalize it to an array for consistency with `files` state
+      const newAsset = {
+        uri: result.assets[0].uri,
+        name: result.assets[0].uri.split('/').pop(), // Extract filename from URI
+        mimeType: 'image/jpeg', // Assuming JPEG for camera photos
+        size: 0, // Placeholder, actual size might not be available directly
+      };
+      setFiles(prevFiles => [...prevFiles, newAsset]);
     }
   };
 
@@ -183,7 +216,12 @@ const FieldManagerScreen = ({ navigation, route }) => {
   };
 
   // Move these functions inside the component
-  const handleAddNewFiles = async () => {
+  const handleAddNewFiles = () => {
+    setAddFileOptionModalVisible(true);
+  };
+
+  const pickFilesForExistingReport = async () => {
+    setAddFileOptionModalVisible(false);
     try {
       let result = await DocumentPicker.getDocumentAsync({
         type: ['image/*', 'video/*'],
@@ -192,6 +230,10 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
       if (result.canceled === false) {
         for (const file of result.assets) {
+          if (file.mimeType.startsWith('video') && file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+            Alert.alert('Video Too Large', `Video file ${file.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+            continue;
+          }
           const fileUrl = await uploadFile(file);
           await supabase.from('damage_report_files').insert({
             damage_report_id: selectedReport.id,
@@ -200,6 +242,47 @@ const FieldManagerScreen = ({ navigation, route }) => {
             file_name: file.name,
           });
         }
+
+        // Refresh selected report
+        const { data, error } = await supabase
+          .from('damage_reports')
+          .select(`*, damage_report_files (*)`)
+          .eq('id', selectedReport.id)
+          .single();
+
+        if (!error) {
+          setSelectedReport(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error adding new files:", err.message);
+      Alert.alert("Error", "Could not add new files.");
+    }
+  };
+
+  const takePhotoForExistingReport = async () => {
+    setAddFileOptionModalVisible(false);
+    try {
+      let result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.5, // Low quality
+      });
+
+      if (!result.canceled) {
+        const newAsset = {
+          uri: result.assets[0].uri,
+          name: result.assets[0].uri.split('/').pop(),
+          mimeType: 'image/jpeg',
+          size: 0,
+        };
+        const fileUrl = await uploadFile(newAsset);
+        await supabase.from('damage_report_files').insert({
+          damage_report_id: selectedReport.id,
+          file_url: fileUrl,
+          file_type: newAsset.mimeType,
+          file_name: newAsset.name,
+        });
 
         // Refresh selected report
         const { data, error } = await supabase
@@ -256,7 +339,15 @@ const FieldManagerScreen = ({ navigation, route }) => {
     if (item.mimeType && item.mimeType.startsWith('image')) {
       return <Image source={{ uri: item.uri }} style={styles.imagePreview} />;
     } else if (item.mimeType && item.mimeType.startsWith('video')) {
-      return <Icon name="video-camera" size={100} color="#ccc" />;
+      return (
+        <Video
+          source={{ uri: item.uri }}
+          style={styles.videoPreview}
+          useNativeControls
+          resizeMode="contain"
+          isLooping
+        />
+      );
     } else {
       return <Icon name="file" size={100} color="#ccc" />;
     }
@@ -266,7 +357,15 @@ const FieldManagerScreen = ({ navigation, route }) => {
     if (item.file_type && item.file_type.startsWith('image')) {
       return <Image source={{ uri: item.file_url }} style={styles.imagePreview} />;
     } else if (item.file_type && item.file_type.startsWith('video')) {
-      return <Icon name="video-camera" size={100} color="#ccc" />;
+      return (
+        <Video
+          source={{ uri: item.file_url }}
+          style={styles.videoPreview}
+          useNativeControls
+          resizeMode="contain"
+          isLooping
+        />
+      );
     } else {
       return <Icon name="file" size={100} color="#ccc" />;
     }
@@ -322,7 +421,14 @@ const FieldManagerScreen = ({ navigation, route }) => {
                 onChangeText={setDescription}
                 multiline
               />
-              <Button title="Select Files" onPress={pickFiles} />
+              <View style={styles.fileSelectionContainer}>
+                <TouchableOpacity style={styles.fileSelectionButton} onPress={pickFiles}>
+                  <Text style={styles.textStyle}>Select from Gallery</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.fileSelectionButton} onPress={takePhoto}>
+                  <Text style={styles.textStyle}>Take Photo</Text>
+                </TouchableOpacity>
+              </View>
               <FlatList
                 data={files}
                 keyExtractor={(file) => file.uri}
@@ -364,8 +470,16 @@ const FieldManagerScreen = ({ navigation, route }) => {
                 <Text style={styles.photoViewerDate}>{new Date(item.created_at).toLocaleString()}</Text>
                 {item.file_type && item.file_type.startsWith('image') ? (
                   <Image source={{ uri: item.file_url }} style={styles.largeImage} />
+                ) : item.file_type && item.file_type.startsWith('video') ? (
+                  <Video
+                    source={{ uri: item.file_url }}
+                    style={styles.largeVideo}
+                    useNativeControls
+                    resizeMode="contain"
+                    isLooping
+                  />
                 ) : (
-                  <Icon name="video-camera" size={width * 0.5} color="#ccc" />
+                  <Icon name="file" size={width * 0.5} color="#ccc" />
                 )}
                 <TouchableOpacity onPress={() => handleDeleteFile(item)} style={styles.deleteButton}>
                   <Icon name="trash" size={30} color="white" />
@@ -381,6 +495,39 @@ const FieldManagerScreen = ({ navigation, route }) => {
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setPhotoModalVisible(false)} style={styles.photoViewerButton}>
               <Text style={styles.textStyle}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={addFileOptionModalVisible}
+        onRequestClose={() => {
+          setAddFileOptionModalVisible(!addFileOptionModalVisible);
+        }}
+      >
+        <View style={styles.centeredView}>
+          <View style={styles.modalView}>
+            <Text style={styles.modalText}>Add Photo</Text>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSubmit]}
+              onPress={pickFilesForExistingReport}
+            >
+              <Text style={styles.textStyle}>Select from Gallery</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSubmit]}
+              onPress={takePhotoForExistingReport}
+            >
+              <Text style={styles.textStyle}>Take Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonClose]}
+              onPress={() => setAddFileOptionModalVisible(!addFileOptionModalVisible)}
+            >
+              <Text style={styles.textStyle}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -419,16 +566,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0e0e0',
     borderRadius: 5,
   },
+  videoPreview: {
+    width: 100,
+    height: 100,
+    margin: 5,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 5,
+  },
   largeImage: {
     width: width,
     height: height - 200, // Adjust height to leave space for buttons and date
     resizeMode: 'contain',
+  },
+  largeVideo: {
+    width: width,
+    height: height - 200, // Adjust height to leave space for buttons and date
   },
   modalView: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "white",
+  },
+  centeredView: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 22,
   },
   scrollViewContent: {
     alignItems: 'center',
@@ -473,6 +637,19 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     backgroundColor: '#fff',
     width: width * 0.8,
+  },
+  fileSelectionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 15,
+  },
+  fileSelectionButton: {
+    backgroundColor: '#03A9F4',
+    padding: 10,
+    borderRadius: 5,
+    alignItems: 'center',
+    width: '45%',
   },
   fab: {
     position: 'absolute',
