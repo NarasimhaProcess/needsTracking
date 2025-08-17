@@ -279,6 +279,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
   return (
     <View style={styles.container}>
+      <Text style={styles.dateTimeText}>Current Date and Time: {new Date().toLocaleString()}</Text>
       <FlatList
         data={damageReports}
         keyExtractor={(item) => item.id.toString()}
@@ -286,6 +287,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
           <TouchableOpacity onPress={() => openPhotoViewer(item)}>
             <View style={styles.reportItem}>
               <Text style={styles.label}>Description: {item.description}</Text>
+              <Text style={styles.reportDateText}>Reported At: {new Date(item.reported_at).toLocaleString()}</Text>
               <FlatList
                 data={item.damage_report_files}
                 keyExtractor={(file) => file.id.toString()}
@@ -397,6 +399,11 @@ const styles = StyleSheet.create({
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
+  },
+  reportDateText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
   },
   label: {
     fontSize: 16,
@@ -512,6 +519,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,0,0,0.7)',
     borderRadius: 20,
     padding: 5,
+  },
+  dateTimeText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
   }
 });
 
