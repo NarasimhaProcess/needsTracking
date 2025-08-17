@@ -97,18 +97,33 @@ const DamageReportEditScreen = ({ route }) => {
   const uploadImage = async (uri) => {
     const fileExt = uri.split('.').pop();
     const fileName = `${uuidv4()}.${fileExt}`;
-    const filePath = `damage_reports/${fileName}`;
+    const filePath = `damage_images/${fileName}`;
+
+    console.log('Attempting to upload image...');
+    console.log('Image URI:', uri);
+    console.log('File extension:', fileExt);
+    console.log('Content-Type:', `image/${fileExt}`);
+    console.log('File path for Supabase:', filePath);
+
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    console.log('Blob created. Size:', blob.size, 'Type:', blob.type);
+
+    if (!blob || blob.size === 0) {
+        Alert.alert('Upload Error', 'The selected image could not be processed. Please try a different image.');
+        throw new Error('Blob is empty');
+    }
 
     const { data, error } = await supabase.storage
       .from('damage_photos')
-      .upload(filePath, {
-        uri: uri,
-        type: `image/${fileExt}`,
-      });
+      .upload(filePath, blob, { contentType: `image/${fileExt}`, upsert: false });
 
     if (error) {
+      console.error("Supabase Upload Error:", JSON.stringify(error, null, 2));
       throw error;
     }
+
+    console.log("Upload successful:", data);
     return data.path;
   };
 

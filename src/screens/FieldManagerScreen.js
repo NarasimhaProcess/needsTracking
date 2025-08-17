@@ -4,6 +4,7 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../services/supabase'; // Assuming you have this setup
 import { v4 as uuidv4 } from 'uuid'; // For unique filenames
+import * as FileSystem from 'expo-file-system';
 
 const FieldManagerScreen = ({ navigation, route }) => { // Added route to props
   const { customerId, areaId } = route.params; // Extract customerId and areaId from route params
@@ -53,23 +54,32 @@ const FieldManagerScreen = ({ navigation, route }) => { // Added route to props
     }
   };
 
-  const uploadImage = async (uri) => {
-    const fileExt = uri.split('.').pop();
-    const fileName = `${uuidv4()}.${fileExt}`;
-    const filePath = `damage_reports/${fileName}`;
 
-    const { data, error } = await supabase.storage
-      .from('damage_photos') // Assuming you have a bucket named 'damage_photos'
-      .upload(filePath, {
-        uri: uri,
-        type: `image/${fileExt}`,
-      });
 
-    if (error) {
-      throw error;
-    }
-    return data.path; // Return the path to the uploaded file
-  };
+const uploadImage = async (uri) => {
+  const fileExt = uri.split('.').pop();
+  const fileName = `${uuidv4()}.${fileExt}`;
+  const filePath = `damage_reports/${fileName}`;
+
+  // Read file as base64
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  const fileData = new Uint8Array(
+    atob(base64).split("").map((c) => c.charCodeAt(0))
+  );
+
+  const { data, error } = await supabase.storage
+    .from('damage_photos')
+    .upload(filePath, fileData, {
+      contentType: `image/${fileExt}`,
+    });
+
+  if (error) throw error;
+  return data.path;
+};
+
 
   const handleSubmit = async () => {
     console.log('Submitting report...');
