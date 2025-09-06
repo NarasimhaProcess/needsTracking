@@ -88,6 +88,7 @@ export default function App() {
     const fetchAndSetSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
+      console.log("App.js - Current Supabase Session:", session); // Add this line
       if (session && session.user) {
         // Fetch customerId and area_id from customers table
         const { data: customerData, error } = await supabase
@@ -118,6 +119,7 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
+      console.log("App.js - Auth State Change Session:", session); // Add this line
       if (session && session.user) {
         // Fetch customerId and area_id from customers table on auth state change
         const { data: customerData, error } = await supabase

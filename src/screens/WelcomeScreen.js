@@ -35,6 +35,8 @@ const WelcomeScreen = ({ navigation }) => {
   const [showAreaDropdown, setShowAreaDropdown] = useState(false); // New state for area dropdown visibility
   const [filterRadius, setFilterRadius] = useState(3); // New state for user-controlled filter radius (default 3km)
   const [selectedArea, setSelectedArea] = useState(null); // New state for selected area
+  const [isWebViewLoaded, setIsWebViewLoaded] = useState(false); // New state to track WebView load status
+  const [initialLocationSent, setInitialLocationSent] = useState(false); // New state to ensure initial location is sent only once
   const webViewRef = useRef(null);
 
   const getRoute = async (start, end) => {
@@ -93,8 +95,10 @@ const WelcomeScreen = ({ navigation }) => {
     (async () => {
       console.log("Requesting location permissions...");
       let { status } = await Location.requestForegroundPermissionsAsync();
+      console.log("Location permission status:", status);
       if (status !== 'granted') {
         console.error('Permission to access location was denied');
+        Alert.alert('Location Permission Denied', 'Please grant location permissions to use this feature.');
         setLoading(false);
         return;
       }
@@ -103,7 +107,23 @@ const WelcomeScreen = ({ navigation }) => {
         let currentLoc = await Location.getCurrentPositionAsync({});
         console.log("Current position retrieved:", currentLoc);
         setLocation(currentLoc);
+        console.log("Location state set to:", currentLoc);
         fetchAndDisplayAreas(currentLoc); // Initial fetch of areas
+
+        // Send initial location to WebView if it's loaded and not sent yet
+        if (isWebViewLoaded && !initialLocationSent && webViewRef.current) {
+          console.log("Sending initialLoad message to WebView with location:", currentLoc.coords.latitude, currentLoc.coords.longitude);
+          const message = {
+            type: 'initialLoad',
+            initialRegion: {
+              latitude: currentLoc.coords.latitude,
+              longitude: currentLoc.coords.longitude,
+              zoom: 15
+            },
+          };
+          webViewRef.current.postMessage(JSON.stringify(message));
+          setInitialLocationSent(true); // Mark as sent
+        }
 
         // Set up background location tracking for continuous updates
         Location.watchPositionAsync(
@@ -112,20 +132,38 @@ const WelcomeScreen = ({ navigation }) => {
             distanceInterval: 100, // Check every 100 meters
           },
           (newLoc) => {
+            console.log("New location update received:", newLoc);
             setLocation(newLoc);
             // Automatically refetch areas if moved significantly (e.g., 0.5km)
             if (location && calculateDistance(location.coords.latitude, location.coords.longitude, newLoc.coords.latitude, newLoc.coords.longitude) >= 0.5) {
               fetchAndDisplayAreas(newLoc);
+            }
+            // Update user marker and map view in WebView with new location
+            if (webViewRef.current) {
+              console.log("Sending markerUpdate for continuous location update:", newLoc.coords.latitude, newLoc.coords.longitude);
+              const message = {
+                type: 'markerUpdate',
+                markerCoordinate: {
+                  latitude: newLoc.coords.latitude,
+                  longitude: newLoc.coords.longitude,
+                  name: 'Your Location', // Or a more appropriate name
+                  icon: 'blue' // Ensure it's the blue user marker
+                },
+              };
+              webViewRef.current.postMessage(JSON.stringify(message));
+              // Optionally, re-center map on user's new location
+              // webViewRef.current.postMessage(JSON.stringify({ type: 'initialLoad', initialRegion: { latitude: newLoc.coords.latitude, longitude: newLoc.coords.longitude, zoom: map.getZoom() } }));
             }
           }
         );
 
       } catch (error) {
         console.error("Error getting current position or watching location:", error);
+        Alert.alert('Location Error', 'Failed to get your current location. Please ensure GPS is enabled.');
       }
       setLoading(false);
     })();
-  }, [filterRadius]); // Re-run effect when filterRadius changes
+  }, [filterRadius, isWebViewLoaded]); // Re-run effect when filterRadius or isWebViewLoaded changes
 
   
 
@@ -173,18 +211,7 @@ const WelcomeScreen = ({ navigation }) => {
     console.log("Message from WebView:", data);
     if (data.type === 'webviewLoaded') {
       console.log("WebView has loaded and sent a message!");
-      // Now that WebView is loaded, we can send initial data
-      if (webViewRef.current && location) {
-        const message = {
-          type: 'initialLoad',
-          initialRegion: {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            zoom: 15
-          },
-        };
-        webViewRef.current.postMessage(JSON.stringify(message));
-      }
+      setIsWebViewLoaded(true); // Set WebView loaded status
     }
     // Handle other messages from WebView (e.g., map clicks)
   };
@@ -212,6 +239,9 @@ const WelcomeScreen = ({ navigation }) => {
         .select('id, name, latitude, longitude, area_id')
         .eq('area_id', selectedArea.id); // Fetch only customers for the selected area
 
+      console.log("Supabase customers query result - data:", data);
+      console.log("Supabase customers query result - error:", error);
+
       if (error) {
         console.error("Error fetching customers for area:", error);
         Alert.alert("Error", "Failed to fetch customers for the selected area.");
@@ -237,7 +267,12 @@ const WelcomeScreen = ({ navigation }) => {
       webViewRef.current.postMessage(JSON.stringify({ type: 'clearRoutes' }));
 
       const processCustomers = async () => {
+        console.log("Processing customers for map display...");
+        if (customers.length === 0) {
+          console.log("No customers to display.");
+        }
         for (const customer of customers) { // Iterate over 'customers' state directly
+          console.log("Processing customer:", customer.name, "(", customer.id, ")");
           if (customer.latitude && customer.longitude) {
             const message = {
               type: 'markerUpdate',
@@ -252,20 +287,28 @@ const WelcomeScreen = ({ navigation }) => {
               webViewRef.current.postMessage(JSON.stringify(message));
             }, 500); // 500ms delay
 
-            if (location) {
+            if (location) { // 'location' is still accessible from the outer scope
+              console.log("Getting route for customer:", customer.name);
               const route = await getRoute(location.coords, { latitude: parseFloat(customer.latitude), longitude: parseFloat(customer.longitude) });
               if (route.length > 0) {
+                console.log("Sending drawRoute message for customer:", customer.name);
                 setTimeout(() => {
                   webViewRef.current.postMessage(JSON.stringify({ type: 'drawRoute', route }));
                 }, 500); // 500ms delay
+              } else {
+                console.log("No route found for customer:", customer.name);
               }
+            } else {
+              console.log("User location not available, skipping route for customer:", customer.name);
             }
+          } else {
+            console.log("Customer has no latitude/longitude, skipping marker/route:", customer.name);
           }
         }
       };
       processCustomers(); // Call the async function
     }
-  }, [customers, location]);
+  }, [customers]); // Removed 'location' from dependency array
 
 
   if (loading) {
@@ -288,6 +331,15 @@ const WelcomeScreen = ({ navigation }) => {
         allowUniversalAccessFromFileURLs={true}
         onMessage={onMapMessage}
         originWhitelist={['*']}
+        onError={(syntheticEvent) => {
+          const { nativeEvent } = syntheticEvent;
+          console.warn('WebView error in WelcomeScreen: ', nativeEvent);
+          Alert.alert('Map Error', 'Failed to load map. Please check your internet connection or map configuration.');
+        }}
+        onHttpError={(syntheticEvent) => {
+          const { nativeEvent } = syntheticEvent;
+          console.warn('WebView HTTP error in WelcomeScreen: ', nativeEvent);
+        }}
       />
 
       <View style={styles.iconContainer}>

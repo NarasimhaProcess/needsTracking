@@ -16,8 +16,11 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, createProduct, saveProductMedia } from '../services/supabase';
+import { Video } from 'expo-av';
 
-const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl }) => {
+const MAX_VIDEO_SIZE_MB = 50; // Define max video size
+
+const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
   const [productName, setProductName] = useState('');
   const [amount, setAmount] = useState('');
   const [size, setSize] = useState('');
@@ -28,8 +31,12 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState([]); // Stores URIs of selected images/videos
   const [loading, setLoading] = useState(false);
+  const [showModalMediaViewer, setShowModalMediaViewer] = useState(false);
+  const [currentModalMediaIndex, setCurrentModalMediaIndex] = useState(0);
+  const [allModalMediaForViewer, setAllModalMediaForViewer] = useState([]);
 
   useEffect(() => {
+    console.log("ProductFormModal - productToEdit:", productToEdit);
     if (productToEdit) {
       setProductName(productToEdit.product_name);
       setAmount(productToEdit.amount.toString());
@@ -38,7 +45,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       setStartDate(new Date(productToEdit.start_date));
       setEndDate(new Date(productToEdit.end_date));
       setSelectedMedia(productToEdit.product_media.map(media => ({
-        uri: media.media_type === 'url' ? media.media_url : `${customerMediaUrl || supabaseUrl}/storage/v1/object/public/productsmedia/${media.media_url}`,
+        uri: media.media_url,
         type: media.media_type,
         id: media.id
       })));
@@ -71,15 +78,32 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
     }
 
     if (!result.canceled) {
+      const newMedia = [];
+      for (const asset of result.assets) {
+        if (mediaType === 'video' && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+          Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+          continue; // Skip this large video
+        }
+        newMedia.push({ uri: asset.uri, type: mediaType });
+      }
       setSelectedMedia((prevMedia) => [
         ...prevMedia,
-        ...result.assets.map((asset) => ({ uri: asset.uri, type: mediaType })),
+        ...newMedia,
       ]);
     }
   };
 
-  const handleRemoveMedia = (uriToRemove) => {
-    setSelectedMedia(prevMedia => prevMedia.filter(media => media.uri !== uriToRemove));
+  const handleRemoveMedia = async (mediaToRemove) => {
+    if (mediaToRemove.id) { // Existing media, call parent's delete function
+      if (onDeleteMedia) {
+        const success = await onDeleteMedia(mediaToRemove.id, mediaToRemove.uri);
+        if (success) {
+          setSelectedMedia(prevMedia => prevMedia.filter(media => media.id !== mediaToRemove.id));
+        }
+      }
+    } else { // New media, just remove from local state
+      setSelectedMedia(prevMedia => prevMedia.filter(media => media.uri !== mediaToRemove.uri));
+    }
   };
 
   const handleSubmit = async () => {
@@ -121,14 +145,22 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
     }
 
     if (productResult) {
-      // Otherwise, upload new media files
-      for (const media of selectedMedia.filter(m => !m.id)) { // Only upload new media (without existing id)
-        await saveProductMedia(productResult.id, media.uri, media.type, customerMediaUrl); // Pass customMediaUrl
-      }
-      // Handle media deletion (if needed, requires a deleteMedia function in supabase.js)
+      try {
+        // Otherwise, upload new media files
+        for (const media of selectedMedia.filter(m => !m.id)) { // Only upload new media (without existing id)
+          const mediaUrl = await saveProductMedia(productResult.id, media.uri, media.type, customerId, session.access_token);
+          if (!mediaUrl) {
+            throw new Error("Failed to upload media.");
+          }
+        }
+        // Handle media deletion (if needed, requires a deleteMedia function in supabase.js)
 
-      onSubmit(); // Notify parent to refresh list
-      onClose(); // Close modal
+        onSubmit(); // Notify parent to refresh list
+        onClose(); // Close modal
+      } catch (mediaError) {
+        console.error("Error saving product media:", mediaError.message);
+        Alert.alert("Error", `Failed to save product media: ${mediaError.message}`);
+      }
     } else {
       Alert.alert("Error", "Failed to save product.");
     }
@@ -220,27 +252,106 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
           </View>
 
           <View style={styles.selectedMediaContainer}>
-            {selectedMedia.map((media, index) => (
-              <View key={index} style={styles.mediaThumbnailContainer}>
-                {media.type === 'image' ? (
-                  <Image source={{ uri: media.uri }} style={styles.thumbnail} />
-                ) : (
-                  <Text style={styles.thumbnailText}>Video</Text>
-                )}
-                <TouchableOpacity onPress={() => handleRemoveMedia(media.uri)} style={styles.removeMediaButton}>
-                  <Icon name="times-circle" size={20} color="red" />
+            <FlatList
+              data={selectedMedia}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(media, index) => media.id ? media.id.toString() : `new-${index}`}
+              renderItem={({ item: media, index }) => (
+                <TouchableOpacity
+                  onPress={() => {
+                    setAllModalMediaForViewer(selectedMedia);
+                    setCurrentModalMediaIndex(index);
+                    setShowModalMediaViewer(true);
+                  }}
+                  style={styles.thumbnailContainer}
+                >
+                  {media.type === 'image' ? (
+                    <Image source={{ uri: media.uri }} style={styles.thumbnail} />
+                  ) : (
+                    <Text style={styles.thumbnailText}>Video</Text>
+                  )}
+                  <TouchableOpacity onPress={() => handleRemoveMedia(media)} style={styles.removeMediaButton}>
+                    <Icon name="times-circle" size={20} color="red" />
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </View>
-            ))}
+              )}
+            />
           </View>
-        </ScrollView>
-        <TouchableOpacity
-          style={styles.bottomButton} // New style for bottom button
-          onPress={handleSubmit}
-          disabled={loading}
+     
+          <TouchableOpacity
+            style={styles.bottomButton} // New style for bottom button
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Save Product'}</Text>
+          </TouchableOpacity>
+
+          {productToEdit && (
+            <TouchableOpacity
+              style={[styles.bottomButton, styles.deleteButton]} // Apply delete button style
+              onPress={() => {
+                onDeleteProduct(productToEdit.id);
+                onClose(); // Close modal after initiating delete
+              }}
+              disabled={loading}
+            >
+              <Text style={styles.buttonText}>Delete Product</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>}
+
+        {/* Modal Media Viewer */}
+        <Modal
+          animationType="fade"
+          transparent={true}
+          visible={showModalMediaViewer}
+          onRequestClose={() => setShowModalMediaViewer(false)}
         >
-          <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Save Product'}</Text>
-        </TouchableOpacity>
+          <View style={styles.modalMediaViewerContainer}>
+            <TouchableOpacity style={styles.modalMediaViewerCloseButton} onPress={() => setShowModalMediaViewer(false)}>
+              <Icon name="times-circle" size={30} color="white" />
+            </TouchableOpacity>
+
+            {allModalMediaForViewer.length > 0 && (
+              <>
+                <TouchableOpacity
+                  style={[styles.modalMediaNavButton, styles.modalMediaNavButtonLeft]}
+                  onPress={() => setCurrentModalMediaIndex(prevIndex => Math.max(0, prevIndex - 1))}
+                  disabled={currentModalMediaIndex === 0}
+                >
+                  <Icon name="chevron-left" size={30} color="white" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalMediaNavButton, styles.modalMediaNavButtonRight]}
+                  onPress={() => setCurrentModalMediaIndex(prevIndex => Math.min(allModalMediaForViewer.length - 1, prevIndex + 1))}
+                  disabled={currentModalMediaIndex === allModalMediaForViewer.length - 1}
+                >
+                  <Icon name="chevron-right" size={30} color="white" />
+                </TouchableOpacity>
+
+                {allModalMediaForViewer[currentModalMediaIndex].type === 'image' ? (
+                  <Image
+                    source={{ uri: allModalMediaForViewer[currentModalMediaIndex].uri }}
+                    style={styles.modalFullScreenMedia}
+                    resizeMode="contain"
+                  />
+                ) : allModalMediaForViewer[currentModalMediaIndex].type === 'video' ? (
+                  <Video
+                    source={{ uri: allModalMediaForViewer[currentModalMediaIndex].uri }}
+                    style={styles.modalFullScreenMedia}
+                    useNativeControls
+                    resizeMode="contain"
+                    isLooping
+                  />
+                ) : (
+                  <Text style={styles.modalNoMediaText}>No media to display</Text>
+                )}
+              </>
+            )}
+          </View>
+        </Modal>
       </View>
     </Modal>
   );
@@ -314,8 +425,8 @@ const styles = StyleSheet.create({
   },
   selectedMediaContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     marginBottom: 10,
+    width: '100%', // Ensure the container has a defined width
   },
   mediaThumbnailContainer: {
     position: 'relative',
@@ -364,6 +475,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 20,
     marginBottom: 20,
+  },
+  deleteButton: {
+    backgroundColor: '#dc3545', // Red color for delete
+    marginTop: 10,
+  },
+  modalMediaViewerContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalMediaViewerCloseButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 1,
+  },
+  modalFullScreenMedia: {
+    width: '100%',
+    height: '80%',
+  },
+  modalNoMediaText: {
+    color: 'white',
+    fontSize: 18,
+  },
+  modalMediaNavButton: {
+    position: 'absolute',
+    top: '50%',
+    zIndex: 1,
+    padding: 10,
+  },
+  modalMediaNavButtonLeft: {
+    left: 10,
+  },
+  modalMediaNavButtonRight: {
+    right: 10,
   },
 });
 

@@ -7,9 +7,12 @@ import {
   Alert,
   FlatList,
   ActivityIndicator,
+  Image,
+  Modal,
 } from 'react-native';
-import { supabase, getProductsWithMedia } from '../services/supabase';
+import { supabase, getProductsWithMedia, deleteProductMedia, deleteProduct } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import { Video } from 'expo-av';
 import ProductFormModal from '../components/ProductFormModal';
 
 const ProductScreen = ({ route }) => {
@@ -19,57 +22,62 @@ const ProductScreen = ({ route }) => {
   const [showProductModal, setShowProductModal] = useState(false);
   const [productToEdit, setProductToEdit] = useState(null);
   const [customerMediaUrl, setCustomerMediaUrl] = useState(null); // Renamed from customerBucketUrl
+  const [showMediaViewer, setShowMediaViewer] = useState(false);
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const [allMediaForViewer, setAllMediaForViewer] = useState([]);
 
-  useEffect(() => {
-    const fetchProductsAndMediaUrl = async () => {
-      if (!session || !session.user || !customerId) {
+  // Define fetchProductsAndMediaUrl outside useEffect to ensure stable reference
+  const fetchProductsAndMediaUrl = async () => {
+    if (!session || !session.user || !customerId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      // Fetch customer details to get the media_url
+      const { data: customerData, error: customerError } = await supabase
+        .from('customers')
+        .select('media_url')
+        .eq('id', customerId)
+        .maybeSingle();
+
+      if (customerError) {
+        console.error("Error fetching customer media URL:", customerError.message);
+        Alert.alert("Error", "Failed to fetch customer media configuration.");
         setLoading(false);
         return;
       }
-      setLoading(true);
-      try {
-        // Fetch customer details to get the media_url
-        const { data: customerData, error: customerError } = await supabase
-          .from('customers')
-          .select('media_url')
-          .eq('id', customerId)
-          .maybeSingle();
 
-        if (customerError) {
-          console.error("Error fetching customer media URL:", customerError.message);
-          Alert.alert("Error", "Failed to fetch customer media configuration.");
-          setLoading(false);
-          return;
-        }
-
-        if (customerData) {
-          setCustomerMediaUrl(customerData.media_url);
-        }
-
-        // Fetch products with their media
-        const { data, error } = await supabase
-          .from('products')
-          .select(`
-            *,
-            customers(media_url),
-            product_media (media_url, media_type)
-          `)
-          .eq('customer_id', customerId);
-
-        if (error) {
-          console.error('Error fetching products:', error.message);
-          Alert.alert("Error", "Failed to fetch products.");
-        } else {
-          setProducts(data);
-        }
-      } catch (error) {
-        console.error("Error in fetching products and media URL:", error.message);
-        Alert.alert("Error", "An unexpected error occurred while fetching data.");
-      } finally {
-        setLoading(false);
+      if (customerData) {
+        setCustomerMediaUrl(customerData.media_url);
       }
-    };
 
+      // Fetch products with their media
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          *,
+          customers(media_url),
+          product_media (id, media_url, media_type)
+        `)
+        .eq('customer_id', customerId);
+
+      if (error) {
+        console.error('Error fetching products:', error.message);
+        Alert.alert("Error", "Failed to fetch products.");
+      } else {
+        console.log("Fetched products data:", data); // Add this log
+        setProducts(data);
+      }
+    } catch (error) {
+      console.error("Error in fetching products and media URL:", error.message);
+      Alert.alert("Error", "An unexpected error occurred while fetching data.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchProductsAndMediaUrl();
   }, [session, customerId]);
 
@@ -79,12 +87,66 @@ const ProductScreen = ({ route }) => {
   };
 
   const handleModalSubmit = () => {
-    fetchProductsForUser(); // Refresh the list after add/edit
+    fetchProductsAndMediaUrl(); // Refresh the list after add/edit
+  };
+
+  const handleDeleteProductMedia = async (mediaId, mediaUrl) => {
+    return new Promise((resolve) => {
+      Alert.alert(
+        "Delete Media",
+        "Are you sure you want to delete this media? This action cannot be undone.",
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          {
+            text: "Delete",
+            onPress: async () => {
+              setLoading(true);
+              const success = await deleteProductMedia(mediaId, mediaUrl);
+              if (success) {
+                Alert.alert("Success", "Media deleted successfully.");
+                fetchProductsAndMediaUrl(); // Refresh the list
+                resolve(true);
+              } else {
+                Alert.alert("Error", "Failed to delete media.");
+                resolve(false);
+              }
+              setLoading(false);
+            },
+          },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) }
+      );
+    });
+  };
+
+  const handleDeleteProduct = (productId) => {
+    Alert.alert(
+      "Delete Product",
+      "Are you sure you want to delete this product and all its associated media? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          onPress: async () => {
+            setLoading(true);
+            const success = await deleteProduct(productId);
+            if (success) {
+              Alert.alert("Success", "Product deleted successfully.");
+              fetchProductsAndMediaUrl(); // Refresh the list
+            } else {
+              Alert.alert("Error", "Failed to delete product.");
+            }
+            setLoading(false);
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const renderProductItem = ({ item }) => (
     <View style={styles.productRow}>
-      <Text style={styles.productCell}>{item.product_name}</Text>
+      <Text style={[styles.productCell, styles.productNameCell]}>{item.product_name}</Text>
       <Text style={styles.productCell}>{item.amount}</Text>
       <Text style={styles.productCell}>{item.quantity}</Text>
       <Text style={styles.productCell}>{item.start_date}</Text>
@@ -98,16 +160,21 @@ const ProductScreen = ({ route }) => {
           )
         ))}
       </View>
-      <TouchableOpacity onPress={() => handleEditProduct(item)} style={styles.editIcon}>
-        <Icon name="edit" size={20} color="#007AFF" />
-      </TouchableOpacity>
+      <View style={styles.actionIconsContainer}>
+        <TouchableOpacity onPress={() => handleEditProduct(item)} style={styles.editIcon}>
+          <Icon name="edit" size={20} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.addProductButton} onPress={() => { setProductToEdit(null); setShowProductModal(true); }}>
-        <Text style={styles.addProductButtonText}>Add New Product</Text>
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => { setProductToEdit(null); setShowProductModal(true); }}
+      >
+        <Icon name="plus" size={24} color="white" />
       </TouchableOpacity>
 
       <Text style={styles.productsListTitle}>Your Products</Text>
@@ -136,13 +203,28 @@ const ProductScreen = ({ route }) => {
                   <Text style={styles.productCell}>{item.start_date}</Text>
                   <Text style={styles.productCell}>{item.end_date}</Text>
                   <View style={styles.productCellMedia}>
-                    {item.product_media.map((media, index) => (
-                      media.media_type === 'image' ? (
-                        <Image key={index} source={{ uri: media.media_type === 'url' ? media.media_url : `${mediaBaseUrl}${media.media_url}` }} style={styles.productImage} />
-                      ) : (
-                        <Text key={index} style={styles.videoPlaceholder}>Video</Text>
-                      )
-                    ))}
+                    <FlatList
+                      data={item.product_media}
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      keyExtractor={(media) => media.id.toString()}
+                      renderItem={({ item: media, index: mediaIndex }) => (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setAllMediaForViewer(item.product_media);
+                            setCurrentMediaIndex(mediaIndex);
+                            setShowMediaViewer(true);
+                          }}
+                          style={styles.mediaContainer}
+                        >
+                          {media.media_type === 'image' ? (
+                            <Image source={{ uri: media.media_url }} style={styles.productImage} />
+                          ) : (
+                            <Text style={styles.videoPlaceholder}>Video</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    />
                   </View>
                   <TouchableOpacity onPress={() => handleEditProduct(item)} style={styles.editIcon}>
                     <Icon name="edit" size={20} color="#007AFF" />
@@ -165,7 +247,62 @@ const ProductScreen = ({ route }) => {
         productToEdit={productToEdit}
         customerId={customerId}
         customerMediaUrl={customerMediaUrl}
+        onDeleteMedia={handleDeleteProductMedia}
+        onDeleteProduct={handleDeleteProduct}
+        session={session} // <--- Add this line
       />
+
+      {/* Media Viewer Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={showMediaViewer}
+        onRequestClose={() => setShowMediaViewer(false)}
+      >
+        <View style={styles.mediaViewerContainer}>
+          <TouchableOpacity style={styles.mediaViewerCloseButton} onPress={() => setShowMediaViewer(false)}>
+            <Icon name="times-circle" size={30} color="white" />
+          </TouchableOpacity>
+
+          {allMediaForViewer.length > 0 && (
+            <>
+              <TouchableOpacity
+                style={[styles.mediaNavButton, styles.mediaNavButtonLeft]}
+                onPress={() => setCurrentMediaIndex(prevIndex => Math.max(0, prevIndex - 1))}
+                disabled={currentMediaIndex === 0}
+              >
+                <Icon name="chevron-left" size={30} color="white" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.mediaNavButton, styles.mediaNavButtonRight]}
+                onPress={() => setCurrentMediaIndex(prevIndex => Math.min(allMediaForViewer.length - 1, prevIndex + 1))}
+                disabled={currentMediaIndex === allMediaForViewer.length - 1}
+              >
+                <Icon name="chevron-right" size={30} color="white" />
+              </TouchableOpacity>
+
+              {allMediaForViewer[currentMediaIndex].media_type === 'image' ? (
+                <Image
+                  source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
+                  style={styles.fullScreenMedia}
+                  resizeMode="contain"
+                />
+              ) : allMediaForViewer[currentMediaIndex].media_type === 'video' ? (
+                <Video
+                  source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
+                  style={styles.fullScreenMedia}
+                  useNativeControls
+                  resizeMode="contain"
+                  isLooping
+                />
+              ) : (
+                <Text style={styles.noMediaText}>No media to display</Text>
+              )}
+            </>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -176,23 +313,23 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: '#f5f5f5',
   },
-  addProductButton: {
-    backgroundColor: '#28a745',
-    padding: 15,
-    borderRadius: 5,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  addProductButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
-  },
   productsListTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 15,
     textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    right: 20,
+    bottom: 20,
+    backgroundColor: '#03A9F4',
+    borderRadius: 30,
+    elevation: 8,
   },
   productsList: {
     marginTop: 10,
@@ -210,6 +347,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     textAlign: 'center',
+  },
+  productNameCell: {
+    flex: 2, // Give more space to the product name
   },
   productCellMedia: {
     flex: 1.5,
@@ -235,8 +375,17 @@ const styles = StyleSheet.create({
     fontSize: 8,
     backgroundColor: '#f0f0f0',
   },
-  editIcon: {
-    padding: 5,
+  deleteMediaButton: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: 'rgba(255,0,0,0.7)',
+    borderRadius: 10,
+    padding: 3,
+  },
+  mediaContainer: {
+    position: 'relative',
+    margin: 2,
   },
   tableHeader: {
     flexDirection: 'row',
@@ -251,6 +400,38 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
     textAlign: 'center',
+  },
+  mediaViewerContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mediaViewerCloseButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 1,
+  },
+  fullScreenMedia: {
+    width: '100%',
+    height: '80%',
+  },
+  noMediaText: {
+    color: 'white',
+    fontSize: 18,
+  },
+  mediaNavButton: {
+    position: 'absolute',
+    top: '50%',
+    zIndex: 1,
+    padding: 10,
+  },
+  mediaNavButtonLeft: {
+    left: 10,
+  },
+  mediaNavButtonRight: {
+    right: 10,
   },
 });
 

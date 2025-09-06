@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, Button, Image, Alert, StyleSheet, ScrollView, FlatList, Modal, TouchableOpacity, Dimensions } from 'react-native';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
@@ -9,8 +9,14 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Video } from 'expo-av';
+import { WebView } from 'react-native-webview';
+import * as Clipboard from 'expo-clipboard'; // Added for clipboard functionality
+// Optional: Add network state monitoring
+// import NetInfo from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
+
+const mapHtml = require('../../assets/map.html');
 
 const MAX_VIDEO_SIZE_MB = 50; // 50 MB
 
@@ -27,6 +33,10 @@ const FieldManagerScreen = ({ navigation, route }) => {
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
   const [addFileOptionModalVisible, setAddFileOptionModalVisible] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false);
+  const [selectedMapCoords, setSelectedMapCoords] = useState(null);
+  const [mapReady, setMapReady] = useState(false);
+  const webViewRef = useRef(null);
 
   useEffect(() => {
     const fetchDamageReports = async () => {
@@ -61,6 +71,17 @@ const FieldManagerScreen = ({ navigation, route }) => {
       let location = await Location.getCurrentPositionAsync({});
       setLocation(location);
     })();
+
+    // Optional: Network monitoring
+    /*
+    const unsubscribe = NetInfo.addEventListener(state => {
+      if (!state.isConnected) {
+        Alert.alert('No Internet', 'Map tiles may not load without internet connection');
+      }
+    });
+
+    return () => unsubscribe();
+    */
 
   }, [areaId]);
 
@@ -215,7 +236,6 @@ const FieldManagerScreen = ({ navigation, route }) => {
     }
   };
 
-  // Move these functions inside the component
   const handleAddNewFiles = () => {
     setAddFileOptionModalVisible(true);
   };
@@ -335,6 +355,56 @@ const FieldManagerScreen = ({ navigation, route }) => {
     }
   };
 
+  const handleShowMap = (latitude, longitude) => {
+    console.log("handleShowMap called with:", { latitude, longitude });
+    if (!latitude || !longitude) {
+      Alert.alert('Location Error', 'Invalid coordinates for this report');
+      return;
+    }
+    
+    setSelectedMapCoords({ latitude, longitude });
+    setMapReady(false); // Reset map ready state
+    setShowMapModal(true);
+  };
+
+  const onMapMessage = (event) => {
+    console.log("Raw message from WebView in FieldManagerScreen:", event.nativeEvent.data);
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      console.log("Parsed message from WebView in FieldManagerScreen:", data);
+      
+      if (data.type === 'webviewLoaded') {
+        console.log("WebView has loaded and is ready in FieldManagerScreen!");
+        setMapReady(true);
+        
+        // Send initial coordinates to the map after it's ready
+        if (webViewRef.current && selectedMapCoords) {
+          setTimeout(() => { // Small delay to ensure WebView is fully ready
+            const message = {
+              type: 'initialLoad',
+              initialRegion: {
+                latitude: selectedMapCoords.latitude,
+                longitude: selectedMapCoords.longitude,
+                latitudeDelta: 0.0922,
+                longitudeDelta: 0.0421,
+              },
+            };
+            console.log("Sending initial coordinates to map from FieldManagerScreen:", message);
+            webViewRef.current.postMessage(JSON.stringify(message));
+          }, 500);
+        }
+      } else if (data.type === 'mapClick') {
+        console.log("Map clicked at in FieldManagerScreen:", data.latitude, data.longitude);
+        // Handle map click if needed
+      } else if (data.type === 'markerDrag') {
+        console.log("Marker dragged to in FieldManagerScreen:", data.latitude, data.longitude);
+        // Handle marker drag if needed
+      }
+    } catch (error) {
+      console.error("Error parsing WebView message in FieldManagerScreen:", error);
+    }
+  };
+
   const renderFilePreview = ({ item }) => {
     if (item.mimeType && item.mimeType.startsWith('image')) {
       return <Image source={{ uri: item.uri }} style={styles.imagePreview} />;
@@ -387,22 +457,36 @@ const FieldManagerScreen = ({ navigation, route }) => {
             <View style={styles.reportItem}>
               <Text style={styles.label}>Description: {item.description}</Text>
               <Text style={styles.reportDateText}>Reported At: {new Date(item.reported_at).toLocaleString()}</Text>
+              {item.latitude && item.longitude && (
+                <TouchableOpacity 
+                  onPress={() => handleShowMap(item.latitude, item.longitude)} 
+                  style={styles.mapIconContainer}
+                  accessibilityLabel="View location on map"
+                >
+                  <Icon name="map-marker" size={24} color="#007AFF" />
+                  <Text style={styles.mapIconText}>View Location</Text>
+                </TouchableOpacity>
+              )}
               <FlatList
                 data={item.damage_report_files}
                 keyExtractor={(file) => file.id.toString()}
                 renderItem={renderReportFile}
                 horizontal
+                showsHorizontalScrollIndicator={false}
               />
             </View>
           </TouchableOpacity>
         )}
       />
+      
       <TouchableOpacity
         style={styles.fab}
         onPress={() => setModalVisible(true)}
       >
         <Text style={styles.fabIcon}>+</Text>
       </TouchableOpacity>
+      
+      {/* New Report Modal */}
       <Modal
         animationType="slide"
         transparent={false}
@@ -434,6 +518,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
                 keyExtractor={(file) => file.uri}
                 renderItem={renderFilePreview}
                 horizontal
+                showsHorizontalScrollIndicator={false}
               />
               <View style={styles.buttonContainer}>
                 <TouchableOpacity
@@ -453,6 +538,8 @@ const FieldManagerScreen = ({ navigation, route }) => {
             </ScrollView>
           </View>
       </Modal>
+      
+      {/* Photo Viewer Modal */}
       <Modal
         animationType="slide"
         transparent={false}
@@ -488,6 +575,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
             )}
             horizontal
             pagingEnabled
+            showsHorizontalScrollIndicator={false}
           />
           <View style={styles.photoViewerButtonContainer}>
             <TouchableOpacity onPress={handleAddNewFiles} style={styles.photoViewerButton}>
@@ -500,6 +588,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
         </View>
       </Modal>
 
+      {/* Add File Options Modal */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -532,6 +621,79 @@ const FieldManagerScreen = ({ navigation, route }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Map Modal */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={showMapModal}
+        onRequestClose={() => {
+          setShowMapModal(!showMapModal);
+        }}
+      >
+        <View style={styles.modalView}>
+          {!mapReady && (
+            <View style={styles.mapLoadingOverlay}>
+              <Text style={styles.mapLoadingText}>Loading Map...</Text>
+            </View>
+          )}
+          <WebView
+            ref={webViewRef}
+            style={[styles.map, !mapReady && { opacity: 0 }]}
+            source={{ uri: `${mapHtml}?cachebust=${Date.now()}` }}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            allowFileAccessFromFileURLs={true}
+            allowUniversalAccessFromFileURLs={true}
+            mixedContentMode="compatibility"
+            onMessage={onMapMessage}
+            onLoadEnd={() => console.log("WebView finished loading in FieldManagerScreen!")}
+            onError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.warn('WebView error in FieldManagerScreen: ', nativeEvent);
+              Alert.alert('Map Error', 'Failed to load map. Please check your internet connection or map configuration.');
+            }}
+            onHttpError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.warn('WebView HTTP error in FieldManagerScreen: ', nativeEvent);
+            }}
+            onNavigationStateChange={(navState) => {
+              console.log('WebView navigation state change in FieldManagerScreen: ', navState.url);
+            }}
+            originWhitelist={['*']}
+            startInLoadingState={true}
+            renderLoading={() => (
+              <View style={styles.mapLoadingOverlay}>
+                <Text style={styles.mapLoadingText}>Loading Map...</Text>
+              </View>
+            )}
+          />
+          {selectedMapCoords && (
+            <View style={styles.coordsContainer}>
+              <Text style={styles.coordsText}>
+                Lat: {selectedMapCoords.latitude.toFixed(6)}, Lon: {selectedMapCoords.longitude.toFixed(6)}
+              </Text>
+              <TouchableOpacity
+                style={styles.copyButton}
+                onPress={async () => {
+                  const coordsString = `${selectedMapCoords.latitude},${selectedMapCoords.longitude}`;
+                  await Clipboard.setStringAsync(coordsString);
+                  Alert.alert('Copied!', 'Coordinates copied to clipboard.');
+                }}
+              >
+                <Icon name="copy" size={20} color="white" />
+                <Text style={styles.copyButtonText}>Copy</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonClose, styles.mapCloseButton]}
+            onPress={() => setShowMapModal(false)}
+          >
+            <Text style={styles.textStyle}>Close Map</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -546,11 +708,30 @@ const styles = StyleSheet.create({
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
+    backgroundColor: '#fff',
+    marginBottom: 5,
+    borderRadius: 8,
   },
   reportDateText: {
     fontSize: 14,
     color: '#666',
     marginBottom: 5,
+  },
+  mapIconContainer: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    padding: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  mapIconText: {
+    marginLeft: 5,
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   label: {
     fontSize: 16,
@@ -581,6 +762,32 @@ const styles = StyleSheet.create({
   largeVideo: {
     width: width,
     height: height - 200, // Adjust height to leave space for buttons and date
+  },
+  map: {
+    flex: 1,
+    width: '100%',
+  },
+  mapCloseButton: {
+    position: 'absolute',
+    bottom: 20,
+    alignSelf: 'center',
+    width: 150,
+  },
+  mapLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  mapLoadingText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
   },
   modalView: {
     flex: 1,
@@ -702,7 +909,37 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 10,
     textAlign: 'center',
-  }
+  },
+  coordsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 5,
+    padding: 8,
+    position: 'absolute',
+    top: 20, // Adjust as needed
+    alignSelf: 'center',
+    zIndex: 100,
+  },
+  coordsText: {
+    color: 'white',
+    fontSize: 14,
+    marginRight: 10,
+  },
+  copyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 5,
+  },
+  copyButtonText: {
+    color: 'white',
+    marginLeft: 5,
+    fontSize: 14,
+  },
 });
 
 export default FieldManagerScreen;
