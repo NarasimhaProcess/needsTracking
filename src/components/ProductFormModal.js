@@ -15,16 +15,17 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase, createProduct, saveProductMedia } from '../services/supabase';
+import { supabase, createProduct, saveProductMedia, createProductVariant, createVariantOption, deleteProductVariants } from '../services/supabase';
 import { Video } from 'expo-av';
+import VariantManager from './VariantManager';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
 const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
   const [productName, setProductName] = useState('');
   const [amount, setAmount] = useState('');
-  const [size, setSize] = useState('');
   const [quantity, setQuantity] = useState('');
+  const [productVariants, setProductVariants] = useState([]);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -36,11 +37,9 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const [allModalMediaForViewer, setAllModalMediaForViewer] = useState([]);
 
   useEffect(() => {
-    console.log("ProductFormModal - productToEdit:", productToEdit);
     if (productToEdit) {
       setProductName(productToEdit.product_name);
       setAmount(productToEdit.amount.toString());
-      setSize(productToEdit.size);
       setQuantity(productToEdit.quantity.toString());
       setStartDate(new Date(productToEdit.start_date));
       setEndDate(new Date(productToEdit.end_date));
@@ -49,15 +48,15 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         type: media.media_type,
         id: media.id
       })));
+      setProductVariants(productToEdit.product_variants || []);
     } else {
-      // Reset form for new product
       setProductName('');
       setAmount('');
-      setSize('');
       setQuantity('');
       setStartDate(new Date());
       setEndDate(new Date());
       setSelectedMedia([]);
+      setProductVariants([]);
     }
   }, [productToEdit]);
 
@@ -82,7 +81,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       for (const asset of result.assets) {
         if (mediaType === 'video' && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
           Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
-          continue; // Skip this large video
+          continue;
         }
         newMedia.push({ uri: asset.uri, type: mediaType });
       }
@@ -94,14 +93,14 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   };
 
   const handleRemoveMedia = async (mediaToRemove) => {
-    if (mediaToRemove.id) { // Existing media, call parent's delete function
+    if (mediaToRemove.id) {
       if (onDeleteMedia) {
         const success = await onDeleteMedia(mediaToRemove.id, mediaToRemove.uri);
         if (success) {
           setSelectedMedia(prevMedia => prevMedia.filter(media => media.id !== mediaToRemove.id));
         }
       }
-    } else { // New media, just remove from local state
+    } else {
       setSelectedMedia(prevMedia => prevMedia.filter(media => media.uri !== mediaToRemove.uri));
     }
   };
@@ -118,7 +117,6 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       customer_id: customerId,
       product_name: productName,
       amount: parseFloat(amount),
-      size: size,
       quantity: parseInt(quantity),
       start_date: startDate.toISOString().split('T')[0],
       end_date: endDate.toISOString().split('T')[0],
@@ -126,7 +124,6 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 
     let productResult;
     if (productToEdit) {
-      // Update existing product
       const { data, error } = await supabase
         .from('products')
         .update(productData)
@@ -139,27 +136,40 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         return;
       }
       productResult = data ? data[0] : null;
+      await deleteProductVariants(productResult.id);
     } else {
-      // Create new product
       productResult = await createProduct(productData);
     }
 
     if (productResult) {
       try {
-        // Otherwise, upload new media files
-        for (const media of selectedMedia.filter(m => !m.id)) { // Only upload new media (without existing id)
+        for (const variant of productVariants) {
+          const variantResult = await createProductVariant({
+            product_id: productResult.id,
+            name: variant.name,
+          });
+          if (variantResult) {
+            for (const option of variant.variant_options) {
+              await createVariantOption({
+                variant_id: variantResult.id,
+                value: option.value,
+              });
+            }
+          }
+        }
+
+        for (const media of selectedMedia.filter(m => !m.id)) {
           const mediaUrl = await saveProductMedia(productResult.id, media.uri, media.type, customerId, session.access_token);
           if (!mediaUrl) {
             throw new Error("Failed to upload media.");
           }
         }
-        // Handle media deletion (if needed, requires a deleteMedia function in supabase.js)
 
-        onSubmit(); // Notify parent to refresh list
-        onClose(); // Close modal
-      } catch (mediaError) {
-        console.error("Error saving product media:", mediaError.message);
-        Alert.alert("Error", `Failed to save product media: ${mediaError.message}`);
+        onSubmit();
+        onClose();
+      } catch (e) {
+        console.error("Error saving product details:", e.message);
+        Alert.alert("Error", `Failed to save product details: ${e.message}`);
       }
     } else {
       Alert.alert("Error", "Failed to save product.");
@@ -175,133 +185,130 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       onRequestClose={onClose}
     >
       <View style={styles.modalContainer}>
-        <ScrollView contentContainerStyle={styles.modalContent}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Icon name="times-circle" size={24} color="#333" />
-          </TouchableOpacity>
-          <Text style={styles.modalTitle}>{productToEdit ? 'Edit Product' : 'Add New Product'}</Text>
-
-          <Text style={styles.label}>Product Name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter product name"
-            value={productName}
-            onChangeText={setProductName}
-          />
-          <Text style={styles.label}>Amount</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter amount"
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="numeric"
-          />
-          <Text style={styles.label}>Size</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter size"
-            value={size}
-            onChangeText={setSize}
-          />
-          <Text style={styles.label}>Quantity</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter quantity"
-            value={quantity}
-            onChangeText={setQuantity}
-            keyboardType="numeric"
-          />
-
-          <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
-            <Text>Start Date: {startDate.toLocaleDateString()}</Text>
-          </TouchableOpacity>
-          {showStartDatePicker && (
-            <DateTimePicker
-              value={startDate}
-              mode="date"
-              display="default"
-              onChange={(event, selectedDate) => {
-                setShowStartDatePicker(false);
-                if (selectedDate) setStartDate(selectedDate);
-              }}
-            />
-          )}
-
-          <TouchableOpacity onPress={() => setShowEndDatePicker(true)} style={styles.datePickerButton}>
-            <Text>End Date: {endDate.toLocaleDateString()}</Text>
-          </TouchableOpacity>
-          {showEndDatePicker && (
-            <DateTimePicker
-              value={endDate}
-              mode="date"
-              display="default"
-              onChange={(event, selectedDate) => {
-                setShowEndDatePicker(false);
-                if (selectedDate) setEndDate(selectedDate);
-              }}
-            />
-          )}
-
-          <View style={styles.mediaPickerContainer}>
-            <TouchableOpacity onPress={() => handleMediaPick('image')} style={styles.mediaButton}>
-              <Text style={styles.mediaButtonText}>Pick Image</Text>
+        <View style={styles.modalContent}>
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+              <Icon name="times-circle" size={24} color="#333" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => handleMediaPick('video')} style={styles.mediaButton}>
-              <Text style={styles.mediaButtonText}>Pick Video</Text>
-            </TouchableOpacity>
-          </View>
+            <Text style={styles.modalTitle}>{productToEdit ? 'Edit Product' : 'Add New Product'}</Text>
 
-          <View style={styles.selectedMediaContainer}>
-            <FlatList
-              data={selectedMedia}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(media, index) => media.id ? media.id.toString() : `new-${index}`}
-              renderItem={({ item: media, index }) => (
-                <TouchableOpacity
-                  onPress={() => {
-                    setAllModalMediaForViewer(selectedMedia);
-                    setCurrentModalMediaIndex(index);
-                    setShowModalMediaViewer(true);
-                  }}
-                  style={styles.thumbnailContainer}
-                >
-                  {media.type === 'image' ? (
-                    <Image source={{ uri: media.uri }} style={styles.thumbnail} />
-                  ) : (
-                    <Text style={styles.thumbnailText}>Video</Text>
-                  )}
-                  <TouchableOpacity onPress={() => handleRemoveMedia(media)} style={styles.removeMediaButton}>
-                    <Icon name="times-circle" size={20} color="red" />
+            <Text style={styles.label}>Product Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter product name"
+              value={productName}
+              onChangeText={setProductName}
+            />
+            <Text style={styles.label}>Amount</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter amount"
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+            />
+            <Text style={styles.label}>Quantity</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter quantity"
+              value={quantity}
+              onChangeText={setQuantity}
+              keyboardType="numeric"
+            />
+
+            <VariantManager product={productToEdit} onVariantsChange={setProductVariants} />
+
+            <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
+              <Text>Start Date: {startDate.toLocaleDateString()}</Text>
+            </TouchableOpacity>
+            {showStartDatePicker && (
+              <DateTimePicker
+                value={startDate}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowStartDatePicker(false);
+                  if (selectedDate) setStartDate(selectedDate);
+                }}
+              />
+            )}
+
+            <TouchableOpacity onPress={() => setShowEndDatePicker(true)} style={styles.datePickerButton}>
+              <Text>End Date: {endDate.toLocaleDateString()}</Text>
+            </TouchableOpacity>
+            {showEndDatePicker && (
+              <DateTimePicker
+                value={endDate}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowEndDatePicker(false);
+                  if (selectedDate) setEndDate(selectedDate);
+                }}
+              />
+            )}
+
+            <View style={styles.mediaPickerContainer}>
+              <TouchableOpacity onPress={() => handleMediaPick('image')} style={styles.mediaButton}>
+                <Text style={styles.mediaButtonText}>Pick Image</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleMediaPick('video')} style={styles.mediaButton}>
+                <Text style={styles.mediaButtonText}>Pick Video</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.selectedMediaContainer}>
+              <FlatList
+                data={selectedMedia}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyExtractor={(media, index) => media.id ? media.id.toString() : `new-${index}`}
+                renderItem={({ item: media, index }) => (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAllModalMediaForViewer(selectedMedia);
+                      setCurrentModalMediaIndex(index);
+                      setShowModalMediaViewer(true);
+                    }}
+                    style={styles.thumbnailContainer}
+                  >
+                    {media.type === 'image' ? (
+                      <Image source={{ uri: media.uri }} style={styles.thumbnail} />
+                    ) : (
+                      <Text style={styles.thumbnailText}>Video</Text>
+                    )}
+                    <TouchableOpacity onPress={() => handleRemoveMedia(media)} style={styles.removeMediaButton}>
+                      <Icon name="times-circle" size={20} color="red" />
+                    </TouchableOpacity>
                   </TouchableOpacity>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-     
-          <TouchableOpacity
-            style={styles.bottomButton} // New style for bottom button
-            onPress={handleSubmit}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Save Product'}</Text>
-          </TouchableOpacity>
-
-          {productToEdit && (
+                )}
+              />
+            </View>
+          </ScrollView>
+          <View style={styles.buttonContainer}>
             <TouchableOpacity
-              style={[styles.bottomButton, styles.deleteButton]} // Apply delete button style
-              onPress={() => {
-                onDeleteProduct(productToEdit.id);
-                onClose(); // Close modal after initiating delete
-              }}
+              style={styles.bottomButton}
+              onPress={handleSubmit}
               disabled={loading}
             >
-              <Text style={styles.buttonText}>Delete Product</Text>
+              <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Save Product'}</Text>
             </TouchableOpacity>
-          )}
-        </ScrollView>}
 
-        {/* Modal Media Viewer */}
+            {productToEdit && (
+              <TouchableOpacity
+                style={[styles.bottomButton, styles.deleteButton]}
+                onPress={() => {
+                  onDeleteProduct(productToEdit.id);
+                  onClose();
+                }}
+                disabled={loading}
+              >
+                <Text style={styles.buttonText}>Delete Product</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         <Modal
           animationType="fade"
           transparent={true}
@@ -367,8 +374,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     padding: 20,
     width: '100%',
+    height: '85%',
+  },
+  scrollContent: {
     flexGrow: 1,
-    maxHeight: '85%',
+  },
+  buttonContainer: {
+    paddingBottom: 20,
   },
   closeButton: {
     position: 'absolute',
@@ -426,9 +438,9 @@ const styles = StyleSheet.create({
   selectedMediaContainer: {
     flexDirection: 'row',
     marginBottom: 10,
-    width: '100%', // Ensure the container has a defined width
+    width: '100%',
   },
-  mediaThumbnailContainer: {
+  thumbnailContainer: {
     position: 'relative',
     margin: 5,
   },
@@ -468,17 +480,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 18,
   },
-  bottomButton: { // New style
+  bottomButton: {
     backgroundColor: '#28a745',
     padding: 15,
     borderRadius: 5,
     alignItems: 'center',
     marginHorizontal: 20,
-    marginBottom: 20,
+    marginBottom: 10,
   },
   deleteButton: {
-    backgroundColor: '#dc3545', // Red color for delete
-    marginTop: 10,
+    backgroundColor: '#dc3545',
+    marginTop: 0,
   },
   modalMediaViewerContainer: {
     flex: 1,

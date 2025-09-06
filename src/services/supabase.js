@@ -173,20 +173,178 @@ export async function saveProductMedia(productId, mediaData, mediaType, customer
   }
 }
 
-export async function getProductsWithMedia() {
+
+export async function getProductsWithDetails(customerId) {
   const { data, error } = await supabase
     .from('products')
     .select(`
       *,
-      product_media (media_url, media_type)
-    `);
+      product_media (id, media_url, media_type),
+      product_variants (
+        id,
+        name,
+        variant_options (id, value)
+      ),
+      product_variant_combinations (id, combination_string, price, quantity, sku)
+    `)
+    .eq('customer_id', customerId);
 
   if (error) {
-    console.error('Error fetching products with media:', error.message);
+    console.error('Error fetching products with details:', error.message);
     return null;
   }
   return data;
 }
+
+export async function createProductVariant(variantData) {
+  const { data, error } = await supabase
+    .from('product_variants')
+    .insert(variantData)
+    .select();
+
+  if (error) {
+    console.error('Error creating product variant:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function createVariantOption(optionData) {
+  const { data, error } = await supabase
+    .from('variant_options')
+    .insert(optionData)
+    .select();
+
+  if (error) {
+    console.error('Error creating variant option:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function createProductVariantCombination(combinationData) {
+  const { data, error } = await supabase
+    .from('product_variant_combinations')
+    .insert(combinationData)
+    .select();
+
+  if (error) {
+    console.error('Error creating product variant combination:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function deleteProductVariants(productId) {
+  const { error } = await supabase
+    .from('product_variants')
+    .delete()
+    .eq('product_id', productId);
+
+  if (error) {
+    console.error('Error deleting product variants:', error.message);
+  }
+}
+
+export async function getCart(userId) {
+  const { data, error } = await supabase
+    .from('carts')
+    .select(`
+      id,
+      cart_items (
+        id,
+        quantity,
+        product_variant_combinations (
+          id,
+          combination_string,
+          price,
+          products (
+            id,
+            product_name,
+            product_media (media_url, media_type)
+          )
+        )
+      )
+    `)
+    .eq('user_id', userId)
+    .single();
+
+  if (error) {
+    console.error('Error fetching cart:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function addToCart(userId, productVariantCombinationId, quantity) {
+  let { data: cart, error: cartError } = await supabase
+    .from('carts')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  if (cartError && cartError.code !== 'PGRST116') { // Ignore error when no cart is found
+    console.error('Error fetching cart:', cartError.message);
+    return null;
+  }
+
+  if (!cart) {
+    const { data: newCart, error: newCartError } = await supabase
+      .from('carts')
+      .insert({ user_id: userId })
+      .select('id')
+      .single();
+
+    if (newCartError) {
+      console.error('Error creating cart:', newCartError.message);
+      return null;
+    }
+    cart = newCart;
+  }
+
+  const { data, error } = await supabase
+    .from('cart_items')
+    .insert({
+      cart_id: cart.id,
+      product_variant_combination_id: productVariantCombinationId,
+      quantity: quantity,
+    })
+    .select();
+
+  if (error) {
+    console.error('Error adding to cart:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function updateCartItem(cartItemId, quantity) {
+  const { data, error } = await supabase
+    .from('cart_items')
+    .update({ quantity: quantity })
+    .eq('id', cartItemId)
+    .select();
+
+  if (error) {
+    console.error('Error updating cart item:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function removeCartItem(cartItemId) {
+  const { error } = await supabase
+    .from('cart_items')
+    .delete()
+    .eq('id', cartItemId);
+
+  if (error) {
+    console.error('Error removing cart item:', error.message);
+  }
+}
+
+
+
 
 export async function getAreas() {
   const { data, error } = await supabase
@@ -299,5 +457,112 @@ export async function deleteProduct(productId) {
   } catch (error) {
     console.error('Failed to delete product:', error.message);
     return false; // Indicate failure
+  }
+} 
+
+// Order Management Functions
+export async function getOrders(userId) {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      order_items (
+        id,
+        quantity,
+        price,
+        product_variant_combinations (
+          id,
+          combination_string,
+          products (
+            id,
+            product_name,
+            product_media (media_url, media_type)
+          )
+        )
+      )
+    `)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching orders:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function getOrderById(orderId) {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      order_items (
+        id,
+        quantity,
+        price,
+        product_variant_combinations (
+          id,
+          combination_string,
+          products (
+            id,
+            product_name,
+            product_media (media_url, media_type)
+          )
+        )
+      )
+    `)
+    .eq('id', orderId)
+    .single();
+
+  if (error) {
+    console.error('Error fetching order by ID:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function updateOrderStatus(orderId, newStatus) {
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: newStatus })
+    .eq('id', orderId)
+    .select();
+
+  if (error) {
+    console.error('Error updating order status:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function deleteOrder(orderId) {
+  try {
+    // Delete associated order items first
+    const { error: deleteItemsError } = await supabase
+      .from('order_items')
+      .delete()
+      .eq('order_id', orderId);
+
+    if (deleteItemsError) {
+      console.error('Error deleting order items:', deleteItemsError.message);
+      throw deleteItemsError;
+    }
+
+    // Then delete the order itself
+    const { error: deleteOrderError } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', orderId);
+
+    if (deleteOrderError) {
+      console.error('Error deleting order:', deleteOrderError.message);
+      throw deleteOrderError;
+    }
+
+    console.log(`Order ${orderId} and its items deleted successfully.`);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete order:', error.message);
+    return false;
   }
 } 

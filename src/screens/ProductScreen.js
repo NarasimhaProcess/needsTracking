@@ -10,7 +10,7 @@ import {
   Image,
   Modal,
 } from 'react-native';
-import { supabase, getProductsWithMedia, deleteProductMedia, deleteProduct } from '../services/supabase';
+import { supabase, getProductsWithDetails, deleteProductMedia, deleteProduct } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { Video } from 'expo-av';
 import ProductFormModal from '../components/ProductFormModal';
@@ -27,50 +27,19 @@ const ProductScreen = ({ route }) => {
   const [allMediaForViewer, setAllMediaForViewer] = useState([]);
 
   // Define fetchProductsAndMediaUrl outside useEffect to ensure stable reference
-  const fetchProductsAndMediaUrl = async () => {
+  const fetchProducts = async () => {
     if (!session || !session.user || !customerId) {
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      // Fetch customer details to get the media_url
-      const { data: customerData, error: customerError } = await supabase
-        .from('customers')
-        .select('media_url')
-        .eq('id', customerId)
-        .maybeSingle();
-
-      if (customerError) {
-        console.error("Error fetching customer media URL:", customerError.message);
-        Alert.alert("Error", "Failed to fetch customer media configuration.");
-        setLoading(false);
-        return;
-      }
-
-      if (customerData) {
-        setCustomerMediaUrl(customerData.media_url);
-      }
-
-      // Fetch products with their media
-      const { data, error } = await supabase
-        .from('products')
-        .select(`
-          *,
-          customers(media_url),
-          product_media (id, media_url, media_type)
-        `)
-        .eq('customer_id', customerId);
-
-      if (error) {
-        console.error('Error fetching products:', error.message);
-        Alert.alert("Error", "Failed to fetch products.");
-      } else {
-        console.log("Fetched products data:", data); // Add this log
+      const data = await getProductsWithDetails(customerId);
+      if (data) {
         setProducts(data);
       }
     } catch (error) {
-      console.error("Error in fetching products and media URL:", error.message);
+      console.error("Error in fetching products:", error.message);
       Alert.alert("Error", "An unexpected error occurred while fetching data.");
     } finally {
       setLoading(false);
@@ -78,7 +47,7 @@ const ProductScreen = ({ route }) => {
   };
 
   useEffect(() => {
-    fetchProductsAndMediaUrl();
+    fetchProducts();
   }, [session, customerId]);
 
   const handleEditProduct = (product) => {
@@ -87,7 +56,7 @@ const ProductScreen = ({ route }) => {
   };
 
   const handleModalSubmit = () => {
-    fetchProductsAndMediaUrl(); // Refresh the list after add/edit
+    fetchProducts(); // Refresh the list after add/edit
   };
 
   const handleDeleteProductMedia = async (mediaId, mediaUrl) => {
@@ -104,7 +73,7 @@ const ProductScreen = ({ route }) => {
               const success = await deleteProductMedia(mediaId, mediaUrl);
               if (success) {
                 Alert.alert("Success", "Media deleted successfully.");
-                fetchProductsAndMediaUrl(); // Refresh the list
+                fetchProducts(); // Refresh the list
                 resolve(true);
               } else {
                 Alert.alert("Error", "Failed to delete media.");
@@ -132,7 +101,7 @@ const ProductScreen = ({ route }) => {
             const success = await deleteProduct(productId);
             if (success) {
               Alert.alert("Success", "Product deleted successfully.");
-              fetchProductsAndMediaUrl(); // Refresh the list
+              fetchProducts(); // Refresh the list
             } else {
               Alert.alert("Error", "Failed to delete product.");
             }
@@ -188,13 +157,14 @@ const ProductScreen = ({ route }) => {
             <Text style={styles.tableHeaderCell}>Qty</Text>
             <Text style={styles.tableHeaderCell}>Start Date</Text>
             <Text style={styles.tableHeaderCell}>End Date</Text>
+            <Text style={styles.tableHeaderCell}>Variants</Text>
             <Text style={styles.tableHeaderCell}>Media</Text>
             <Text style={styles.tableHeaderCell}>Edit</Text>
           </View>
           <FlatList
             data={products}
             renderItem={({ item }) => {
-              const mediaBaseUrl = item.customers.media_url || `https://otmklncbcfbfrvvtdgme.storage.supabase.co/storage/v1/object/public/productsmedia/`;
+              const mediaBaseUrl = item.customers?.media_url || `https://otmklncbcfbfrvvtdgme.storage.supabase.co/storage/v1/object/public/productsmedia/`;
               return (
                 <View style={styles.productRow}>
                   <Text style={styles.productCell}>{item.product_name}</Text>
@@ -202,11 +172,16 @@ const ProductScreen = ({ route }) => {
                   <Text style={styles.productCell}>{item.quantity}</Text>
                   <Text style={styles.productCell}>{item.start_date}</Text>
                   <Text style={styles.productCell}>{item.end_date}</Text>
+                  <View style={styles.productCell}>
+                    {item.product_variants.map(variant => (
+                      <Text key={variant.id}>{variant.name}: {variant.variant_options.map(opt => opt.value).join(', ')}</Text>
+                    ))}
+                  </View>
                   <View style={styles.productCellMedia}>
                     <FlatList
                       data={item.product_media}
                       horizontal
-                      showsHorizontalScrollIndicator={false}
+                      showsHorizontalScrollIndicator={true}
                       keyExtractor={(media) => media.id.toString()}
                       renderItem={({ item: media, index: mediaIndex }) => (
                         <TouchableOpacity
@@ -234,6 +209,7 @@ const ProductScreen = ({ route }) => {
             }}
             keyExtractor={(item) => item.id.toString()}
             style={styles.productsList}
+            showsVerticalScrollIndicator={true}
           />
         </View>
       ) : (
