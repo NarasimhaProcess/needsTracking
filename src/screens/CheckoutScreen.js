@@ -111,6 +111,7 @@ const CheckoutScreen = ({ navigation, route }) => {
         onChangeText={setCountry}
       />
       <Button title={loading ? 'Placing Order...' : 'Place Order'} onPress={handlePlaceOrder} disabled={loading} />
+      <Button title="Pay with UPI QR" onPress={() => navigation.navigate('UpiQr', { cart, totalAmount, shippingAddress })} />
     </ScrollView>
   );
 };

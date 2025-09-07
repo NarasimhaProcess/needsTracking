@@ -236,13 +236,32 @@ export async function createProductVariantCombination(combinationData) {
 }
 
 export async function deleteProductVariants(productId) {
-  const { error } = await supabase
-    .from('product_variants')
-    .delete()
-    .eq('product_id', productId);
+  try {
+    // Delete product_variant_combinations first
+    const { error: combinationsError } = await supabase
+      .from('product_variant_combinations')
+      .delete()
+      .eq('product_id', productId);
 
-  if (error) {
-    console.error('Error deleting product variants:', error.message);
+    if (combinationsError) {
+      console.error('Error deleting product variant combinations:', combinationsError.message);
+      throw combinationsError;
+    }
+
+    // Then delete product_variants (variant_options will cascade due to schema)
+    const { error: variantsError } = await supabase
+      .from('product_variants')
+      .delete()
+      .eq('product_id', productId);
+
+    if (variantsError) {
+      console.error('Error deleting product variants:', variantsError.message);
+      throw variantsError;
+    }
+    console.log(`Successfully deleted variants and combinations for product ${productId}`);
+  } catch (error) {
+    console.error('Failed to delete product variants and combinations:', error.message);
+    throw error; // Re-throw to be caught by the calling function
   }
 }
 
@@ -459,6 +478,170 @@ export async function deleteProduct(productId) {
     return false; // Indicate failure
   }
 } 
+
+export async function deleteOrder(orderId) {
+  try {
+    // Delete associated order items first
+    const { error: deleteItemsError } = await supabase
+      .from('order_items')
+      .delete()
+      .eq('order_id', orderId);
+
+    if (deleteItemsError) {
+      console.error('Error deleting order items:', deleteItemsError.message);
+      throw deleteItemsError;
+    }
+
+    // Then delete the order itself
+    const { error: deleteOrderError } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', orderId);
+
+    if (deleteOrderError) {
+      console.error('Error deleting order:', deleteOrderError.message);
+      throw deleteOrderError;
+    }
+
+    console.log(`Order ${orderId} and its items deleted successfully.`);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete order:', error.message);
+    return false;
+  }
+} 
+
+export async function uploadQrImage(userId, imageUri) {
+  try {
+    const fileExtension = imageUri.split('.').pop();
+    const fileName = `${Date.now()}-${userId}.${fileExtension}`;
+    const filePath = `qr_codes/${userId}/${fileName}`;
+    const contentType = `image/${fileExtension}`;
+
+    const response = await fetch(imageUri);
+    const blob = await response.blob();
+
+    const { data, error } = await supabase.storage
+      .from('qr_codes')
+      .upload(filePath, blob, {
+        contentType: contentType,
+        upsert: false,
+      });
+
+    if (error) {
+      console.error('Error uploading QR image:', error.message);
+      return null;
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from('qr_codes')
+      .getPublicUrl(filePath);
+
+    return publicUrlData.publicUrl;
+  } catch (error) {
+    console.error('Error in uploadQrImage:', error.message);
+    return null;
+  }
+}
+
+export async function addQrCode(userId, qrImageUrl, name, isActive) {
+  const { data, error } = await supabase
+    .from('user_qr_codes')
+    .insert([{ user_id: userId, qr_image_url: qrImageUrl, name: name, is_active: isActive }])
+    .select();
+
+  if (error) {
+    console.error('Error adding QR code:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function addQrCode(userId, qrImageUrl, name, isActive) {
+  const { data, error } = await supabase
+    .from('user_qr_codes')
+    .insert([{ user_id: userId, qr_image_url: qrImageUrl, name: name, is_active: isActive }])
+    .select();
+
+  if (error) {
+    console.error('Error adding QR code:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function updateQrCode(qrCodeId, name, isActive) {
+  const { data, error } = await supabase
+    .from('user_qr_codes')
+    .update({ name: name, is_active: isActive, updated_at: new Date().toISOString() })
+    .eq('id', qrCodeId)
+    .select();
+
+  if (error) {
+    console.error('Error updating QR code:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
+}
+
+export async function deleteQrCode(qrCodeId, imageUrl) {
+  try {
+    const bucketName = 'qr_codes';
+    const pathSegments = imageUrl.split('/');
+    const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+
+    const { error: storageError } = await supabase.storage
+      .from(bucketName)
+      .remove([filePathInBucket]);
+
+    if (storageError) {
+      console.error('Error deleting QR image from storage:', storageError.message);
+      throw storageError;
+    }
+
+    const { error: dbError } = await supabase
+      .from('user_qr_codes')
+      .delete()
+      .eq('id', qrCodeId);
+
+    if (dbError) {
+      console.error('Error deleting QR code from database:', dbError.message);
+      throw dbError;
+    }
+    return true;
+  } catch (error) {
+    console.error('Failed to delete QR code:', error.message);
+    return false;
+  }
+}
+
+export async function getActiveQrCode(userId) {
+  const { data, error } = await supabase
+    .from('user_qr_codes')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .single();
+
+  if (error && error.code !== 'PGRST116') {
+    console.error('Error fetching active QR code:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function getAllQrCodes(userId) {
+  const { data, error } = await supabase
+    .from('user_qr_codes')
+    .select('*')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Error fetching all QR codes:', error.message);
+    return null;
+  }
+  return data;
+}
 
 // Order Management Functions
 export async function getOrders(userId) {

@@ -15,11 +15,41 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase, createProduct, saveProductMedia, createProductVariant, createVariantOption, deleteProductVariants } from '../services/supabase';
+import { supabase, createProduct, saveProductMedia, createProductVariant, createVariantOption, deleteProductVariants, createProductVariantCombination } from '../services/supabase';
 import { Video } from 'expo-av';
 import VariantManager from './VariantManager';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
+
+const generateVariantCombinations = (variants) => {
+  if (!variants || variants.length === 0) {
+    return [{ combination_string: '', sku: '' }];
+  }
+
+  let combinations = [];
+
+  const generate = (index, currentCombination, currentSku) => {
+    if (index === variants.length) {
+      combinations.push({
+        combination_string: currentCombination.join(', '),
+        sku: currentSku,
+      });
+      return;
+    }
+
+    const variant = variants[index];
+    for (const option of variant.variant_options) {
+      generate(
+        index + 1,
+        [...currentCombination, `${variant.name}:${option.value}`],
+        currentSku ? `${currentSku}-${option.value}` : option.value // Simple SKU generation
+      );
+    }
+  };
+
+  generate(0, [], '');
+  return combinations;
+};
 
 const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
   const [productName, setProductName] = useState('');
@@ -156,6 +186,18 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               });
             }
           }
+        }
+
+        // Generate and save product variant combinations
+        const combinations = generateVariantCombinations(productVariants);
+        for (const combo of combinations) {
+          await createProductVariantCombination({
+            product_id: productResult.id,
+            combination_string: combo.combination_string,
+            price: parseFloat(amount), // Default price from product
+            quantity: parseInt(quantity), // Default quantity from product
+            sku: combo.sku, // SKU will be generated or can be added later
+          });
         }
 
         for (const media of selectedMedia.filter(m => !m.id)) {
