@@ -1,5 +1,0 @@
-Refactor: Improve customer list display and remove search functionality
-
-- Reordered customer list columns to: Card No., Name, Mobile.
-- Adjusted column widths and alignment for better readability.
-- Removed customer search input field and related logic for a cleaner view.

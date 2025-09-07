@@ -27,7 +27,7 @@ const OrderDetailScreen = ({ route }) => {
         {item.product_variant_combinations?.combination_string ? ` (${item.product_variant_combinations.combination_string})` : ''}
       </Text>
       <Text style={styles.itemQuantity}>Quantity: {item.quantity}</Text>
-      <Text style={styles.itemPrice}>Price: ${item.price.toFixed(2)}</Text>
+      <Text style={styles.itemPrice}>Price: ₹{item.price.toFixed(2)}</Text>
     </View>
   );
 
@@ -63,7 +63,7 @@ const OrderDetailScreen = ({ route }) => {
 
       <View style={styles.detailCard}>
         <Text style={styles.label}>Total Amount:</Text>
-        <Text style={styles.value}>${order.total_amount.toFixed(2)}</Text>
+        <Text style={styles.value}>₹{order.total_amount.toFixed(2)}</Text>
       </View>
 
       <View style={styles.detailCard}>

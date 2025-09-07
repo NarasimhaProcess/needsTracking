@@ -10,6 +10,10 @@ CREATE TABLE public.products (
     quantity INT NOT NULL,
     start_date DATE,
     end_date DATE,
+    visible_from TIMESTAMPTZ,
+    visible_to TIMESTAMPTZ,
+    is_active BOOLEAN DEFAULT TRUE,
+    display_order INT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

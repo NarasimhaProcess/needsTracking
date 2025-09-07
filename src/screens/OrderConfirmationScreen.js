@@ -13,7 +13,7 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
     <View style={styles.container}>
       <Text style={styles.title}>Thank You for Your Order!</Text>
       <Text style={styles.orderId}>Order ID: {order.id}</Text>
-      <Text style={styles.totalAmount}>Total Amount: ${order.total_amount}</Text>
+      <Text style={styles.totalAmount}>Total Amount: ₹{order.total_amount}</Text>
       <Button title="Continue Shopping" onPress={() => navigation.navigate('Catalog')} />
       <Button title="View My Orders" onPress={() => navigation.navigate('Orders')} />
     </View>

@@ -65,7 +65,7 @@ const OrderListScreen = ({ navigation }) => {
         <Text style={styles.orderId}>Order ID: {item.id.substring(0, 8)}...</Text>
         <Text style={styles.orderStatus}>Status: {item.status}</Text>
       </View>
-      <Text style={styles.orderAmount}>Total: ${item.total_amount.toFixed(2)}</Text>
+      <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
       <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
       <View style={styles.actionButtons}>
         <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id })}>

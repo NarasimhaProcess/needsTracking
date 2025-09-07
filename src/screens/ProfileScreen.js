@@ -315,51 +315,9 @@ const ProfileScreen = ({ route }) => {
           )}
         </View>
       </Modal>
-
-      <Text style={styles.sectionTitle}>Your QR Codes</Text>
-      <View style={styles.qrUploadContainer}>
-        <TextInput
-          style={styles.qrNameInput}
-          placeholder="Enter QR Code Name (optional)"
-          value={newQrName}
-          onChangeText={setNewQrName}
-        />
-        <Button
-          title={uploadingQr ? 'Uploading...' : 'Upload QR Code'}
-          onPress={handleImagePick}
-          disabled={uploadingQr}
-        />
-      </View>
-
-      {loadingQrCodes ? (
-        <ActivityIndicator size="large" color="#007AFF" style={styles.loadingIndicator} />
-      ) : userQrCodes.length > 0 ? (
-        <FlatList
-          data={userQrCodes}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.qrCodeItem}>
-              <Image source={{ uri: item.qr_image_url }} style={styles.qrCodeImage} />
-              <View style={styles.qrCodeDetails}>
-                <Text style={styles.qrCodeName}>{item.name || 'Unnamed QR'}</Text>
-                <View style={styles.qrCodeActions}>
-                  <Text>Active:</Text>
-                  <Switch
-                    value={item.is_active}
-                    onValueChange={() => handleToggleActive(item.id, item.is_active)}
-                  />
-                  <TouchableOpacity onPress={() => handleDeleteQrCode(item.id, item.qr_image_url)}>
-                    <Icon name="trash" size={20} color="red" style={styles.deleteIcon} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          )}
-          contentContainerStyle={styles.qrCodesList}
-        />
-      ) : (
-        <Text>No QR codes uploaded yet.</Text>
-      )}
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {

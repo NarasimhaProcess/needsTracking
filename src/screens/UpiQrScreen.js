@@ -101,7 +101,7 @@ const UpiQrScreen = ({ navigation, route }) => {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Scan to Pay with UPI</Text>
-      <Text style={styles.amount}>Amount: ${totalAmount?.toFixed(2) || 'N/A'}</Text>
+      <Text style={styles.amount}>Amount: ₹{totalAmount?.toFixed(2) || 'N/A'}</Text>
       {activeQrImageUrl ? (
         <Image source={{ uri: activeQrImageUrl }} style={styles.qrCode} />
       ) : (

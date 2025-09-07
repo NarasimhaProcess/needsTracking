@@ -19,22 +19,35 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [country, setCountry] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handlePlaceOrder = async () => {
-    setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
+  // Calculate totalAmount outside of handlePlaceOrder
+  const totalAmount = cart.cart_items.reduce(
+    (total, item) => total + item.product_variant_combinations.price * item.quantity,
+    0
+  );
 
-    const shippingAddress = {
+  // Define shippingAddress as a state variable
+  const [shippingAddress, setShippingAddress] = useState({
+    name: '',
+    address: '',
+    city: '',
+    postalCode: '',
+    country: '',
+  });
+
+  // Update shippingAddress state as user types
+  useEffect(() => {
+    setShippingAddress({
       name,
       address,
       city,
       postalCode,
       country,
-    };
+    });
+  }, [name, address, city, postalCode, country]);
 
-    const totalAmount = cart.cart_items.reduce(
-      (total, item) => total + item.product_variant_combinations.price * item.quantity,
-      0
-    );
+  const handlePlaceOrder = async () => {
+    setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
 
     const { data: order, error: orderError } = await supabase
       .from('orders')

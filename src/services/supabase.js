@@ -187,10 +187,38 @@ export async function getProductsWithDetails(customerId) {
       ),
       product_variant_combinations (id, combination_string, price, quantity, sku)
     `)
-    .eq('customer_id', customerId);
+    .eq('customer_id', customerId)
+    .order('display_order');
 
   if (error) {
     console.error('Error fetching products with details:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function getActiveProductsWithDetails(customerId) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('products')
+    .select(`
+      *,
+      product_media (id, media_url, media_type),
+      product_variants (
+        id,
+        name,
+        variant_options (id, value)
+      ),
+      product_variant_combinations (id, combination_string, price, quantity, sku)
+    `)
+    .eq('customer_id', customerId)
+    .eq('is_active', true)
+    .or(`visible_from.is.null,visible_from.lte.${now}`)
+    .or(`visible_to.is.null,visible_to.gte.${now}`)
+    .order('display_order');
+
+  if (error) {
+    console.error('Error fetching active products with details:', error.message);
     return null;
   }
   return data;
@@ -557,19 +585,6 @@ export async function addQrCode(userId, qrImageUrl, name, isActive) {
   return data ? data[0] : null;
 }
 
-export async function addQrCode(userId, qrImageUrl, name, isActive) {
-  const { data, error } = await supabase
-    .from('user_qr_codes')
-    .insert([{ user_id: userId, qr_image_url: qrImageUrl, name: name, is_active: isActive }])
-    .select();
-
-  if (error) {
-    console.error('Error adding QR code:', error.message);
-    return null;
-  }
-  return data ? data[0] : null;
-}
-
 export async function updateQrCode(qrCodeId, name, isActive) {
   const { data, error } = await supabase
     .from('user_qr_codes')
@@ -716,36 +731,4 @@ export async function updateOrderStatus(orderId, newStatus) {
     return null;
   }
   return data ? data[0] : null;
-}
-
-export async function deleteOrder(orderId) {
-  try {
-    // Delete associated order items first
-    const { error: deleteItemsError } = await supabase
-      .from('order_items')
-      .delete()
-      .eq('order_id', orderId);
-
-    if (deleteItemsError) {
-      console.error('Error deleting order items:', deleteItemsError.message);
-      throw deleteItemsError;
-    }
-
-    // Then delete the order itself
-    const { error: deleteOrderError } = await supabase
-      .from('orders')
-      .delete()
-      .eq('id', orderId);
-
-    if (deleteOrderError) {
-      console.error('Error deleting order:', deleteOrderError.message);
-      throw deleteOrderError;
-    }
-
-    console.log(`Order ${orderId} and its items deleted successfully.`);
-    return true;
-  } catch (error) {
-    console.error('Failed to delete order:', error.message);
-    return false;
-  }
 } 

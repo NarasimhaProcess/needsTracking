@@ -13,9 +13,11 @@ import {
 import { supabase, getProductsWithDetails, deleteProductMedia, deleteProduct } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { Video } from 'expo-av';
+import { useNavigation } from '@react-navigation/native';
 import ProductFormModal from '../components/ProductFormModal';
 
 const ProductScreen = ({ route }) => {
+  const navigation = useNavigation();
   const { session, customerId } = route.params;
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState([]); // Stores fetched products
@@ -82,8 +84,7 @@ const ProductScreen = ({ route }) => {
               setLoading(false);
             },
           },
-        ],
-        { cancelable: true, onDismiss: () => resolve(false) }
+        ]
       );
     });
   };
@@ -146,6 +147,13 @@ const ProductScreen = ({ route }) => {
         <Icon name="plus" size={24} color="white" />
       </TouchableOpacity>
 
+      <TouchableOpacity
+        style={styles.inventoryButton}
+        onPress={() => navigation.navigate('Inventory', { customerId })}
+      >
+        <Text style={styles.inventoryButtonText}>Manage Inventory</Text>
+      </TouchableOpacity>
+
       <Text style={styles.productsListTitle}>Your Products</Text>
       {loading ? (
         <ActivityIndicator size="large" color="#007AFF" />
@@ -154,9 +162,12 @@ const ProductScreen = ({ route }) => {
           <View style={styles.tableHeader}>
             <Text style={styles.tableHeaderCell}>Name</Text>
             <Text style={styles.tableHeaderCell}>Amount</Text>
-            <Text style={styles.tableHeaderCell}>Qty</Text>
             <Text style={styles.tableHeaderCell}>Start Date</Text>
             <Text style={styles.tableHeaderCell}>End Date</Text>
+            <Text style={styles.tableHeaderCell}>Visible From</Text>
+            <Text style={styles.tableHeaderCell}>Visible To</Text>
+            <Text style={styles.tableHeaderCell}>Order</Text>
+            <Text style={styles.tableHeaderCell}>Active</Text>
             <Text style={styles.tableHeaderCell}>Variants</Text>
             <Text style={styles.tableHeaderCell}>Media</Text>
             <Text style={styles.tableHeaderCell}>Edit</Text>
@@ -169,9 +180,14 @@ const ProductScreen = ({ route }) => {
                 <View style={styles.productRow}>
                   <Text style={styles.productCell}>{item.product_name}</Text>
                   <Text style={styles.productCell}>{item.amount}</Text>
-                  <Text style={styles.productCell}>{item.quantity}</Text>
                   <Text style={styles.productCell}>{item.start_date}</Text>
                   <Text style={styles.productCell}>{item.end_date}</Text>
+                  <Text style={styles.productCell}>{new Date(item.visible_from).toLocaleString()}</Text>
+                  <Text style={styles.productCell}>{new Date(item.visible_to).toLocaleString()}</Text>
+                  <Text style={styles.productCell}>{item.display_order}</Text>
+                  <Text style={[styles.productCell, { color: item.is_active ? 'green' : 'red' }]}>
+                    {item.is_active ? 'Yes' : 'No'}
+                  </Text>
                   <View style={styles.productCell}>
                     {item.product_variants.map(variant => (
                       <Text key={variant.id}>{variant.name}: {variant.variant_options.map(opt => opt.value).join(', ')}</Text>
@@ -294,6 +310,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 15,
     textAlign: 'center',
+  },
+  inventoryButton: {
+    backgroundColor: '#007AFF',
+    padding: 10,
+    borderRadius: 5,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  inventoryButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
   fab: {
     position: 'absolute',

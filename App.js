@@ -23,6 +23,8 @@ import OrderConfirmationScreen from './src/screens/OrderConfirmationScreen';
 import OrderListScreen from './src/screens/OrderListScreen';
 import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import OrderEditScreen from './src/screens/OrderEditScreen';
+import UpiQrScreen from './src/screens/UpiQrScreen';
+import InventoryScreen from './src/screens/InventoryScreen';
 import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
 // Import services
@@ -240,6 +242,7 @@ export default function App() {
             <Stack.Screen name="UpiQr" component={UpiQrScreen} />
             <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
             <Stack.Screen name="OrderEdit" component={OrderEditScreen} />
+            <Stack.Screen name="Inventory" component={InventoryScreen} />
             </>
         ) : (
           <>

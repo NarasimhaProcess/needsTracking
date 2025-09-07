@@ -9,7 +9,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { getProductsWithDetails } from '../services/supabase';
+import { getActiveProductsWithDetails } from '../services/supabase';
 
 const CatalogScreen = ({ navigation, route }) => {
   const { customerId } = route.params;
@@ -20,7 +20,7 @@ const CatalogScreen = ({ navigation, route }) => {
     useCallback(() => {
       const fetchProducts = async () => {
         setLoading(true);
-        const data = await getProductsWithDetails(customerId);
+        const data = await getActiveProductsWithDetails(customerId);
         if (data) {
           setProducts(data);
         }

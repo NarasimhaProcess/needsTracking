@@ -57,7 +57,7 @@ const CartScreen = ({ navigation }) => {
       <View style={styles.itemDetails}>
         <Text style={styles.itemName}>{item.product_variant_combinations.products.product_name}</Text>
         <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
-        <Text style={styles.itemPrice}>${item.product_variant_combinations.price}</Text>
+        <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
         <View style={styles.quantityContainer}>
           <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
             <Icon name="minus-circle" size={20} color="#555" />

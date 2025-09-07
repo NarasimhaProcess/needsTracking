@@ -87,7 +87,7 @@ const ProductDetailScreen = ({ route }) => {
 
       <View style={styles.detailsContainer}>
         <Text style={styles.productName}>{product.product_name}</Text>
-        <Text style={styles.productPrice}>${product.amount}</Text>
+        <Text style={styles.productPrice}>₹{product.amount}</Text>
 
         {product.product_variants.map((variant) => (
           <View key={variant.id} style={styles.variantContainer}>

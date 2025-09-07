@@ -11,6 +11,7 @@ import {
   FlatList,
   Modal,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
@@ -21,9 +22,9 @@ import VariantManager from './VariantManager';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
-const generateVariantCombinations = (variants) => {
+const generateVariantCombinations = (variants, basePrice) => {
   if (!variants || variants.length === 0) {
-    return [{ combination_string: '', sku: '' }];
+    return [{ combination_string: '', sku: '', price: basePrice, quantity: 0 }];
   }
 
   let combinations = [];
@@ -33,6 +34,8 @@ const generateVariantCombinations = (variants) => {
       combinations.push({
         combination_string: currentCombination.join(', '),
         sku: currentSku,
+        price: basePrice, // Default to base price
+        quantity: 0, // Default to 0
       });
       return;
     }
@@ -54,12 +57,18 @@ const generateVariantCombinations = (variants) => {
 const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
   const [productName, setProductName] = useState('');
   const [amount, setAmount] = useState('');
-  const [quantity, setQuantity] = useState('');
   const [productVariants, setProductVariants] = useState([]);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [visibleFrom, setVisibleFrom] = useState(new Date());
+  const [visibleTo, setVisibleTo] = useState(new Date());
+  const [showVisibleFromPicker, setShowVisibleFromPicker] = useState(false);
+  const [showVisibleToPicker, setShowVisibleToPicker] = useState(false);
+  const [isActive, setIsActive] = useState(true);
+  const [displayOrder, setDisplayOrder] = useState('0');
+  const [variantCombinations, setVariantCombinations] = useState([]);
   const [selectedMedia, setSelectedMedia] = useState([]); // Stores URIs of selected images/videos
   const [loading, setLoading] = useState(false);
   const [showModalMediaViewer, setShowModalMediaViewer] = useState(false);
@@ -70,25 +79,37 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
     if (productToEdit) {
       setProductName(productToEdit.product_name);
       setAmount(productToEdit.amount.toString());
-      setQuantity(productToEdit.quantity.toString());
       setStartDate(new Date(productToEdit.start_date));
       setEndDate(new Date(productToEdit.end_date));
+      setVisibleFrom(productToEdit.visible_from ? new Date(productToEdit.visible_from) : new Date());
+      setVisibleTo(productToEdit.visible_to ? new Date(productToEdit.visible_to) : new Date());
+      setIsActive(productToEdit.is_active);
+      setDisplayOrder(productToEdit.display_order ? productToEdit.display_order.toString() : '0');
       setSelectedMedia(productToEdit.product_media.map(media => ({
         uri: media.media_url,
         type: media.media_type,
         id: media.id
       })));
       setProductVariants(productToEdit.product_variants || []);
+      setVariantCombinations(productToEdit.product_variant_combinations || []);
     } else {
       setProductName('');
       setAmount('');
-      setQuantity('');
       setStartDate(new Date());
       setEndDate(new Date());
+      setVisibleFrom(new Date());
+      setVisibleTo(new Date());
       setSelectedMedia([]);
       setProductVariants([]);
     }
   }, [productToEdit]);
+
+  useEffect(() => {
+    if (productVariants.length > 0) {
+      const newCombinations = generateVariantCombinations(productVariants, parseFloat(amount) || 0);
+      setVariantCombinations(newCombinations);
+    }
+  }, [productVariants, amount]);
 
   const handleMediaPick = async (mediaType) => {
     let result;
@@ -147,9 +168,12 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       customer_id: customerId,
       product_name: productName,
       amount: parseFloat(amount),
-      quantity: parseInt(quantity),
       start_date: startDate.toISOString().split('T')[0],
       end_date: endDate.toISOString().split('T')[0],
+      visible_from: visibleFrom.toISOString(),
+      visible_to: visibleTo.toISOString(),
+      is_active: isActive,
+      display_order: parseInt(displayOrder, 10),
     };
 
     let productResult;
@@ -189,13 +213,12 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         }
 
         // Generate and save product variant combinations
-        const combinations = generateVariantCombinations(productVariants);
-        for (const combo of combinations) {
+        for (const combo of variantCombinations) {
           await createProductVariantCombination({
             product_id: productResult.id,
             combination_string: combo.combination_string,
-            price: parseFloat(amount), // Default price from product
-            quantity: parseInt(quantity), // Default quantity from product
+            price: combo.price,
+            quantity: combo.quantity,
             sku: combo.sku, // SKU will be generated or can be added later
           });
         }
@@ -249,16 +272,41 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               onChangeText={setAmount}
               keyboardType="numeric"
             />
-            <Text style={styles.label}>Quantity</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter quantity"
-              value={quantity}
-              onChangeText={setQuantity}
-              keyboardType="numeric"
-            />
 
             <VariantManager product={productToEdit} onVariantsChange={setProductVariants} />
+
+            {variantCombinations.length > 0 && (
+              <View style={styles.combinationsContainer}>
+                <Text style={styles.title}>Variant Prices and Quantities</Text>
+                {variantCombinations.map((combo, index) => (
+                  <View key={index} style={styles.combinationRow}>
+                    <Text style={styles.combinationString}>{combo.combination_string}</Text>
+                    <TextInput
+                      style={styles.comboInput}
+                      placeholder="Price"
+                      value={combo.price.toString()}
+                      onChangeText={(text) => {
+                        const newCombinations = [...variantCombinations];
+                        newCombinations[index].price = parseFloat(text) || 0;
+                        setVariantCombinations(newCombinations);
+                      }}
+                      keyboardType="numeric"
+                    />
+                    <TextInput
+                      style={styles.comboInput}
+                      placeholder="Quantity"
+                      value={combo.quantity.toString()}
+                      onChangeText={(text) => {
+                        const newCombinations = [...variantCombinations];
+                        newCombinations[index].quantity = parseInt(text, 10) || 0;
+                        setVariantCombinations(newCombinations);
+                      }}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
 
             <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
               <Text>Start Date: {startDate.toLocaleDateString()}</Text>
@@ -289,6 +337,56 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
                 }}
               />
             )}
+
+            <TouchableOpacity onPress={() => setShowVisibleFromPicker(true)} style={styles.datePickerButton}>
+              <Text>Visible From: {visibleFrom.toLocaleString()}</Text>
+            </TouchableOpacity>
+            {showVisibleFromPicker && (
+              <DateTimePicker
+                value={visibleFrom}
+                mode="datetime"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowVisibleFromPicker(false);
+                  if (selectedDate) setVisibleFrom(selectedDate);
+                }}
+              />
+            )}
+
+            <TouchableOpacity onPress={() => setShowVisibleToPicker(true)} style={styles.datePickerButton}>
+              <Text>Visible To: {visibleTo.toLocaleString()}</Text>
+            </TouchableOpacity>
+            {showVisibleToPicker && (
+              <DateTimePicker
+                value={visibleTo}
+                mode="datetime"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowVisibleToPicker(false);
+                  if (selectedDate) setVisibleTo(selectedDate);
+                }}
+              />
+            )}
+
+            <View style={styles.switchContainer}>
+              <Text style={styles.label}>Product Active</Text>
+              <Switch
+                trackColor={{ false: "#767577", true: "#81b0ff" }}
+                thumbColor={isActive ? "#f5dd4b" : "#f4f3f4"}
+                ios_backgroundColor="#3e3e3e"
+                onValueChange={setIsActive}
+                value={isActive}
+              />
+            </View>
+
+            <Text style={styles.label}>Display Order</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter display order"
+              value={displayOrder}
+              onChangeText={setDisplayOrder}
+              keyboardType="numeric"
+            />
 
             <View style={styles.mediaPickerContainer}>
               <TouchableOpacity onPress={() => handleMediaPick('image')} style={styles.mediaButton}>
@@ -450,6 +548,31 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginBottom: 10,
     fontSize: 16,
+  },
+  combinationsContainer: {
+    marginTop: 20,
+  },
+  combinationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  combinationString: {
+    flex: 2,
+  },
+  comboInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    padding: 5,
+    borderRadius: 5,
+    marginLeft: 10,
+  },
+  switchContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
   },
   datePickerButton: {
     backgroundColor: '#fff',
