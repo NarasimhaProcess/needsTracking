@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { serve } from 'std/server'
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
 const supabaseUrl = process.env.SUPABASE_URL
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY

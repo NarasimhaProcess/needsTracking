@@ -33,7 +33,7 @@ import { supabase } from './src/services/supabase';
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
-const CartIcon = ({ navigation, customerId }) => {
+const CartIcon = ({ navigation, userId }) => {
   const [cart, setCart] = useState(null);
 
   useEffect(() => {
@@ -41,18 +41,19 @@ const CartIcon = ({ navigation, customerId }) => {
       const cartData = await supabase
         .from('carts')
         .select('cart_items(id)')
-        .eq('user_id', customerId)
+        .eq('user_id', userId)
         .single();
       setCart(cartData.data);
     };
 
-    if (customerId) {
+    if (userId) {
       fetchCart();
     }
 
     const subscription = supabase
       .channel('public:cart_items')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cart_items' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cart_items' }, (payload) => {
+        console.log('Cart change received!', payload);
         fetchCart();
       })
       .subscribe();
@@ -60,16 +61,27 @@ const CartIcon = ({ navigation, customerId }) => {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [customerId]);
+  }, [userId]);
 
   return (
-    <TouchableOpacity onPress={() => navigation.navigate('Cart')} style={{ marginRight: 15 }}>
+    <TouchableOpacity onPress={() => navigation.navigate('Cart')} style={styles.cartIconContainer}>
       <Icon name="shopping-cart" size={24} color="#000" />
       {cart && cart.cart_items.length > 0 && (
-        <View style={styles.cartBadge}>
-          <Text style={styles.cartBadgeText}>{cart.cart_items.length}</Text>
-        </View>
+        <>
+          <View style={styles.cartBadge}>
+            <Text style={styles.cartBadgeText}>{cart.cart_items.length}</Text>
+          </View>
+          <Icon name="chevron-right" size={18} color="#000" style={{ marginLeft: 5 }} />
+        </>
       )}
+    </TouchableOpacity>
+  );
+};
+
+const InventoryIcon = ({ navigation, customerId }) => {
+  return (
+    <TouchableOpacity onPress={() => navigation.navigate('Inventory', { customerId })} style={{ marginRight: 15 }}>
+      <Icon name="tasks" size={24} color="#000" />
     </TouchableOpacity>
   );
 };
@@ -232,7 +244,12 @@ export default function App() {
               component={AuthStack}
               initialParams={{ session: session, customerId: appCustomerId, areaId: appAreaId }} // Pass areaId
               options={({ navigation }) => ({ 
-                headerRight: () => <CartIcon navigation={navigation} customerId={appCustomerId} />,
+                headerRight: () => (
+                  <View style={{ flexDirection: 'row' }}>
+                    <InventoryIcon navigation={navigation} customerId={appCustomerId} />
+                    <CartIcon navigation={navigation} userId={session.user.id} />
+                  </View>
+                ),
               })}
             />
             <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
@@ -266,6 +283,11 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 18,
     color: '#007AFF',
+  },
+  cartIconContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 15,
   },
   cartBadge: {
     position: 'absolute',

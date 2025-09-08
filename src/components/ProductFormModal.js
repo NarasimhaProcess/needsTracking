@@ -13,7 +13,8 @@ import {
   ActivityIndicator,
   Switch,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
+import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import * as ImagePicker from 'expo-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, createProduct, saveProductMedia, createProductVariant, createVariantOption, deleteProductVariants, createProductVariantCombination } from '../services/supabase';
@@ -56,7 +57,10 @@ const generateVariantCombinations = (variants, basePrice) => {
 
 const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
   const [productName, setProductName] = useState('');
+  const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
+  const [productType, setProductType] = useState('other');
+  const [unit, setUnit] = useState('');
   const [productVariants, setProductVariants] = useState([]);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
@@ -78,11 +82,24 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   useEffect(() => {
     if (productToEdit) {
       setProductName(productToEdit.product_name);
+      setDescription(productToEdit.description || '');
       setAmount(productToEdit.amount.toString());
+      setProductType(productToEdit.product_type || 'other');
+      setUnit(productToEdit.unit || '');
       setStartDate(new Date(productToEdit.start_date));
       setEndDate(new Date(productToEdit.end_date));
-      setVisibleFrom(productToEdit.visible_from ? new Date(productToEdit.visible_from) : new Date());
-      setVisibleTo(productToEdit.visible_to ? new Date(productToEdit.visible_to) : new Date());
+      if (productToEdit.visible_from) {
+        const [hours, minutes, seconds] = productToEdit.visible_from.split(':');
+        const fromDate = new Date();
+        fromDate.setHours(hours, minutes, seconds);
+        setVisibleFrom(fromDate);
+      }
+      if (productToEdit.visible_to) {
+        const [hours, minutes, seconds] = productToEdit.visible_to.split(':');
+        const toDate = new Date();
+        toDate.setHours(hours, minutes, seconds);
+        setVisibleTo(toDate);
+      }
       setIsActive(productToEdit.is_active);
       setDisplayOrder(productToEdit.display_order ? productToEdit.display_order.toString() : '0');
       setSelectedMedia(productToEdit.product_media.map(media => ({
@@ -94,7 +111,10 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       setVariantCombinations(productToEdit.product_variant_combinations || []);
     } else {
       setProductName('');
+      setDescription('');
       setAmount('');
+      setProductType('other');
+      setUnit('');
       setStartDate(new Date());
       setEndDate(new Date());
       setVisibleFrom(new Date());
@@ -105,11 +125,12 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   }, [productToEdit]);
 
   useEffect(() => {
-    if (productVariants.length > 0) {
+    // Only generate new combinations if creating a new product
+    if (!productToEdit && productVariants.length > 0) {
       const newCombinations = generateVariantCombinations(productVariants, parseFloat(amount) || 0);
       setVariantCombinations(newCombinations);
     }
-  }, [productVariants, amount]);
+  }, [productVariants, amount, productToEdit]);
 
   const handleMediaPick = async (mediaType) => {
     let result;
@@ -167,11 +188,14 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
     const productData = {
       customer_id: customerId,
       product_name: productName,
+      description: description,
       amount: parseFloat(amount),
+      product_type: productType,
+      unit: unit,
       start_date: startDate.toISOString().split('T')[0],
       end_date: endDate.toISOString().split('T')[0],
-      visible_from: visibleFrom.toISOString(),
-      visible_to: visibleTo.toISOString(),
+      visible_from: visibleFrom.toLocaleTimeString('en-GB'),
+      visible_to: visibleTo.toLocaleTimeString('en-GB'),
       is_active: isActive,
       display_order: parseInt(displayOrder, 10),
     };
@@ -264,6 +288,14 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               value={productName}
               onChangeText={setProductName}
             />
+            <Text style={styles.label}>Description</Text>
+            <TextInput
+              style={[styles.input, { height: 100 }]}
+              placeholder="Enter product description"
+              value={description}
+              onChangeText={setDescription}
+              multiline
+            />
             <Text style={styles.label}>Amount</Text>
             <TextInput
               style={styles.input}
@@ -272,6 +304,29 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               onChangeText={setAmount}
               keyboardType="numeric"
             />
+            <Text style={styles.label}>Product Type</Text>
+            <Picker
+              selectedValue={productType}
+              style={styles.picker}
+              onValueChange={(itemValue, itemIndex) => setProductType(itemValue)}
+            >
+              <Picker.Item label="Grocery" value="grocery" />
+              <Picker.Item label="Electronics" value="electronics" />
+              <Picker.Item label="Clothing" value="clothing" />
+              <Picker.Item label="Other" value="other" />
+            </Picker>
+            <Text style={styles.label}>Unit</Text>
+            <Picker
+              selectedValue={unit}
+              style={styles.picker}
+              onValueChange={(itemValue, itemIndex) => setUnit(itemValue)}
+            >
+              <Picker.Item label="Grams" value="grams" />
+              <Picker.Item label="Kg" value="kg" />
+              <Picker.Item label="Pcs" value="pcs" />
+              <Picker.Item label="Litre" value="l" />
+              <Picker.Item label="ml" value="ml" />
+            </Picker>
 
             <VariantManager product={productToEdit} onVariantsChange={setProductVariants} />
 
@@ -295,7 +350,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
                     <TextInput
                       style={styles.comboInput}
                       placeholder="Quantity"
-                      value={combo.quantity.toString()}
+                      value={(combo.quantity || 0).toString()}
                       onChangeText={(text) => {
                         const newCombinations = [...variantCombinations];
                         newCombinations[index].quantity = parseInt(text, 10) || 0;
@@ -311,62 +366,58 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
             <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
               <Text>Start Date: {startDate.toLocaleDateString()}</Text>
             </TouchableOpacity>
-            {showStartDatePicker && (
-              <DateTimePicker
-                value={startDate}
-                mode="date"
-                display="default"
-                onChange={(event, selectedDate) => {
-                  setShowStartDatePicker(false);
-                  if (selectedDate) setStartDate(selectedDate);
-                }}
-              />
-            )}
+            <DateTimePickerModal
+              isVisible={showStartDatePicker}
+              mode="date"
+              onConfirm={(date) => {
+                setShowStartDatePicker(false);
+                setStartDate(date);
+              }}
+              onCancel={() => setShowStartDatePicker(false)}
+              date={startDate}
+            />
 
             <TouchableOpacity onPress={() => setShowEndDatePicker(true)} style={styles.datePickerButton}>
               <Text>End Date: {endDate.toLocaleDateString()}</Text>
             </TouchableOpacity>
-            {showEndDatePicker && (
-              <DateTimePicker
-                value={endDate}
-                mode="date"
-                display="default"
-                onChange={(event, selectedDate) => {
-                  setShowEndDatePicker(false);
-                  if (selectedDate) setEndDate(selectedDate);
-                }}
-              />
-            )}
+            <DateTimePickerModal
+              isVisible={showEndDatePicker}
+              mode="date"
+              onConfirm={(date) => {
+                setShowEndDatePicker(false);
+                setEndDate(date);
+              }}
+              onCancel={() => setShowEndDatePicker(false)}
+              date={endDate}
+            />
 
             <TouchableOpacity onPress={() => setShowVisibleFromPicker(true)} style={styles.datePickerButton}>
-              <Text>Visible From: {visibleFrom.toLocaleString()}</Text>
+              <Text>Visible From: {visibleFrom.toLocaleTimeString()}</Text>
             </TouchableOpacity>
-            {showVisibleFromPicker && (
-              <DateTimePicker
-                value={visibleFrom}
-                mode="datetime"
-                display="default"
-                onChange={(event, selectedDate) => {
-                  setShowVisibleFromPicker(false);
-                  if (selectedDate) setVisibleFrom(selectedDate);
-                }}
-              />
-            )}
+            <DateTimePickerModal
+              isVisible={showVisibleFromPicker}
+              mode="time"
+              onConfirm={(date) => {
+                setShowVisibleFromPicker(false);
+                setVisibleFrom(date);
+              }}
+              onCancel={() => setShowVisibleFromPicker(false)}
+              date={visibleFrom}
+            />
 
             <TouchableOpacity onPress={() => setShowVisibleToPicker(true)} style={styles.datePickerButton}>
-              <Text>Visible To: {visibleTo.toLocaleString()}</Text>
+              <Text>Visible To: {visibleTo.toLocaleTimeString()}</Text>
             </TouchableOpacity>
-            {showVisibleToPicker && (
-              <DateTimePicker
-                value={visibleTo}
-                mode="datetime"
-                display="default"
-                onChange={(event, selectedDate) => {
-                  setShowVisibleToPicker(false);
-                  if (selectedDate) setVisibleTo(selectedDate);
-                }}
-              />
-            )}
+            <DateTimePickerModal
+              isVisible={showVisibleToPicker}
+              mode="time"
+              onConfirm={(date) => {
+                setShowVisibleToPicker(false);
+                setVisibleTo(date);
+              }}
+              onCancel={() => setShowVisibleToPicker(false)}
+              date={visibleTo}
+            />
 
             <View style={styles.switchContainer}>
               <Text style={styles.label}>Product Active</Text>
@@ -548,6 +599,11 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginBottom: 10,
     fontSize: 16,
+  },
+  picker: {
+    height: 50,
+    width: '100%',
+    marginBottom: 10,
   },
   combinationsContainer: {
     marginTop: 20,

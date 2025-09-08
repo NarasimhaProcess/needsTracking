@@ -198,7 +198,9 @@ export async function getProductsWithDetails(customerId) {
 }
 
 export async function getActiveProductsWithDetails(customerId) {
-  const now = new Date().toISOString();
+  const now = new Date();
+  const currentTime = now.toLocaleTimeString('en-GB');
+
   const { data, error } = await supabase
     .from('products')
     .select(`
@@ -213,8 +215,8 @@ export async function getActiveProductsWithDetails(customerId) {
     `)
     .eq('customer_id', customerId)
     .eq('is_active', true)
-    .or(`visible_from.is.null,visible_from.lte.${now}`)
-    .or(`visible_to.is.null,visible_to.gte.${now}`)
+    .or(`visible_from.is.null,visible_from.lte.${currentTime}`)
+    .or(`visible_to.is.null,visible_to.gte.${currentTime}`)
     .order('display_order');
 
   if (error) {

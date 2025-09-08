@@ -114,32 +114,10 @@ const ProductScreen = ({ route }) => {
     );
   };
 
-  const renderProductItem = ({ item }) => (
-    <View style={styles.productRow}>
-      <Text style={[styles.productCell, styles.productNameCell]}>{item.product_name}</Text>
-      <Text style={styles.productCell}>{item.amount}</Text>
-      <Text style={styles.productCell}>{item.quantity}</Text>
-      <Text style={styles.productCell}>{item.start_date}</Text>
-      <Text style={styles.productCell}>{item.end_date}</Text>
-      <View style={styles.productCellMedia}>
-        {item.product_media.map((media, index) => (
-          media.media_type === 'image' ? (
-            <Image key={index} source={{ uri: media.media_url }} style={styles.productImage} />
-          ) : (
-            <Text key={index} style={styles.videoPlaceholder}>Video</Text>
-          )
-        ))}
-      </View>
-      <View style={styles.actionIconsContainer}>
-        <TouchableOpacity onPress={() => handleEditProduct(item)} style={styles.editIcon}>
-          <Icon name="edit" size={20} color="#007AFF" />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   return (
     <View style={styles.container}>
+      <Text style={styles.productsListTitle}>Your Products</Text>
+
       <TouchableOpacity
         style={styles.fab}
         onPress={() => { setProductToEdit(null); setShowProductModal(true); }}
@@ -147,52 +125,25 @@ const ProductScreen = ({ route }) => {
         <Icon name="plus" size={24} color="white" />
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.inventoryButton}
-        onPress={() => navigation.navigate('Inventory', { customerId })}
-      >
-        <Text style={styles.inventoryButtonText}>Manage Inventory</Text>
-      </TouchableOpacity>
-
-      <Text style={styles.productsListTitle}>Your Products</Text>
       {loading ? (
         <ActivityIndicator size="large" color="#007AFF" />
       ) : products.length > 0 ? (
         <View>
           <View style={styles.tableHeader}>
             <Text style={styles.tableHeaderCell}>Name</Text>
-            <Text style={styles.tableHeaderCell}>Amount</Text>
             <Text style={styles.tableHeaderCell}>Start Date</Text>
             <Text style={styles.tableHeaderCell}>End Date</Text>
-            <Text style={styles.tableHeaderCell}>Visible From</Text>
-            <Text style={styles.tableHeaderCell}>Visible To</Text>
-            <Text style={styles.tableHeaderCell}>Order</Text>
-            <Text style={styles.tableHeaderCell}>Active</Text>
-            <Text style={styles.tableHeaderCell}>Variants</Text>
             <Text style={styles.tableHeaderCell}>Media</Text>
             <Text style={styles.tableHeaderCell}>Edit</Text>
           </View>
           <FlatList
             data={products}
             renderItem={({ item }) => {
-              const mediaBaseUrl = item.customers?.media_url || `https://otmklncbcfbfrvvtdgme.storage.supabase.co/storage/v1/object/public/productsmedia/`;
               return (
                 <View style={styles.productRow}>
                   <Text style={styles.productCell}>{item.product_name}</Text>
-                  <Text style={styles.productCell}>{item.amount}</Text>
-                  <Text style={styles.productCell}>{item.start_date}</Text>
-                  <Text style={styles.productCell}>{item.end_date}</Text>
-                  <Text style={styles.productCell}>{new Date(item.visible_from).toLocaleString()}</Text>
-                  <Text style={styles.productCell}>{new Date(item.visible_to).toLocaleString()}</Text>
-                  <Text style={styles.productCell}>{item.display_order}</Text>
-                  <Text style={[styles.productCell, { color: item.is_active ? 'green' : 'red' }]}>
-                    {item.is_active ? 'Yes' : 'No'}
-                  </Text>
-                  <View style={styles.productCell}>
-                    {item.product_variants.map(variant => (
-                      <Text key={variant.id}>{variant.name}: {variant.variant_options.map(opt => opt.value).join(', ')}</Text>
-                    ))}
-                  </View>
+                  <Text style={styles.productCell}>{new Date(item.start_date).toLocaleDateString()}</Text>
+                  <Text style={styles.productCell}>{new Date(item.end_date).toLocaleDateString()}</Text>
                   <View style={styles.productCellMedia}>
                     <FlatList
                       data={item.product_media}
@@ -241,7 +192,7 @@ const ProductScreen = ({ route }) => {
         customerMediaUrl={customerMediaUrl}
         onDeleteMedia={handleDeleteProductMedia}
         onDeleteProduct={handleDeleteProduct}
-        session={session} // <--- Add this line
+        session={session}
       />
 
       {/* Media Viewer Modal */}
@@ -311,17 +262,6 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     textAlign: 'center',
   },
-  inventoryButton: {
-    backgroundColor: '#007AFF',
-    padding: 10,
-    borderRadius: 5,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  inventoryButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
   fab: {
     position: 'absolute',
     width: 56,
@@ -378,14 +318,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     backgroundColor: '#f0f0f0',
   },
-  deleteMediaButton: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: 'rgba(255,0,0,0.7)',
-    borderRadius: 10,
-    padding: 3,
-  },
   mediaContainer: {
     position: 'relative',
     margin: 2,
@@ -435,6 +367,9 @@ const styles = StyleSheet.create({
   },
   mediaNavButtonRight: {
     right: 10,
+  },
+  editIcon: {
+    padding: 5,
   },
 });
 
