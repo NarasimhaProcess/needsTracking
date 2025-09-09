@@ -74,11 +74,16 @@
         addOrUpdateMarker(latitude, longitude, { icon: 'blue' }); // Blue marker for user
       } else if (data.type === 'markerUpdate' && data.markerCoordinate) {
         console.log("Handling markerUpdate:", data.markerCoordinate);
-        const { latitude, longitude, name } = data.markerCoordinate;
+        const { id, latitude, longitude, name } = data.markerCoordinate;
         const marker = L.marker([latitude, longitude]).addTo(map);
         if (name) {
           marker.bindPopup(name);
         }
+        marker.on('click', () => {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'markerClick', id }));
+          }
+        });
         customerMarkers.push(marker);
       } else if (data.type === 'drawRoute' && data.route) {
         const routeLayer = L.polyline(data.route, { color: 'blue' }).addTo(map);

@@ -58,11 +58,11 @@ const InventoryScreen = ({ route }) => {
     if (!selectedProduct) return;
 
     const { data, error } = await supabase.functions.invoke('adjust-inventory', {
-      body: JSON.stringify({
+      body: {
         product_variant_combination_id: selectedProduct.id,
         new_quantity: parseInt(adjustmentQuantity, 10),
         notes: adjustmentNotes,
-      }),
+      },
     });
 
     if (error) {
@@ -78,10 +78,10 @@ const InventoryScreen = ({ route }) => {
     if (!selectedProduct) return;
 
     const { data, error } = await supabase.functions.invoke('restock-inventory', {
-      body: JSON.stringify({
+      body: {
         product_variant_combination_id: selectedProduct.id,
         quantity_to_add: parseInt(restockQuantity, 10),
-      }),
+      },
     });
 
     if (error) {
