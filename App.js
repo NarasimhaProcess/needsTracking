@@ -25,6 +25,7 @@ import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import OrderEditScreen from './src/screens/OrderEditScreen';
 import UpiQrScreen from './src/screens/UpiQrScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
+import CustomerMapScreen from './src/screens/CustomerMapScreen';
 import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
 // Import services
@@ -146,6 +147,16 @@ function AuthStack({ route, navigation }) {
         }}
       />
       <Tab.Screen
+        name="Map"
+        component={CustomerMapScreen}
+        initialParams={{ session: session, customerId: customerId, areaId: route.params.areaId }}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="map" color={color} size={size} /> // Example icon
+          ),
+        }}
+      />
+      <Tab.Screen
         name="Profile"
         component={ProfileScreen}
         initialParams={{ session: session, customerId: customerId }}
@@ -163,39 +174,8 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [appCustomerId, setAppCustomerId] = useState(null);
   const [appAreaId, setAppAreaId] = useState(null); // New state for areaId from DB
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchAndSetSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
-      if (session && session.user) {
-        const { data: customerData, error } = await supabase
-          .from('customers')
-          .select('id, area_id')
-          .eq('email', session.user.email)
-          .maybeSingle();
-
-        if (error) {
-          console.error("Error fetching customerId/areaId in App.js:", error.message);
-          setAppCustomerId(null);
-          setAppAreaId(null);
-        } else if (customerData) {
-          setAppCustomerId(customerData.id);
-          setAppAreaId(customerData.area_id);
-        } else {
-          setAppCustomerId(null);
-          setAppAreaId(null);
-        }
-      } else {
-        setAppCustomerId(null);
-        setAppAreaId(null);
-      }
-      setLoading(false);
-    };
-
-    fetchAndSetSession();
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       if (session && session.user) {
@@ -225,13 +205,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
-    );
-  }
+  
 
   return (
     <NavigationContainer>

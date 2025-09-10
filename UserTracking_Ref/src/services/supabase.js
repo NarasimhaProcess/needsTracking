@@ -1,0 +1,1 @@
+// This file is now deprecated. All supabase client logic is in supabaseClient.js

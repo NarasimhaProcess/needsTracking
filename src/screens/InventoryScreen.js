@@ -25,6 +25,22 @@ const InventoryScreen = ({ route }) => {
     fetchProducts();
   }, []);
 
+  useEffect(() => {
+    const allVariants = products.flatMap((p) => p.product_variant_combinations);
+    if (allVariants.length > 0) {
+      if (selectedProduct) {
+        const updatedSelectedProduct = allVariants.find(v => v.id === selectedProduct.id);
+        if (updatedSelectedProduct) {
+          setSelectedProduct(updatedSelectedProduct);
+        }
+      } else {
+        const firstVariant = allVariants[0];
+        setSelectedProduct(firstVariant);
+        fetchInventoryHistory(firstVariant.id);
+      }
+    }
+  }, [products]);
+
   const fetchProducts = async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -32,7 +48,7 @@ const InventoryScreen = ({ route }) => {
       .select('*, product_variant_combinations(*)')
       .eq('customer_id', customerId);
     if (error) {
-      console.error('Error fetching products:', error.message);
+      // console.error('Error fetching products:', error.message);
     } else {
       setProducts(data);
     }
@@ -47,7 +63,7 @@ const InventoryScreen = ({ route }) => {
       .eq('product_variant_combination_id', productVariantCombinationId)
       .order('created_at', { ascending: false });
     if (error) {
-      console.error('Error fetching inventory history:', error.message);
+      // console.error('Error fetching inventory history:', error.message);
     } else {
       setInventoryHistory(data);
     }

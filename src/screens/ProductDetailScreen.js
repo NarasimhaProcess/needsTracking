@@ -8,15 +8,19 @@ import {
   TouchableOpacity,
   Button,
   Alert,
+  Modal,
 } from 'react-native';
 import { Video } from 'expo-av';
 import Swiper from 'react-native-swiper';
+import ImageViewer from 'react-native-image-zoom-viewer';
 import { addToCart, supabase } from '../services/supabase';
 
 const ProductDetailScreen = ({ route }) => {
   const { product } = route.params;
   const [selectedVariants, setSelectedVariants] = useState({});
   const [user, setUser] = useState(null);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [images, setImages] = useState([]);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -31,14 +35,12 @@ const ProductDetailScreen = ({ route }) => {
       ...selectedVariants,
       [variantName]: optionValue,
     });
-    console.log('Selected Variants after update:', { ...selectedVariants, [variantName]: optionValue }); // ADDED LINE
   };
 
   const getVariantCombination = () => {
     const combinationString = Object.entries(selectedVariants)
       .map(([key, value]) => `${key}:${value}`)
       .join(',');
-    console.log('Generated combinationString:', combinationString); // ADDED LINE
     return product.product_variant_combinations.find(
       (c) => c.combination_string === combinationString
     );
@@ -49,8 +51,6 @@ const ProductDetailScreen = ({ route }) => {
       Alert.alert('Please sign in to add items to your cart.');
       return;
     }
-
-    console.log('Product variant combinations available:', product.product_variant_combinations); // ADDED LINE
 
     const combination = getVariantCombination();
     if (!combination) {
@@ -71,16 +71,24 @@ const ProductDetailScreen = ({ route }) => {
       <Swiper style={styles.swiper} showsButtons={true}>
         {product.product_media.map((media) => (
           <View key={media.id} style={styles.slide}>
-            {media.media_type === 'image' ? (
-              <Image source={{ uri: media.media_url }} style={styles.media} />
-            ) : (
-              <Video
-                source={{ uri: media.media_url }}
-                style={styles.media}
-                useNativeControls
-                resizeMode="contain"
-              />
-            )}
+            <TouchableOpacity onPress={() => {
+              const imageUrls = product.product_media
+                .filter(m => m.media_type === 'image')
+                .map(m => ({ url: m.media_url }));
+              setImages(imageUrls);
+              setIsModalVisible(true);
+            }}>
+              {media.media_type === 'image' ? (
+                <Image source={{ uri: media.media_url }} style={styles.media} />
+              ) : (
+                <Video
+                  source={{ uri: media.media_url }}
+                  style={styles.media}
+                  useNativeControls
+                  resizeMode="contain"
+                />
+              )}
+            </TouchableOpacity>
           </View>
         ))}
       </Swiper>
@@ -111,6 +119,14 @@ const ProductDetailScreen = ({ route }) => {
 
         <Button title="Add to Cart" onPress={handleAddToCart} />
       </View>
+
+      <Modal visible={isModalVisible} transparent={true}>
+        <ImageViewer
+          imageUrls={images}
+          onCancel={() => setIsModalVisible(false)}
+          enableSwipeDown
+        />
+      </Modal>
     </ScrollView>
   );
 };

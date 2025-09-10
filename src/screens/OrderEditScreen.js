@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TextInput, Button, Alert, ScrollView } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { getOrderById, updateOrderStatus } from '../services/supabase'; // Assuming these functions are in supabase.js
 
 const OrderEditScreen = ({ route, navigation }) => {
@@ -65,13 +66,17 @@ const OrderEditScreen = ({ route, navigation }) => {
       </View>
 
       <View style={styles.formGroup}>
-        <Text style={styles.label}>Current Status:</Text>
-        <TextInput
+        <Text style={styles.label}>Update Status:</Text>
+        <Picker
+          selectedValue={status}
+          onValueChange={(itemValue) => setStatus(itemValue)}
           style={styles.input}
-          value={status}
-          onChangeText={setStatus}
-          placeholder="e.g., pending, processing, completed, cancelled"
-        />
+        >
+          <Picker.Item label="Pending" value="pending" />
+          <Picker.Item label="Completed" value="completed" />
+          <Picker.Item label="Shipped" value="shipped" />
+          <Picker.Item label="Cancelled" value="cancelled" />
+        </Picker>
       </View>
 
       {/* You can add more fields here for editing shipping address, total amount, etc.

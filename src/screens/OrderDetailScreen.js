@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList } from 'react-native';
-import { getOrderById } from '../services/supabase'; // Assuming getOrderById is in supabase.js
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
+import { getOrderById, updateOrderStatus } from '../services/supabase';
 
 const OrderDetailScreen = ({ route }) => {
   const { orderId } = route.params;
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedStatus, setSelectedStatus] = useState(null);
 
   useEffect(() => {
     const fetchOrderDetails = async () => {
@@ -13,12 +15,27 @@ const OrderDetailScreen = ({ route }) => {
       const fetchedOrder = await getOrderById(orderId);
       if (fetchedOrder) {
         setOrder(fetchedOrder);
+        setSelectedStatus(fetchedOrder.status);
       }
       setLoading(false);
     };
 
     fetchOrderDetails();
   }, [orderId]);
+
+  const handleUpdateStatus = async () => {
+    if (selectedStatus !== order.status) {
+      setLoading(true);
+      const success = await updateOrderStatus(orderId, selectedStatus);
+      if (success) {
+        setOrder({ ...order, status: selectedStatus });
+        Alert.alert('Success', 'Order status updated successfully.');
+      } else {
+        Alert.alert('Error', 'Failed to update order status.');
+      }
+      setLoading(false);
+    }
+  };
 
   const renderOrderItem = ({ item }) => (
     <View style={styles.orderItemDetail}>
@@ -62,6 +79,20 @@ const OrderDetailScreen = ({ route }) => {
       </View>
 
       <View style={styles.detailCard}>
+        <Text style={styles.label}>Update Status:</Text>
+        <Picker
+          selectedValue={selectedStatus}
+          onValueChange={(itemValue) => setSelectedStatus(itemValue)}
+          style={styles.picker}
+        >
+          <Picker.Item label="Pending" value="pending" />
+          <Picker.Item label="Completed" value="completed" />
+          <Picker.Item label="Shipped" value="shipped" />
+          <Picker.Item label="Cancelled" value="cancelled" />
+        </Picker>
+      </View>
+
+      <View style={styles.detailCard}>
         <Text style={styles.label}>Total Amount:</Text>
         <Text style={styles.value}>₹{order.total_amount.toFixed(2)}</Text>
       </View>
@@ -90,6 +121,10 @@ const OrderDetailScreen = ({ route }) => {
       ) : (
         <Text style={styles.noItemsText}>No items in this order.</Text>
       )}
+
+      <TouchableOpacity style={styles.saveButton} onPress={handleUpdateStatus}>
+        <Text style={styles.saveButtonText}>Save Changes</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 };
@@ -173,6 +208,22 @@ const styles = StyleSheet.create({
     marginTop: 20,
     fontSize: 16,
     color: '#777',
+  },
+  picker: {
+    height: 50,
+    width: '100%',
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
   },
 });
 

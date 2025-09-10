@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text, TextInput, FlatList, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { supabase } from '../services/supabase';
+import { supabase } from '../services/supabaseClient';
 import { useNavigation } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/FontAwesome';
 
 function AreaSearchBar({ onAreaSelected }) {
   const [query, setQuery] = useState('');
@@ -71,8 +70,9 @@ function AreaSearchBar({ onAreaSelected }) {
   );
 }
 
-export default function WelcomeScreen({ route }) {
+export default function CustomerMapScreen({ route }) {
   const navigation = useNavigation();
+  const { groupId, areaId } = route.params;
   const [customerLocations, setCustomerLocations] = useState([]);
   const [allAreas, setAllAreas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -92,7 +92,7 @@ export default function WelcomeScreen({ route }) {
     }
 
     fetchData();
-  }, []);
+  }, [groupId, areaId]);
 
   async function fetchAllAreas() {
       try {
@@ -107,20 +107,49 @@ export default function WelcomeScreen({ route }) {
   }
 
   async function fetchCustomerLocations() {
+      console.log('fetchCustomerLocations started. groupId:', groupId, 'areaId:', areaId);
       try {
         let query = supabase
           .from('customers')
           .select('id, name, email, latitude, longitude, area_id, mobile, book_no'); // Include mobile and book_no
 
+        if (groupId) {
+          console.log('Fetching customer_groups for groupId:', groupId);
+          // Fetch customer_ids within the selected group
+          const { data: customerGroups, error: customerGroupError } = await supabase
+            .from('customer_groups') // Assuming a customer_groups table
+            .select('customer_id')
+            .eq('group_id', groupId);
+
+          if (customerGroupError) {
+            console.error('Supabase Error fetching customer_groups:', customerGroupError);
+            throw customerGroupError;
+          }
+          console.log('customerGroups fetched:', customerGroups);
+          const customerIdsInGroup = customerGroups.map(cg => cg.customer_id);
+          query = query.in('id', customerIdsInGroup);
+        }
+
+        if (areaId) {
+          console.log('Filtering by areaId:', areaId);
+          // If areaId is provided, filter directly by area_id on the customers table
+          query = query.eq('area_id', areaId);
+        }
+
+        console.log('Executing final customers query...');
         const { data, error: fetchError } = await query;
 
         if (fetchError) {
           console.error('Supabase Error fetching customers:', fetchError);
           throw fetchError;
         }
+        console.log('Customers data fetched:', data);
 
         let filteredLocations = data.filter(customer => customer.latitude && customer.longitude);
+        console.log('Filtered locations (with lat/lon):', filteredLocations);
+
         setCustomerLocations(filteredLocations);
+        console.log('customerLocations state updated.');
       } catch (err) {
         console.error('Error fetching customer locations:', err);
         setError(err.message);
@@ -257,14 +286,6 @@ export default function WelcomeScreen({ route }) {
             javaScriptEnabled={true}
             domStorageEnabled={true}
         />
-        <View style={styles.iconContainer}>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-              <Icon name="sign-in" size={30} color="#007AFF" style={styles.icon} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-              <Icon name="user-plus" size={30} color="#007AFF" style={styles.icon} />
-            </TouchableOpacity>
-        </View>
     </View>
   );
 }
@@ -314,7 +335,5 @@ const styles = StyleSheet.create({
       padding: 10,
       borderBottomWidth: 1,
       borderBottomColor: '#eee',
-  },
-  iconContainer: { position: 'absolute', top: 40, right: 20, flexDirection: 'row', zIndex: 10 },
-  icon: { marginLeft: 15 },
+  }
 });
