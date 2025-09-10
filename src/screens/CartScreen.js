@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   Image,
-  Button,
   ActivityIndicator,
 } from 'react-native';
 import { getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
@@ -89,7 +88,9 @@ const CartScreen = ({ navigation }) => {
         renderItem={renderCartItem}
         keyExtractor={(item) => item.id.toString()}
       />
-      <Button title="Checkout" onPress={() => navigation.navigate('Checkout', { cart: cart })} />
+      <TouchableOpacity style={styles.checkoutButton} onPress={() => navigation.navigate('Checkout', { cart: cart })}>
+        <Text style={styles.checkoutButtonText}>Checkout</Text>
+      </TouchableOpacity>
     </View>
   );
 };
@@ -142,6 +143,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 50,
     fontSize: 18,
+  },
+  checkoutButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 5,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  checkoutButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });
 

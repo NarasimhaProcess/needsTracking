@@ -256,6 +256,10 @@ export async function getTopProductsWithDetails(customerId) {
   return data;
 }
 
+
+
+
+
 export async function createProductVariant(variantData) {
   const { data, error } = await supabase
     .from('product_variants')
@@ -685,6 +689,19 @@ export async function getAllQrCodes(userId) {
 
   if (error) {
     console.error('Error fetching all QR codes:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function getCustomerDocuments(customerId) {
+  const { data, error } = await supabase
+    .from('customer_documents')
+    .select('file_data, file_type')
+    .eq('customer_id', customerId);
+
+  if (error) {
+    console.error('Error fetching customer documents:', error.message);
     return null;
   }
   return data;

@@ -26,6 +26,7 @@ import OrderEditScreen from './src/screens/OrderEditScreen';
 import UpiQrScreen from './src/screens/UpiQrScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
 import CustomerMapScreen from './src/screens/CustomerMapScreen';
+
 import TopProductsScreen from './src/screens/TopProductsScreen'; // New import
 import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
@@ -182,6 +183,65 @@ const PublicNavigator = () => (
   </Stack.Navigator>
 );
 
+const BuyerNavigator = ({ session }) => (
+  <Tab.Navigator
+    screenOptions={{
+      headerShown: false,
+    }}
+  >
+    <Tab.Screen
+      name="Home"
+      component={WelcomeScreen}
+      initialParams={{ session: session }}
+      options={{
+        tabBarIcon: ({ color, size }) => (
+          <Icon name="home" color={color} size={size} />
+        ),
+      }}
+    />
+    <Tab.Screen
+      name="Catalog"
+      component={CatalogScreen}
+      initialParams={{ session: session }} // customerId will be passed from WelcomeScreen
+      options={{
+        tabBarIcon: ({ color, size }) => (
+          <Icon name="book" color={color} size={size} />
+        ),
+      }}
+    />
+    <Tab.Screen
+      name="Cart"
+      component={CartScreen}
+      initialParams={{ session: session }}
+      options={{
+        tabBarIcon: ({ color, size }) => (
+          <Icon name="shopping-cart" color={color} size={size} />
+        ),
+      }}
+    />
+    <Tab.Screen
+      name="Orders"
+      component={OrderListScreen}
+      initialParams={{ session: session }}
+      options={{
+        tabBarIcon: ({ color, size }) => (
+          <Icon name="list-alt" color={color} size={size} />
+        ),
+      }}
+    />
+    <Tab.Screen
+      name="Profile"
+      component={ProfileScreen}
+      initialParams={{ session: session }}
+      options={{
+        tabBarIcon: ({ color, size }) => (
+          <Icon name="user" color={color} size={size} />
+        ),
+      }}
+    />
+  </Tab.Navigator>
+);
+
 const AuthNavigator = ({ session, customerId, areaId }) => (
   <Stack.Navigator>
     <Stack.Screen
@@ -248,8 +308,12 @@ export default function App() {
   return (
     <NavigationContainer>
       <StatusBar style="auto" />
-      {session && session.user && appCustomerId ? (
-        <AuthNavigator session={session} customerId={appCustomerId} areaId={appAreaId} />
+      {session && session.user ? (
+        appCustomerId ? (
+          <AuthNavigator session={session} customerId={appCustomerId} areaId={appAreaId} />
+        ) : (
+          <BuyerNavigator session={session} />
+        )
       ) : (
         <PublicNavigator />
       )}

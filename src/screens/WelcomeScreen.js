@@ -1,10 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text, TextInput, FlatList, TouchableOpacity, Alert } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  Text,
+  TextInput,
+  FlatList,
+  TouchableOpacity,
+  Alert,
+  Linking,
+  Platform,
+  Modal,
+  Image,
+  ScrollView,
+  Button,
+} from 'react-native';
 import { WebView } from 'react-native-webview';
-import { supabase } from '../services/supabase';
+import { supabase, getCustomerDocuments } from '../services/supabase'; // Import getCustomerDocuments
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Location from 'expo-location';
+import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
 
 function AreaSearchBar({ onAreaSelected, onClear }) {
   const [query, setQuery] = useState('');
@@ -154,6 +170,10 @@ export default function WelcomeScreen({ route }) {
   const [error, setError] = useState(null);
   const [selectedArea, setSelectedArea] = useState(null);
   const webViewRef = useRef(null);
+  const [isCustomerImageModalVisible, setIsCustomerImageModalVisible] = useState(false); // New state
+  const [currentCustomerImages, setCurrentCustomerImages] = useState([]); // New state
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for full screen image viewer
+  const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
 
   useEffect(() => {
     async function fetchData() {
@@ -193,7 +213,7 @@ export default function WelcomeScreen({ route }) {
       try {
         let query = supabase
           .from('customers')
-          .select('id, name, email, latitude, longitude, area_id, mobile, book_no');
+          .select('id, name, email, latitude, longitude, area_id, mobile, book_no'); // Removed photo_data
 
         if (areaId) {
           query = query.eq('area_id', areaId);
@@ -232,14 +252,52 @@ export default function WelcomeScreen({ route }) {
     }
   }
 
-  const onMapMessage = (event) => {
+  const onMapMessage = async (event) => {
     const data = JSON.parse(event.nativeEvent.data);
     if (data.type === 'viewProducts') {
       navigation.navigate('CatalogScreen', { customerId: data.customerId });
     } else if (data.type === 'viewTopProducts') {
       navigation.navigate('TopProductsScreen', { customerId: data.customerId });
+    } else if (data.type === 'getDirections') {
+      const { latitude, longitude } = data;
+      const scheme = Platform.select({
+        ios: 'maps:0,0?q=',
+        android: 'geo:0,0?q=',
+      });
+      const latLng = `${latitude},${longitude}`;
+      const label = 'Customer Location';
+      const url = Platform.select({
+        ios: `${scheme}${label}@${latLng}`,
+        android: `${scheme}${latLng}(${label})`,
+      });
+
+      Linking.openURL(url);
+    } else if (data.type === 'viewCustomerImages') { // New message type
+      const { customerId } = data;
+      const documents = await getCustomerDocuments(customerId); // Fetch documents (renamed from images for clarity)
+      
+      // Filter documents to only include images (file_type is 'image' or null)
+      const images = documents ? documents.filter(doc => doc.file_type === 'image' || doc.file_type === null) : [];
+
+      if (images && images.length > 0) {
+        setCurrentCustomerImages(images.map(img => ({ url: img.file_data }))); // Use file_data
+        setIsCustomerImageModalVisible(true);
+      } else {
+        Alert.alert('No Images', 'No images found for this customer.');
+      }
     }
   };
+
+  const openImageViewer = (index) => {
+    setViewerImages(currentCustomerImages);
+    setIsImageViewerVisible(true);
+  };
+
+  const renderCustomerImage = ({ item, index }) => (
+    <TouchableOpacity onPress={() => openImageViewer(index)}>
+      <Image source={{ uri: item.url }} style={styles.customerImageThumbnail} />
+    </TouchableOpacity>
+  );
 
   if (loading) {
     return (
@@ -268,10 +326,12 @@ export default function WelcomeScreen({ route }) {
         <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
         <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
         <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" integrity="sha512-Fo3rlrZj/k7ujTnHg4CGR2D7kSs0V4LLanw2qksYuRlEzO+tcaEPQogQ0KaoGN26/zrn20ImR1DfuLWnOo7aBA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
         <style>
             body { margin: 0; padding: 0; }
             #mapid { width: 100vw; height: 100vh; background-color: #f0f0f0; }
             .leaflet-routing-container { display: none; }
+            .customer-image-button { margin-top: 5px; padding: 5px 10px; background-color: #007AFF; color: white; border-radius: 5px; border: none; cursor: pointer; }
         </style>
     </head>
     <body>
@@ -290,6 +350,14 @@ export default function WelcomeScreen({ route }) {
 
             function viewTopProducts(customerId) {
                 window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'viewTopProducts', customerId: customerId }));
+            }
+
+            function getDirections(latitude, longitude) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'getDirections', latitude: latitude, longitude: longitude }));
+            }
+
+            function viewCustomerImages(customerId) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'viewCustomerImages', customerId: customerId }));
             }
 
             var customerLocations = ${JSON.stringify(customerLocations.map(loc => ({
@@ -355,7 +423,13 @@ export default function WelcomeScreen({ route }) {
                         }
 
                         customerLocations.forEach(function(location) {
-                            var popupContent = '<b>' + (location.name || 'Customer') + '</b><br/>Mobile: ' + (location.mobile || 'N/A') + '<br/>Card No: ' + (location.book_no || 'N/A') + '<br/><button onclick="viewProducts(' + location.id + ')">View Full Catalog</button><br/><button onclick="viewTopProducts(' + location.id + ')">View Top 10 Products</button>';
+                            var popupContent = 
+                                '<b>' + (location.name || 'Customer') + '</b><br/>' +
+                                'Mobile: ' + (location.mobile || 'N/A') + '<br/>' +
+                                'Card No: ' + (location.book_no || 'N/A') +
+                                '<br/><button onclick="viewTopProducts(' + location.id + ')">View Top 10 Products</button>' +
+                                '<br/><button onclick="getDirections(' + location.latitude + ',' + location.longitude + ')"><i class="fas fa-directions"></i> Directions</button>' +
+                                '<br/><button onclick="viewCustomerImages(' + location.id + ')" class="customer-image-button"><i class="fas fa-images"></i> Images</button>';
                             var marker = L.marker([location.latitude, location.longitude])
                                 .addTo(map)
                                 .bindPopup(popupContent);
@@ -394,6 +468,32 @@ export default function WelcomeScreen({ route }) {
               <Icon name="user-plus" size={30} color="#007AFF" style={styles.icon} />
             </TouchableOpacity>
         </View>
+
+        {/* Customer Images Modal */}
+        <Modal
+          visible={isCustomerImageModalVisible}
+          transparent={true}
+          onRequestClose={() => setIsCustomerImageModalVisible(false)}
+        >
+          <View style={styles.modalBackground}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Customer Images</Text>
+              <ScrollView horizontal={true} contentContainerStyle={styles.imageScrollContainer}>
+                {currentCustomerImages.map((image, index) => (
+                  <TouchableOpacity key={index} onPress={() => openImageViewer(index)}>
+                    <Image source={{ uri: image.url }} style={styles.customerModalImage} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <Button title="Close" onPress={() => setIsCustomerImageModalVisible(false)} />
+            </View>
+          </View>
+        </Modal>
+
+        {/* Full Screen Image Viewer Modal */}
+        <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
+          <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
+        </Modal>
     </View>
   );
 }
@@ -446,4 +546,33 @@ const styles = StyleSheet.create({
   },
   iconContainer: { position: 'absolute', top: 130, right: 20, flexDirection: 'row', zIndex: 10 },
   icon: { marginLeft: 15 },
+  modalBackground: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    width: '90%',
+    maxHeight: '80%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  imageScrollContainer: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+  },
+  customerModalImage: {
+    width: 150,
+    height: 150,
+    borderRadius: 8,
+    marginHorizontal: 5,
+  },
 });

@@ -16,6 +16,7 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import { Video } from 'expo-av';
+import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 
 const CatalogScreen = ({ navigation, route }) => {
@@ -30,6 +31,8 @@ const CatalogScreen = ({ navigation, route }) => {
   const [selectedVariants, setSelectedVariants] = useState({});
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for image viewer
+  const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
 
   useFocusEffect(
     useCallback(() => {
@@ -74,7 +77,16 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const handleAddToCart = async () => {
     if (!user) {
-      Alert.alert('Please sign in to add items to your cart.');
+      Alert.alert(
+        'Sign In Required',
+        'Please sign in or create an account to add items to your cart.',
+        [
+          { text: 'Login', onPress: () => navigation.navigate('Login') },
+          { text: 'Sign Up', onPress: () => navigation.navigate('Signup') },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+        { cancelable: true }
+      );
       return;
     }
 
@@ -116,6 +128,12 @@ const CatalogScreen = ({ navigation, route }) => {
     setSelectedProduct(product);
     setQuantity(1); // Reset quantity to 1
     setIsProductDetailModalVisible(true);
+
+    // Prepare images for the image viewer
+    const imagesForViewer = product.product_media
+      .filter(media => media.media_type === 'image')
+      .map(media => ({ url: media.media_url }));
+    setViewerImages(imagesForViewer);
 
     // Automatically select the first variant if only one exists
     if (product.product_variants.length === 1 && product.product_variants[0].variant_options.length === 1) {
@@ -203,7 +221,9 @@ const CatalogScreen = ({ navigation, route }) => {
                   {selectedProduct.product_media.map((media) => (
                     <View key={media.id} style={styles.slide}>
                       {media.media_type === 'image' ? (
-                        <Image source={{ uri: media.media_url }} style={styles.media} />
+                        <TouchableOpacity onPress={() => setIsImageViewerVisible(true)}>
+                          <Image source={{ uri: media.media_url }} style={styles.media} />
+                        </TouchableOpacity>
                       ) : (
                         <Video
                           source={{ uri: media.media_url }}
@@ -274,6 +294,11 @@ const CatalogScreen = ({ navigation, route }) => {
           </View>
         </Modal>
       )}
+
+      {/* Image Viewer Modal */}
+      <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
+        <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
+      </Modal>
 
       {/* Cart Modal */}
       <Modal
