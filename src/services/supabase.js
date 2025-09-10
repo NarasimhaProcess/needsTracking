@@ -226,6 +226,36 @@ export async function getActiveProductsWithDetails(customerId) {
   return data;
 }
 
+export async function getTopProductsWithDetails(customerId) {
+  const now = new Date();
+  const currentTime = now.toLocaleTimeString('en-GB');
+
+  const { data, error } = await supabase
+    .from('products')
+    .select(`
+      *,
+      product_media (id, media_url, media_type),
+      product_variants (
+        id,
+        name,
+        variant_options (id, value)
+      ),
+      product_variant_combinations (id, combination_string, price, quantity, sku)
+    `)
+    .eq('customer_id', customerId)
+    .eq('is_active', true)
+    .or(`visible_from.is.null,visible_from.lte.${currentTime}`)
+    .or(`visible_to.is.null,visible_to.gte.${currentTime}`)
+    .order('display_order', { ascending: true })
+    .limit(10);
+
+  if (error) {
+    console.error('Error fetching top products with details:', error.message);
+    return null;
+  }
+  return data;
+}
+
 export async function createProductVariant(variantData) {
   const { data, error } = await supabase
     .from('product_variants')

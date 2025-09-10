@@ -16,11 +16,10 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import { Video } from 'expo-av';
-import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
+import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 
-const CatalogScreen = ({ navigation, route }) => {
+const TopProductsScreen = ({ navigation, route }) => {
   const { customerId } = route.params;
-  console.log("CatalogScreen received customerId:", customerId);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
@@ -37,7 +36,7 @@ const CatalogScreen = ({ navigation, route }) => {
         setLoading(true);
         const { data: { user } } = await supabase.auth.getUser();
         setUser(user);
-        const data = await getActiveProductsWithDetails(customerId);
+        const data = await getTopProductsWithDetails(customerId);
         if (data) {
           setProducts(data);
         }
@@ -465,4 +464,4 @@ const styles = StyleSheet.create({
   
 });
 
-export default CatalogScreen;
+export default TopProductsScreen;

@@ -26,6 +26,7 @@ import OrderEditScreen from './src/screens/OrderEditScreen';
 import UpiQrScreen from './src/screens/UpiQrScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
 import CustomerMapScreen from './src/screens/CustomerMapScreen';
+import TopProductsScreen from './src/screens/TopProductsScreen'; // New import
 import Icon from 'react-native-vector-icons/FontAwesome'; // Add this import
 
 // Import services
@@ -170,6 +171,43 @@ function AuthStack({ route, navigation }) {
   );
 }
 
+const PublicNavigator = () => (
+  <Stack.Navigator>
+    <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }}/>
+    <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }}/>
+    <Stack.Screen name="Signup" component={SignupScreen} options={{ headerShown: false }}/>
+    <Stack.Screen name="Catalog" component={CatalogScreen} />
+    <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
+    <Stack.Screen name="TopProductsScreen" component={TopProductsScreen} />
+  </Stack.Navigator>
+);
+
+const AuthNavigator = ({ session, customerId, areaId }) => (
+  <Stack.Navigator>
+    <Stack.Screen
+      name="Auth"
+      component={AuthStack}
+      initialParams={{ session: session, customerId: customerId, areaId: areaId }}
+      options={({ navigation }) => ({ 
+        headerRight: () => (
+          <View style={{ flexDirection: 'row' }}>
+            <InventoryIcon navigation={navigation} customerId={customerId} />
+            <CartIcon navigation={navigation} userId={session.user.id} />
+          </View>
+        ),
+      })}
+    />
+    <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
+    <Stack.Screen name="Cart" component={CartScreen} />
+    <Stack.Screen name="Checkout" component={CheckoutScreen} />
+    <Stack.Screen name="OrderConfirmation" component={OrderConfirmationScreen} />
+    <Stack.Screen name="UpiQr" component={UpiQrScreen} />
+    <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
+    <Stack.Screen name="OrderEdit" component={OrderEditScreen} />
+    <Stack.Screen name="Inventory" component={InventoryScreen} />
+  </Stack.Navigator>
+);
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [appCustomerId, setAppCustomerId] = useState(null);
@@ -210,39 +248,11 @@ export default function App() {
   return (
     <NavigationContainer>
       <StatusBar style="auto" />
-      <Stack.Navigator>
-        {session && session.user && appCustomerId ? (
-          <>
-            <Stack.Screen
-              name="Auth"
-              component={AuthStack}
-              initialParams={{ session: session, customerId: appCustomerId, areaId: appAreaId }} // Pass areaId
-              options={({ navigation }) => ({ 
-                headerRight: () => (
-                  <View style={{ flexDirection: 'row' }}>
-                    <InventoryIcon navigation={navigation} customerId={appCustomerId} />
-                    <CartIcon navigation={navigation} userId={session.user.id} />
-                  </View>
-                ),
-              })}
-            />
-            <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
-            <Stack.Screen name="Cart" component={CartScreen} />
-            <Stack.Screen name="Checkout" component={CheckoutScreen} />
-            <Stack.Screen name="OrderConfirmation" component={OrderConfirmationScreen} />
-            <Stack.Screen name="UpiQr" component={UpiQrScreen} />
-            <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
-            <Stack.Screen name="OrderEdit" component={OrderEditScreen} />
-            <Stack.Screen name="Inventory" component={InventoryScreen} />
-            </>
-        ) : (
-          <>
-            <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }}/>
-            <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }}/>
-            <Stack.Screen name="Signup" component={SignupScreen} options={{ headerShown: false }}/>
-          </>
-        )}
-      </Stack.Navigator>
+      {session && session.user && appCustomerId ? (
+        <AuthNavigator session={session} customerId={appCustomerId} areaId={appAreaId} />
+      ) : (
+        <PublicNavigator />
+      )}
     </NavigationContainer>
   );
 }
