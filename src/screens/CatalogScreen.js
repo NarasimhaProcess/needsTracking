@@ -11,13 +11,17 @@ import {
   Button,
   Alert,
   ScrollView,
+  Dimensions,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Swiper from 'react-native-swiper';
 import { Video } from 'expo-av';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { getGuestCart, addGuestCartItem } from '../services/localStorageService';
+
+const { width } = Dimensions.get('window');
 
 const CatalogScreen = ({ navigation, route }) => {
   const { customerId } = route.params || {};
@@ -218,13 +222,19 @@ const CatalogScreen = ({ navigation, route }) => {
                 <Icon name="times-circle" size={30} color="#333" />
               </TouchableOpacity>
               <ScrollView>
-                <Swiper style={styles.swiper} showsButtons={true}>
+                <Swiper style={styles.swiper} showsButtons={true} removeClippedSubviews={false}>
                   {selectedProduct.product_media.map((media) => (
                     <View key={media.id} style={styles.slide}>
                       {media.media_type === 'image' ? (
-                        <TouchableOpacity onPress={() => setIsImageViewerVisible(true)}>
+                        <View style={styles.mediaContainer}>
                           <Image source={{ uri: media.media_url }} style={styles.media} />
-                        </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.zoomIcon}
+                            onPress={() => setIsImageViewerVisible(true)}
+                          >
+                            <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                          </TouchableOpacity>
+                        </View>
                       ) : (
                         <Video
                           source={{ uri: media.media_url }}
@@ -466,9 +476,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  mediaContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomIcon: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    padding: 5,
+  },
   media: {
-    width: '100%',
-    height: '100%',
+    width: width - 40, // modal padding is 20 on each side
+    height: 300,
+    resizeMode: 'contain',
   },
   detailsContainer: {
     padding: 20,

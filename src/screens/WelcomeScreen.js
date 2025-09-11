@@ -20,6 +20,7 @@ import { supabase, getCustomerDocuments } from '../services/supabase'; // Import
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Location from 'expo-location';
 import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
+import { useCart } from '../context/CartContext';
 import OrderIconComponent from '../components/OrderIconComponent';
 import CartIconComponent from '../components/CartIconComponent';
 
@@ -163,6 +164,7 @@ function CustomerSearchBar({ onCustomerSelected, areaId }) {
 }
 
 export default function WelcomeScreen({ navigation }) {
+  const { user, role } = useCart();
   const [customerLocations, setCustomerLocations] = useState([]);
   const [allAreas, setAllAreas] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
@@ -174,6 +176,7 @@ export default function WelcomeScreen({ navigation }) {
   const [currentCustomerImages, setCurrentCustomerImages] = useState([]); // New state
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for full screen image viewer
   const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
+  const [isLoginMenuVisible, setIsLoginMenuVisible] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
@@ -251,6 +254,17 @@ export default function WelcomeScreen({ navigation }) {
         `);
     }
   }
+
+  const handleLogout = () => {
+    Alert.alert(
+      "Logout",
+      `Are you sure you want to log out from ${user.phone}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Logout", onPress: () => supabase.auth.signOut() },
+      ]
+    );
+  };
 
   const onMapMessage = async (event) => {
     const data = JSON.parse(event.nativeEvent.data);
@@ -461,19 +475,34 @@ export default function WelcomeScreen({ navigation }) {
             onMessage={onMapMessage}
         />
         <View style={styles.iconContainer}>
-            <TouchableOpacity onPress={() => navigation.navigate('BuyerAuth')} style={styles.iconWrapper}>
-              <Icon name="sign-in" size={30} color="#007AFF" />
-              <Text style={styles.iconText}>Buyer</Text>
+          {user ? (
+            <TouchableOpacity onPress={handleLogout} style={styles.iconWrapper}>
+              <Icon name="sign-out" size={30} color="#FF3B30" />
+              <Text style={styles.iconText}>Logout</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.iconWrapper}>
-              <Icon name="user" size={30} color="#007AFF" />
-              <Text style={styles.iconText}>Customer</Text>
+          ) : (
+            <TouchableOpacity onPress={() => setIsLoginMenuVisible(!isLoginMenuVisible)} style={styles.iconWrapper}>
+              <Icon name="ellipsis-v" size={30} color="#007AFF" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('SellerLogin')} style={styles.iconWrapper}>
-              <Icon name="user-secret" size={30} color="#007AFF" />
-              <Text style={styles.iconText}>Seller</Text>
-            </TouchableOpacity>
+          )}
         </View>
+
+        {isLoginMenuVisible && (
+          <View style={styles.loginMenu}>
+            <TouchableOpacity onPress={() => { navigation.navigate('BuyerAuth'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
+              <Icon name="sign-in" size={24} color="#007AFF" />
+              <Text style={styles.loginMenuItemText}>Buyer Login</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { navigation.navigate('Login'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
+              <Icon name="user" size={24} color="#007AFF" />
+              <Text style={styles.loginMenuItemText}>Customer Login</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { navigation.navigate('SellerLogin'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
+              <Icon name="user-secret" size={24} color="#007AFF" />
+              <Text style={styles.loginMenuItemText}>Seller Login</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Customer Images Modal */}
         <Modal
@@ -500,10 +529,12 @@ export default function WelcomeScreen({ navigation }) {
         <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
           <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
         </Modal>
-        <View style={styles.bottomRightIcons}>
-          <OrderIconComponent navigation={navigation} />
-          <CartIconComponent navigation={navigation} />
-        </View>
+        {user && (
+          <View style={styles.bottomRightIcons}>
+            <OrderIconComponent navigation={navigation} />
+            <CartIconComponent navigation={navigation} />
+          </View>
+        )}
     </View>
   );
 }
@@ -554,9 +585,32 @@ const styles = StyleSheet.create({
       borderBottomWidth: 1,
       borderBottomColor: '#eee',
   },
-  iconContainer: { position: 'absolute', top: 130, right: 20, flexDirection: 'column', zIndex: 10 },
+  iconContainer: { position: 'absolute', top: 130, right: 20, zIndex: 10 },
   iconWrapper: { alignItems: 'center', marginBottom: 15 },
   iconText: { fontSize: 12, color: '#007AFF' },
+  loginMenu: {
+    position: 'absolute',
+    top: 170,
+    right: 20,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    zIndex: 10,
+  },
+  loginMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  loginMenuItemText: {
+    fontSize: 16,
+    marginLeft: 10,
+  },
   modalBackground: {
     flex: 1,
     justifyContent: 'center',
