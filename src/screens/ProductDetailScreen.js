@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import {
   View,
   Text,
@@ -22,13 +24,15 @@ const ProductDetailScreen = ({ route }) => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [images, setImages] = useState([]);
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-    };
-    fetchUser();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      const fetchUser = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        setUser(user);
+      };
+      fetchUser();
+    }, [])
+  );
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({
@@ -47,18 +51,27 @@ const ProductDetailScreen = ({ route }) => {
   };
 
   const handleAddToCart = async () => {
-    if (!user) {
-      Alert.alert('Please sign in to add items to your cart.');
-      return;
-    }
-
     const combination = getVariantCombination();
     if (!combination) {
       Alert.alert('Please select all variant options.');
       return;
     }
 
-    const result = await addToCart(user.id, combination.id, 1);
+    console.log('handleAddToCart: Before getUser, user state:', user); // Log existing user state
+    // Re-check user session directly from Supabase to ensure up-to-date status
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    console.log('handleAddToCart: After getUser, currentUser:', currentUser); // Log fetched user
+
+    if (!currentUser) {
+      // Redirect to BuyerAuthScreen for mobile number authentication
+      navigation.navigate('BuyerAuthScreen', {
+        redirectScreen: 'ProductDetailScreen',
+        productId: product.id,
+      });
+      return;
+    }
+
+    const result = await addToCart(currentUser.id, combination.id, 1);
     if (result) {
       Alert.alert('Success', 'Item added to cart.');
     } else {
@@ -77,9 +90,9 @@ const ProductDetailScreen = ({ route }) => {
                 .map(m => ({ url: m.media_url }));
               setImages(imageUrls);
               setIsModalVisible(true);
-            }}>
+            }} style={styles.mediaContainer}>
               {media.media_type === 'image' ? (
-                <Image source={{ uri: media.media_url }} style={styles.media} />
+                <Image source={{ uri: (typeof media.media_url === 'string' && media.media_url.length > 0) ? media.media_url : 'https://placehold.co/600x400' }} style={styles.media} />
               ) : (
                 <Video
                   source={{ uri: media.media_url }}
@@ -87,6 +100,20 @@ const ProductDetailScreen = ({ route }) => {
                   useNativeControls
                   resizeMode="contain"
                 />
+              )}
+              {media.media_type === 'image' && (
+                <TouchableOpacity
+                  style={styles.zoomIcon}
+                  onPress={() => {
+                    const imageUrls = product.product_media
+                      .filter(m => m.media_type === 'image')
+                      .map(m => ({ url: m.media_url }));
+                    setImages(imageUrls);
+                    setIsModalVisible(true);
+                  }}
+                >
+                  <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                </TouchableOpacity>
               )}
             </TouchableOpacity>
           </View>
@@ -184,6 +211,19 @@ const styles = StyleSheet.create({
   selectedOption: {
     backgroundColor: '#007AFF',
     borderColor: '#007AFF',
+  },
+  mediaContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomIcon: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    padding: 5,
   },
 });
 

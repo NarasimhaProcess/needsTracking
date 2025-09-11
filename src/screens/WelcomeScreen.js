@@ -17,10 +17,11 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { supabase, getCustomerDocuments } from '../services/supabase'; // Import getCustomerDocuments
-import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Location from 'expo-location';
 import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
+import OrderIconComponent from '../components/OrderIconComponent';
+import CartIconComponent from '../components/CartIconComponent';
 
 function AreaSearchBar({ onAreaSelected, onClear }) {
   const [query, setQuery] = useState('');
@@ -161,8 +162,7 @@ function CustomerSearchBar({ onCustomerSelected, areaId }) {
   );
 }
 
-export default function WelcomeScreen({ route }) {
-  const navigation = useNavigation();
+export default function WelcomeScreen({ navigation }) {
   const [customerLocations, setCustomerLocations] = useState([]);
   const [allAreas, setAllAreas] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
@@ -255,9 +255,9 @@ export default function WelcomeScreen({ route }) {
   const onMapMessage = async (event) => {
     const data = JSON.parse(event.nativeEvent.data);
     if (data.type === 'viewProducts') {
-      navigation.navigate('CatalogScreen', { customerId: data.customerId });
+      navigation.navigate('Catalog', { customerId: data.customerId });
     } else if (data.type === 'viewTopProducts') {
-      navigation.navigate('TopProductsScreen', { customerId: data.customerId });
+      navigation.navigate('TopProducts', { customerId: data.customerId });
     } else if (data.type === 'getDirections') {
       const { latitude, longitude } = data;
       const scheme = Platform.select({
@@ -461,11 +461,17 @@ export default function WelcomeScreen({ route }) {
             onMessage={onMapMessage}
         />
         <View style={styles.iconContainer}>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-              <Icon name="sign-in" size={30} color="#007AFF" style={styles.icon} />
+            <TouchableOpacity onPress={() => navigation.navigate('BuyerAuth')} style={styles.iconWrapper}>
+              <Icon name="sign-in" size={30} color="#007AFF" />
+              <Text style={styles.iconText}>Buyer</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-              <Icon name="user-plus" size={30} color="#007AFF" style={styles.icon} />
+            <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.iconWrapper}>
+              <Icon name="user" size={30} color="#007AFF" />
+              <Text style={styles.iconText}>Customer</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.navigate('SellerLogin')} style={styles.iconWrapper}>
+              <Icon name="user-secret" size={30} color="#007AFF" />
+              <Text style={styles.iconText}>Seller</Text>
             </TouchableOpacity>
         </View>
 
@@ -494,6 +500,10 @@ export default function WelcomeScreen({ route }) {
         <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
           <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
         </Modal>
+        <View style={styles.bottomRightIcons}>
+          <OrderIconComponent navigation={navigation} />
+          <CartIconComponent navigation={navigation} />
+        </View>
     </View>
   );
 }
@@ -544,8 +554,9 @@ const styles = StyleSheet.create({
       borderBottomWidth: 1,
       borderBottomColor: '#eee',
   },
-  iconContainer: { position: 'absolute', top: 130, right: 20, flexDirection: 'row', zIndex: 10 },
-  icon: { marginLeft: 15 },
+  iconContainer: { position: 'absolute', top: 130, right: 20, flexDirection: 'column', zIndex: 10 },
+  iconWrapper: { alignItems: 'center', marginBottom: 15 },
+  iconText: { fontSize: 12, color: '#007AFF' },
   modalBackground: {
     flex: 1,
     justifyContent: 'center',
@@ -574,5 +585,11 @@ const styles = StyleSheet.create({
     height: 150,
     borderRadius: 8,
     marginHorizontal: 5,
+  },
+  bottomRightIcons: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    alignItems: 'center',
   },
 });

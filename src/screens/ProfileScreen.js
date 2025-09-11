@@ -13,6 +13,7 @@ import {
   Button,
   Switch,
   TextInput,
+  ScrollView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
@@ -21,7 +22,7 @@ import { maskEmail, maskMobileNumber, maskCardNumber } from '../utils/masking';
 
 const { width, height } = Dimensions.get('window');
 
-const ProfileScreen = ({ route }) => {
+const ProfileScreen = ({ navigation, route }) => {
   const { session, customerId } = route.params;
   const [customerDetails, setCustomerDetails] = useState(null);
   const [selectedImageUrls, setSelectedImageUrls] = useState([]);
@@ -31,7 +32,6 @@ const ProfileScreen = ({ route }) => {
   const [loadingImages, setLoadingImages] = useState(true);
   const [loadingDetails, setLoadingDetails] = useState(true);
 
-  // New states for QR code management
   const [userQrCodes, setUserQrCodes] = useState([]);
   const [loadingQrCodes, setLoadingQrCodes] = useState(true);
   const [uploadingQr, setUploadingQr] = useState(false);
@@ -46,7 +46,7 @@ const ProfileScreen = ({ route }) => {
       try {
         const { data, error } = await supabase
           .from('customers')
-          .select('email, mobile, book_no') // Assuming these fields exist
+          .select('email, mobile, book_no')
           .eq('id', customerId)
           .single();
 
@@ -68,7 +68,6 @@ const ProfileScreen = ({ route }) => {
     fetchCustomerDocuments();
   }, [customerId]);
 
-  // New useEffect for fetching QR codes
   useEffect(() => {
     const fetchQrCodes = async () => {
       if (!session?.user?.id) {
@@ -88,7 +87,7 @@ const ProfileScreen = ({ route }) => {
       }
     };
     fetchQrCodes();
-  }, [session]); // Depend on session to get user ID
+  }, [session]);
 
   const handleImagePick = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
@@ -105,7 +104,7 @@ const ProfileScreen = ({ route }) => {
         const newQr = await addQrCode(session.user.id, imageUrl, newQrName || 'My QR Code', false);
         if (newQr) {
           setUserQrCodes((prev) => [...prev, newQr]);
-          setNewQrName(''); // Clear input
+          setNewQrName('');
           Alert.alert('Success', 'QR code uploaded successfully!');
         } else {
           Alert.alert('Error', 'Failed to add QR code to database.');
@@ -118,10 +117,9 @@ const ProfileScreen = ({ route }) => {
   };
 
   const handleToggleActive = async (qrCodeId, currentStatus) => {
-    setLoadingQrCodes(true); // Show loading while updating
+    setLoadingQrCodes(true);
     try {
-      // Deactivate all other QR codes first if this one is being activated
-      if (!currentStatus) { // If currentStatus is false, meaning we are activating this one
+      if (!currentStatus) {
         const activeQr = userQrCodes.find(qr => qr.is_active);
         if (activeQr && activeQr.id !== qrCodeId) {
           await updateQrCode(activeQr.id, activeQr.name, false);
@@ -129,7 +127,7 @@ const ProfileScreen = ({ route }) => {
       }
       const updated = await updateQrCode(qrCodeId, userQrCodes.find(qr => qr.id === qrCodeId).name, !currentStatus);
       if (updated) {
-        const qrCodes = await getAllQrCodes(session.user.id); // Re-fetch to get latest state
+        const qrCodes = await getAllQrCodes(session.user.id);
         if (qrCodes) {
           setUserQrCodes(qrCodes);
         }
@@ -205,121 +203,147 @@ const ProfileScreen = ({ route }) => {
   );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Your Profile</Text>
-      {loadingDetails ? (
-        <ActivityIndicator size="small" color="#007AFF" />
-      ) : customerDetails ? (
-        <>
-          <Text style={styles.detailText}>Email: {maskEmail(customerDetails.email)}</Text>
-          {customerDetails.mobile && (
-            <Text style={styles.detailText}>Mobile: {maskMobileNumber(customerDetails.mobile)}</Text>
-          )}
-          {customerDetails.book_no && (
-            <Text style={styles.detailText}>Book No: {maskCardNumber(customerDetails.book_no)}</Text>
-          )}
-        </>
-      ) : (
-        <Text>Could not load customer details.</Text>
-      )}
-
-      <Text style={styles.sectionTitle}>Your Documents</Text>
-      {loadingImages ? (
-        <ActivityIndicator size="large" color="#007AFF" />
-      ) : selectedImageUrls.length > 0 ? (
-        <FlatList
-          data={selectedImageUrls}
-          renderItem={renderImageItem}
-          keyExtractor={(item, index) => index.toString()}
-          numColumns={2}
-          contentContainerStyle={styles.imageGrid}
-        />
-      ) : (
-        <Text>No documents uploaded yet.</Text>
-      )}
-
-      {/* New QR Code Management Section */}
-      <Text style={styles.sectionTitle}>Your QR Codes</Text>
-      <View style={styles.qrUploadContainer}>
-        <TextInput
-          style={styles.qrNameInput}
-          placeholder="Enter QR Code Name (optional)"
-          value={newQrName}
-          onChangeText={setNewQrName}
-        />
-        <Button
-          title={uploadingQr ? 'Uploading...' : 'Upload QR Code'}
-          onPress={handleImagePick}
-          disabled={uploadingQr}
-        />
+    <View style={{flex: 1, backgroundColor: 'white'}}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Your Profile</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Icon name="close" size={24} color="#333" />
+        </TouchableOpacity>
       </View>
+      <ScrollView style={styles.container}>
+        <Text style={styles.title}>Your Profile</Text>
+        {loadingDetails ? (
+          <ActivityIndicator size="small" color="#007AFF" />
+        ) : customerDetails ? (
+          <>
+            <Text style={styles.detailText}>Email: {maskEmail(customerDetails.email)}</Text>
+            {customerDetails.mobile && (
+              <Text style={styles.detailText}>Mobile: {maskMobileNumber(customerDetails.mobile)}</Text>
+            )}
+            {customerDetails.book_no && (
+              <Text style={styles.detailText}>Book No: {maskCardNumber(customerDetails.book_no)}</Text>
+            )}
+          </>
+        ) : (
+          <Text>Could not load customer details.</Text>
+        )}
 
-      {loadingQrCodes ? (
-        <ActivityIndicator size="large" color="#007AFF" style={styles.loadingIndicator} />
-      ) : userQrCodes.length > 0 ? (
-        <FlatList
-          data={userQrCodes}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.qrCodeItem}>
-              <Image source={{ uri: item.qr_image_url }} style={styles.qrCodeImage} />
-              <View style={styles.qrCodeDetails}>
-                <Text style={styles.qrCodeName}>{item.name || 'Unnamed QR'}</Text>
-                <View style={styles.qrCodeActions}>
-                  <Text>Active:</Text>
-                  <Switch
-                    value={item.is_active}
-                    onValueChange={() => handleToggleActive(item.id, item.is_active)}
-                  />
-                  <TouchableOpacity onPress={() => handleDeleteQrCode(item.id, item.qr_image_url)}>
-                    <Icon name="trash" size={20} color="red" style={styles.deleteIcon} />
-                  </TouchableOpacity>
+        <Text style={styles.sectionTitle}>Your Documents</Text>
+        {loadingImages ? (
+          <ActivityIndicator size="large" color="#007AFF" />
+        ) : selectedImageUrls.length > 0 ? (
+          <FlatList
+            data={selectedImageUrls}
+            renderItem={renderImageItem}
+            keyExtractor={(item, index) => index.toString()}
+            numColumns={2}
+            contentContainerStyle={styles.imageGrid}
+          />
+        ) : (
+          <Text>No documents uploaded yet.</Text>
+        )}
+
+        <Text style={styles.sectionTitle}>Your QR Codes</Text>
+        <View style={styles.qrUploadContainer}>
+          <TextInput
+            style={styles.qrNameInput}
+            placeholder="Enter QR Code Name (optional)"
+            value={newQrName}
+            onChangeText={setNewQrName}
+          />
+          <Button
+            title={uploadingQr ? 'Uploading...' : 'Upload QR Code'}
+            onPress={handleImagePick}
+            disabled={uploadingQr}
+          />
+        </View>
+
+        {loadingQrCodes ? (
+          <ActivityIndicator size="large" color="#007AFF" style={styles.loadingIndicator} />
+        ) : userQrCodes.length > 0 ? (
+          <FlatList
+            data={userQrCodes}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <View style={styles.qrCodeItem}>
+                <Image source={{ uri: item.qr_image_url }} style={styles.qrCodeImage} />
+                <View style={styles.qrCodeDetails}>
+                  <Text style={styles.qrCodeName}>{item.name || 'Unnamed QR'}</Text>
+                  <View style={styles.qrCodeActions}>
+                    <Text>Active:</Text>
+                    <Switch
+                      value={item.is_active}
+                      onValueChange={() => handleToggleActive(item.id, item.is_active)}
+                    />
+                    <TouchableOpacity onPress={() => handleDeleteQrCode(item.id, item.qr_image_url)}>
+                      <Icon name="trash" size={20} color="red" style={styles.deleteIcon} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
-            </View>
-          )}
-          contentContainerStyle={styles.qrCodesList}
-        />
-      ) : (
-        <Text>No QR codes uploaded yet.</Text>
-      )}
+            )}
+            contentContainerStyle={styles.qrCodesList}
+          />
+        ) : (
+          <Text>No QR codes uploaded yet.</Text>
+        )}
 
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={() => supabase.auth.signOut()}
-      >
-        <Text style={styles.logoutButtonText}>Logout</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => navigation.navigate('AddressLocationScreen')}
+        >
+          <Text style={styles.buttonText}>Manage Address</Text>
+        </TouchableOpacity>
 
-      {/* Full Screen Image Modal */}
-      <Modal
-        visible={isFullScreen}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setIsFullScreen(false)}
-      >
-        <View style={styles.fullScreenContainer}>
-          <TouchableOpacity
-            style={styles.fullScreenCloseButton}
-            onPress={() => setIsFullScreen(false)}
-          >
-            <Icon name="times" size={30} color="white" />
-          </TouchableOpacity>
-          
-          {fullScreenImageUrl && (
-            <Image
-              source={{ uri: fullScreenImageUrl }}
-              style={styles.fullScreenImage}
-              resizeMode="contain"
-            />
-          )}
-        </View>
-      </Modal>
+        <TouchableOpacity
+          style={styles.logoutButton}
+          onPress={() => supabase.auth.signOut()}
+        >
+          <Text style={styles.logoutButtonText}>Logout</Text>
+        </TouchableOpacity>
+
+        {/* Full Screen Image Modal */}
+        <Modal
+          visible={isFullScreen}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setIsFullScreen(false)}
+        >
+          <View style={styles.fullScreenContainer}>
+            <TouchableOpacity
+              style={styles.fullScreenCloseButton}
+              onPress={() => setIsFullScreen(false)}
+            >
+              <Icon name="times" size={30} color="white" />
+            </TouchableOpacity>
+            
+            {fullScreenImageUrl && (
+              <Image
+                source={{ uri: fullScreenImageUrl }}
+                style={styles.fullScreenImage}
+                resizeMode="contain"
+              />
+            )}
+          </View>
+        </Modal>
+      </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
   container: {
     flex: 1,
     padding: 20,
@@ -346,7 +370,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   modalImage: {
-    width: (width / 2) - 30, // Adjust for padding and margin
+    width: (width / 2) - 30,
     height: 150,
     margin: 5,
     borderRadius: 8,
@@ -369,6 +393,19 @@ const styles = StyleSheet.create({
   fullScreenImage: {
     width: width,
     height: height,
+  },
+  button: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 10,
+    marginTop: 20,
+    width: '80%',
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 18,
   },
   logoutButton: {
     backgroundColor: '#FF3B30',
@@ -443,5 +480,3 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
 });
-
-export default ProfileScreen;

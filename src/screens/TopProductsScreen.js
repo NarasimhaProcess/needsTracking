@@ -1,5 +1,4 @@
-import React, { useState, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,45 +13,41 @@ import {
   ScrollView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Swiper from 'react-native-swiper';
 import { Video } from 'expo-av';
+import ImageViewer from 'react-native-image-zoom-viewer';
 import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
+import { useCart } from '../context/CartContext';
 
 const TopProductsScreen = ({ navigation, route }) => {
   const { customerId } = route.params;
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [cart, setCart] = useState(null);
+  const { cart, setCart, role, updateItemQuantity, removeItem } = useCart();
   const [isCartModalVisible, setIsCartModalVisible] = useState(false);
   const [isProductDetailModalVisible, setIsProductDetailModalVisible] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for full screen image viewer
+  const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
 
-  useFocusEffect(
-    useCallback(() => {
-      const fetchProductsAndUser = async () => {
-        setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        setUser(user);
-        const data = await getTopProductsWithDetails(customerId);
-        if (data) {
-          setProducts(data);
-        }
-        if (user) {
-          const cartData = await getCart(user.id);
-          setCart(cartData);
-        }
-        setLoading(false);
-      };
+  useEffect(() => {
+    const fetchProductsAndUser = async () => {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+      const data = await getTopProductsWithDetails(customerId);
+      if (data) {
+        setProducts(data);
+      }
+      setLoading(false);
+    };
 
-      fetchProductsAndUser();
-      return () => {
-        // Optional: cleanup function if needed
-      };
-    }, [customerId])
-  );
+    fetchProductsAndUser();
+  }, [customerId]);
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({
@@ -72,43 +67,48 @@ const TopProductsScreen = ({ navigation, route }) => {
   };
 
   const handleAddToCart = async () => {
-    if (!user) {
-      Alert.alert('Please sign in to add items to your cart.');
-      return;
-    }
-
     const combination = getVariantCombination();
     if (!combination) {
       Alert.alert('Please select all variant options.');
       return;
     }
 
-    const result = await addToCart(user.id, combination.id, quantity);
+    console.log('handleAddToCart: Before getUser, user state:', user); // Log existing user state
+    // Re-check user session directly from Supabase to ensure up-to-date status
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    console.log('handleAddToCart: After getUser, currentUser:', currentUser); // Log fetched user
+
+    if (!currentUser) {
+      // Redirect to BuyerAuthScreen for mobile number authentication
+      navigation.navigate('BuyerAuthScreen', {
+        redirectScreen: 'TopProductsScreen',
+        productId: selectedProduct.id,
+        customerId: customerId, // Pass the customerId from TopProductsScreen's props
+      });
+      return;
+    }
+
+    const result = await addToCart(currentUser.id, combination.id, quantity);
     if (result) {
-      const cartData = await getCart(user.id);
+      const cartData = await getCart(currentUser.id);
       setCart(cartData);
       setIsProductDetailModalVisible(false);
-      setIsCartModalVisible(true);
+      if (role === 'buyer') {
+        navigation.goBack();
+      } else {
+        setIsCartModalVisible(true);
+      }
     } else {
       Alert.alert('Error', 'Failed to add item to cart.');
     }
   };
 
   const handleUpdateQuantity = async (cartItemId, quantity) => {
-    const updatedItem = await updateCartItem(cartItemId, quantity);
-    if (updatedItem) {
-      const newCart = { ...cart };
-      const itemIndex = newCart.cart_items.findIndex((item) => item.id === cartItemId);
-      newCart.cart_items[itemIndex].quantity = quantity;
-      setCart(newCart);
-    }
+    await updateItemQuantity(cartItemId, quantity);
   };
 
   const handleRemoveItem = async (cartItemId) => {
-    await removeCartItem(cartItemId);
-    const newCart = { ...cart };
-    newCart.cart_items = newCart.cart_items.filter((item) => item.id !== cartItemId);
-    setCart(newCart);
+    await removeItem(cartItemId);
   };
 
   const openProductDetailModal = (product) => {
@@ -201,16 +201,38 @@ const TopProductsScreen = ({ navigation, route }) => {
                 <Swiper style={styles.swiper} showsButtons={true}>
                   {selectedProduct.product_media.map((media) => (
                     <View key={media.id} style={styles.slide}>
-                      {media.media_type === 'image' ? (
-                        <Image source={{ uri: media.media_url }} style={styles.media} />
-                      ) : (
-                        <Video
-                          source={{ uri: media.media_url }}
-                          style={styles.media}
-                          useNativeControls
-                          resizeMode="contain"
-                        />
-                      )}
+                      <TouchableOpacity onPress={() => {
+                        const imageUrls = selectedProduct.product_media
+                          .filter(m => m.media_type === 'image')
+                          .map(m => ({ url: m.media_url }));
+                        setViewerImages(imageUrls);
+                        setIsImageViewerVisible(true);
+                      }} style={styles.mediaContainer}>
+                        {media.media_type === 'image' ? (
+                          <Image source={{ uri: (typeof media.media_url === 'string' && media.media_url.length > 0) ? media.media_url : 'https://placehold.co/600x400' }} style={styles.media} />
+                        ) : (
+                          <Video
+                            source={{ uri: media.media_url }}
+                            style={styles.media}
+                            useNativeControls
+                            resizeMode="contain"
+                          />
+                        )}
+                        {media.media_type === 'image' && (
+                          <TouchableOpacity
+                            style={styles.zoomIcon}
+                            onPress={() => {
+                              const imageUrls = selectedProduct.product_media
+                                .filter(m => m.media_type === 'image')
+                                .map(m => ({ url: m.media_url }));
+                              setViewerImages(imageUrls);
+                              setIsImageViewerVisible(true);
+                            }}
+                          >
+                            <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                          </TouchableOpacity>
+                        )}
+                      </TouchableOpacity>
                     </View>
                   ))}
                 </Swiper>
@@ -307,6 +329,10 @@ const TopProductsScreen = ({ navigation, route }) => {
             }} />
           </View>
         </View>
+      </Modal>
+    {/* Full Screen Image Viewer Modal */}
+      <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
+        <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
       </Modal>
     </View>
   );
@@ -461,7 +487,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginVertical: 20,
   },
-  
+  mediaContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomIcon: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    padding: 5,
+  },
 });
 
 export default TopProductsScreen;

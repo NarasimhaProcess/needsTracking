@@ -1,5 +1,4 @@
-import React, { useState, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,47 +15,46 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import { Video } from 'expo-av';
-import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
+import ImageViewer from 'react-native-image-zoom-viewer';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
+import { getGuestCart, addGuestCartItem } from '../services/localStorageService';
 
 const CatalogScreen = ({ navigation, route }) => {
-  const { customerId } = route.params;
-  console.log("CatalogScreen received customerId:", customerId);
+  const { customerId } = route.params || {};
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
+  const [guestCart, setGuestCart] = useState([]);
   const [isCartModalVisible, setIsCartModalVisible] = useState(false);
   const [isProductDetailModalVisible, setIsProductDetailModalVisible] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
-  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for image viewer
-  const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
+  const [viewerImages, setViewerImages] = useState([]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const fetchProductsAndUser = async () => {
-        setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        setUser(user);
-        const data = await getActiveProductsWithDetails(customerId);
-        if (data) {
-          setProducts(data);
-        }
-        if (user) {
-          const cartData = await getCart(user.id);
-          setCart(cartData);
-        }
-        setLoading(false);
-      };
+  useEffect(() => {
+    const fetchProductsAndCart = async () => {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+      const data = await getActiveProductsWithDetails(customerId);
+      if (data) {
+        setProducts(data);
+      }
+      if (user) {
+        const cartData = await getCart(user.id);
+        setCart(cartData);
+      } else {
+        const guestCartData = await getGuestCart();
+        setGuestCart(guestCartData);
+      }
+      setLoading(false);
+    };
 
-      fetchProductsAndUser();
-      return () => {
-        // Optional: cleanup function if needed
-      };
-    }, [customerId])
-  );
+    fetchProductsAndCart();
+  }, [customerId]);
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({
@@ -76,23 +74,24 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const handleAddToCart = async () => {
-    if (!user) {
-      Alert.alert(
-        'Sign In Required',
-        'Please sign in or create an account to add items to your cart.',
-        [
-          { text: 'Login', onPress: () => navigation.navigate('Login') },
-          { text: 'Sign Up', onPress: () => navigation.navigate('Signup') },
-          { text: 'Cancel', style: 'cancel' },
-        ],
-        { cancelable: true }
-      );
-      return;
-    }
-
     const combination = getVariantCombination();
     if (!combination) {
       Alert.alert('Please select all variant options.');
+      return;
+    }
+
+    if (!user) {
+      const guestCartItem = {
+        product_variant_combination_id: combination.id,
+        quantity: quantity,
+        product_name: selectedProduct.product_name,
+        combination_string: combination.combination_string,
+        price: combination.price,
+        image_url: selectedProduct.product_media[0]?.media_url || 'https://placehold.co/600x400'
+      };
+      await addGuestCartItem(guestCartItem);
+      Alert.alert('Added to Cart', 'Item has been added to your guest cart.');
+      setIsProductDetailModalVisible(false);
       return;
     }
 
@@ -126,22 +125,18 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const openProductDetailModal = (product) => {
     setSelectedProduct(product);
-    setQuantity(1); // Reset quantity to 1
+    setQuantity(1);
     setIsProductDetailModalVisible(true);
-
-    // Prepare images for the image viewer
     const imagesForViewer = product.product_media
       .filter(media => media.media_type === 'image')
       .map(media => ({ url: media.media_url }));
     setViewerImages(imagesForViewer);
-
-    // Automatically select the first variant if only one exists
     if (product.product_variants.length === 1 && product.product_variants[0].variant_options.length === 1) {
       const variantName = product.product_variants[0].name;
       const optionValue = product.product_variants[0].variant_options[0].value;
       setSelectedVariants({ [variantName]: optionValue });
     } else {
-      setSelectedVariants({}); // Reset selected variants if multiple or none
+      setSelectedVariants({});
     }
   };
 
@@ -185,11 +180,17 @@ const CatalogScreen = ({ navigation, route }) => {
   );
 
   if (loading) {
-    return <ActivityIndicator size="large" color="#0000ff" />;
+    return <View style={styles.center}><ActivityIndicator size="large" color="#0000ff" /></View>;
   }
 
   return (
-    <View style={{flex: 1}}>
+    <View style={{flex: 1, backgroundColor: 'white'}}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Catalog</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Icon name="close" size={24} color="#333" />
+        </TouchableOpacity>
+      </View>
       <FlatList
         data={products}
         renderItem={renderProduct}
@@ -240,7 +241,6 @@ const CatalogScreen = ({ navigation, route }) => {
                   <Text style={styles.productName}>{selectedProduct.product_name}</Text>
                   <Text style={styles.productDescription}>{selectedProduct.description}</Text>
                   
-                  {/* Display price and quantity based on selected variant */}
                   {(() => {
                     const selectedCombination = getVariantCombination();
                     const displayPrice = selectedCombination ? selectedCombination.price : selectedProduct.amount;
@@ -274,7 +274,6 @@ const CatalogScreen = ({ navigation, route }) => {
                     </View>
                   ))}
 
-                  {/* Quantity selector for adding to cart */}
                   {getVariantCombination() && (
                     <View style={styles.quantitySelector}>
                       <TouchableOpacity onPress={() => setQuantity(Math.max(1, quantity - 1))}>
@@ -339,6 +338,23 @@ const CatalogScreen = ({ navigation, route }) => {
 };
 
 const styles = StyleSheet.create({
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
   container: {
     padding: 10,
   },

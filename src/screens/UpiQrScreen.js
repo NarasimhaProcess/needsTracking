@@ -8,85 +8,50 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, getActiveQrCode } from '../services/supabase';
+import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
 
 const UpiQrScreen = ({ navigation, route }) => {
-  const { cart, totalAmount, shippingAddress } = route.params; // Receive shippingAddress
-  const [loading, setLoading] = useState(true);
+  const { cart, totalAmount, shippingAddress, order } = route.params; // Receive order object
   const [activeQrImageUrl, setActiveQrImageUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchActiveQr = async () => {
+    const fetchQrCode = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const activeQr = await getActiveQrCode(user.id);
-        if (activeQr) {
-          setActiveQrImageUrl(activeQr.qr_image_url);
+        const qrCode = await getActiveQrCode(user.id);
+        if (qrCode) {
+          setActiveQrImageUrl(qrCode.qr_code_url);
         }
       }
       setLoading(false);
     };
-    fetchActiveQr();
+
+    fetchQrCode();
   }, []);
 
-  const handlePaymentConfirmation = async () => {
-    Alert.alert(
-      'Payment Confirmation',
-      'Please confirm if you have completed the payment via UPI.',
-      [
-        {
-          text: 'No, I haven\'t paid',
-          style: 'cancel',
-        },
-        {
-          text: 'Yes, I have paid',
-          onPress: async () => {
-            setLoading(true);
-            const { data: { user } } = await supabase.auth.getUser();
+  const handleSimulatePaymentSuccess = async () => {
+    setLoading(true);
+    const updatedOrder = await updateOrderStatus(order.id, 'paid'); // Update status to 'paid'
+    if (updatedOrder) {
+      Alert.alert('Payment Successful', 'Your payment has been processed.');
+      navigation.navigate('OrderConfirmation', { order: updatedOrder }); // Pass updated order
+    } else {
+      Alert.alert('Error', 'Failed to update order status after simulated payment.');
+    }
+    setLoading(false);
+  };
 
-            const { data: order, error: orderError } = await supabase
-              .from('orders')
-              .insert({
-                user_id: user.id,
-                shipping_address: shippingAddress,
-                total_amount: totalAmount,
-              })
-              .select()
-              .single();
-
-            if (orderError) {
-              console.error('Error creating order:', orderError.message);
-              Alert.alert('Error', 'Failed to create order.');
-              setLoading(false);
-              return;
-            }
-
-            const orderItems = cart.cart_items.map((item) => ({
-              order_id: order.id,
-              product_variant_combination_id: item.product_variant_combination_id,
-              quantity: item.quantity,
-              price: item.product_variant_combinations.price,
-            }));
-
-            const { error: orderItemsError } = await supabase
-              .from('order_items')
-              .insert(orderItems);
-
-            if (orderItemsError) {
-              console.error('Error creating order items:', orderItemsError.message);
-              Alert.alert('Error', 'Failed to create order items.');
-              setLoading(false);
-              return;
-            }
-
-            await supabase.from('cart_items').delete().eq('cart_id', cart.id);
-
-            setLoading(false);
-            navigation.navigate('OrderConfirmation', { order });
-          },
-        },
-      ]
-    );
+  const handleSimulatePaymentFailure = async () => {
+    setLoading(true);
+    const updatedOrder = await updateOrderStatus(order.id, 'failed'); // Update status to 'failed'
+    if (updatedOrder) {
+      Alert.alert('Payment Failed', 'Your payment could not be processed. Please try again.');
+      // Optionally navigate back or to a different screen
+    } else {
+      Alert.alert('Error', 'Failed to update order status after simulated payment failure.');
+    }
+    setLoading(false);
   };
 
   if (loading) {
@@ -108,8 +73,11 @@ const UpiQrScreen = ({ navigation, route }) => {
         <Text style={styles.noQrText}>No active QR code found. Please upload one in your profile.</Text>
       )}
       <Text style={styles.instructions}>Open your UPI app and scan this QR code to complete the payment.</Text>
-      <TouchableOpacity style={styles.button} onPress={handlePaymentConfirmation} disabled={loading}>
-        <Text style={styles.buttonText}>I have paid</Text>
+      <TouchableOpacity style={styles.button} onPress={handleSimulatePaymentSuccess} disabled={loading}>
+        <Text style={styles.buttonText}>Simulate Payment Success</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.button, styles.failButton]} onPress={handleSimulatePaymentFailure} disabled={loading}>
+        <Text style={styles.buttonText}>Simulate Payment Failure</Text>
       </TouchableOpacity>
     </View>
   );
@@ -153,11 +121,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 30,
     borderRadius: 8,
+    marginTop: 10, // Added margin for spacing between buttons
   },
   buttonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  failButton: {
+    backgroundColor: '#FF3B30', // Red color for failure
   },
   loadingOverlay: {
     position: 'absolute',

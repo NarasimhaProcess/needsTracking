@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TextInput, Button, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TextInput, Button, Alert, ScrollView, TouchableOpacity } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import { getOrderById, updateOrderStatus } from '../services/supabase'; // Assuming these functions are in supabase.js
+import Icon from 'react-native-vector-icons/FontAwesome';
+import { getOrderById, updateOrderStatus } from '../services/supabase';
 
 const OrderEditScreen = ({ route, navigation }) => {
   const { orderId } = route.params;
@@ -16,7 +17,7 @@ const OrderEditScreen = ({ route, navigation }) => {
       const fetchedOrder = await getOrderById(orderId);
       if (fetchedOrder) {
         setOrder(fetchedOrder);
-        setStatus(fetchedOrder.status); // Set initial status from fetched order
+        setStatus(fetchedOrder.status);
       }
       setLoading(false);
     };
@@ -29,7 +30,7 @@ const OrderEditScreen = ({ route, navigation }) => {
     const updatedOrder = await updateOrderStatus(orderId, status);
     if (updatedOrder) {
       Alert.alert('Success', 'Order updated successfully!');
-      navigation.goBack(); // Go back to the previous screen (OrderListScreen or OrderDetailScreen)
+      navigation.goBack();
     } else {
       Alert.alert('Error', 'Failed to update order.');
     }
@@ -53,45 +54,60 @@ const OrderEditScreen = ({ route, navigation }) => {
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>Edit Order</Text>
+    <View style={{flex: 1, backgroundColor: 'white'}}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Edit Order</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Icon name="close" size={24} color="#333" />
+        </TouchableOpacity>
+      </View>
+      <ScrollView style={styles.container}>
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Order ID:</Text>
+          <TextInput
+            style={styles.input}
+            value={order.id}
+            editable={false}
+          />
+        </View>
 
-      <View style={styles.formGroup}>
-        <Text style={styles.label}>Order ID:</Text>
-        <TextInput
-          style={styles.input}
-          value={order.id}
-          editable={false} // Order ID should not be editable
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Update Status:</Text>
+          <Picker
+            selectedValue={status}
+            onValueChange={(itemValue) => setStatus(itemValue)}
+            style={styles.input}
+          >
+            <Picker.Item label="Pending" value="pending" />
+            <Picker.Item label="Completed" value="completed" />
+            <Picker.Item label="Shipped" value="shipped" />
+            <Picker.Item label="Cancelled" value="cancelled" />
+          </Picker>
+        </View>
+
+        <Button
+          title={isSaving ? 'Saving...' : 'Save Changes'}
+          onPress={handleSave}
+          disabled={isSaving}
         />
-      </View>
-
-      <View style={styles.formGroup}>
-        <Text style={styles.label}>Update Status:</Text>
-        <Picker
-          selectedValue={status}
-          onValueChange={(itemValue) => setStatus(itemValue)}
-          style={styles.input}
-        >
-          <Picker.Item label="Pending" value="pending" />
-          <Picker.Item label="Completed" value="completed" />
-          <Picker.Item label="Shipped" value="shipped" />
-          <Picker.Item label="Cancelled" value="cancelled" />
-        </Picker>
-      </View>
-
-      {/* You can add more fields here for editing shipping address, total amount, etc.
-          Remember to update the updateOrderStatus function in supabase.js if you add more fields. */}
-
-      <Button
-        title={isSaving ? 'Saving...' : 'Save Changes'}
-        onPress={handleSave}
-        disabled={isSaving}
-      />
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
   container: {
     flex: 1,
     padding: 16,

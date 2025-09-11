@@ -201,7 +201,7 @@ export async function getActiveProductsWithDetails(customerId) {
   const now = new Date();
   const currentTime = now.toLocaleTimeString('en-GB');
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('products')
     .select(`
       *,
@@ -213,11 +213,16 @@ export async function getActiveProductsWithDetails(customerId) {
       ),
       product_variant_combinations (id, combination_string, price, quantity, sku)
     `)
-    .eq('customer_id', customerId)
     .eq('is_active', true)
     .or(`visible_from.is.null,visible_from.lte.${currentTime}`)
     .or(`visible_to.is.null,visible_to.gte.${currentTime}`)
     .order('display_order');
+
+  if (customerId) {
+    query = query.eq('customer_id', customerId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error('Error fetching active products with details:', error.message);
@@ -350,7 +355,7 @@ export async function getCart(userId) {
       )
     `)
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error('Error fetching cart:', error.message);
@@ -780,4 +785,18 @@ export async function updateOrderStatus(orderId, newStatus) {
     return null;
   }
   return data ? data[0] : null;
+}
+
+export async function getPendingOrdersCount(userId) {
+  const { count, error } = await supabase
+    .from('orders')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .in('status', ['pending', 'processing']);
+
+  if (error) {
+    console.error('Error fetching pending orders count:', error.message);
+    return 0;
+  }
+  return count;
 } 

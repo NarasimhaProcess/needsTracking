@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
+import { getGuestCart, updateGuestCartItemQuantity, removeGuestCartItem } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/FontAwesome';
 
 const CartScreen = ({ navigation }) => {
@@ -18,11 +19,30 @@ const CartScreen = ({ navigation }) => {
 
   useEffect(() => {
     const fetchUserAndCart = async () => {
+      setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
       if (user) {
         const cartData = await getCart(user.id);
         setCart(cartData);
+      } else {
+        const guestCartData = await getGuestCart();
+        const normalizedCart = {
+          cart_items: guestCartData.map(item => ({
+            id: item.product_variant_combination_id,
+            quantity: item.quantity,
+            product_variant_combinations: {
+              id: item.product_variant_combination_id,
+              combination_string: item.combination_string,
+              price: item.price,
+              products: {
+                product_name: item.product_name,
+                product_media: [{ media_url: item.image_url }]
+              }
+            }
+          }))
+        };
+        setCart(normalizedCart);
       }
       setLoading(false);
     };
@@ -31,20 +51,62 @@ const CartScreen = ({ navigation }) => {
   }, []);
 
   const handleUpdateQuantity = async (cartItemId, quantity) => {
-    const updatedItem = await updateCartItem(cartItemId, quantity);
-    if (updatedItem) {
-      const newCart = { ...cart };
-      const itemIndex = newCart.cart_items.findIndex((item) => item.id === cartItemId);
-      newCart.cart_items[itemIndex].quantity = quantity;
-      setCart(newCart);
+    if (user) {
+      const updatedItem = await updateCartItem(cartItemId, quantity);
+      if (updatedItem) {
+        const newCart = { ...cart };
+        const itemIndex = newCart.cart_items.findIndex((item) => item.id === cartItemId);
+        newCart.cart_items[itemIndex].quantity = quantity;
+        setCart(newCart);
+      }
+    } else {
+      await updateGuestCartItemQuantity(cartItemId, quantity);
+      const guestCartData = await getGuestCart();
+      const normalizedCart = {
+        cart_items: guestCartData.map(item => ({
+          id: item.product_variant_combination_id,
+          quantity: item.quantity,
+          product_variant_combinations: {
+            id: item.product_variant_combination_id,
+            combination_string: item.combination_string,
+            price: item.price,
+            products: {
+              product_name: item.product_name,
+              product_media: [{ media_url: item.image_url }]
+            }
+          }
+        }))
+      };
+      setCart(normalizedCart);
     }
   };
 
   const handleRemoveItem = async (cartItemId) => {
-    await removeCartItem(cartItemId);
-    const newCart = { ...cart };
-    newCart.cart_items = newCart.cart_items.filter((item) => item.id !== cartItemId);
-    setCart(newCart);
+    if (user) {
+      await removeCartItem(cartItemId);
+      const newCart = { ...cart };
+      newCart.cart_items = newCart.cart_items.filter((item) => item.id !== cartItemId);
+      setCart(newCart);
+    } else {
+      await removeGuestCartItem(cartItemId);
+      const guestCartData = await getGuestCart();
+      const normalizedCart = {
+        cart_items: guestCartData.map(item => ({
+          id: item.product_variant_combination_id,
+          quantity: item.quantity,
+          product_variant_combinations: {
+            id: item.product_variant_combination_id,
+            combination_string: item.combination_string,
+            price: item.price,
+            products: {
+              product_name: item.product_name,
+              product_media: [{ media_url: item.image_url }]
+            }
+          }
+        }))
+      };
+      setCart(normalizedCart);
+    }
   };
 
   const renderCartItem = ({ item }) => (
@@ -74,19 +136,36 @@ const CartScreen = ({ navigation }) => {
   );
 
   if (loading) {
-    return <ActivityIndicator size="large" color="#0000ff" />;
+    return <View style={styles.center}><ActivityIndicator size="large" color="#0000ff" /></View>;
   }
 
   if (!cart || cart.cart_items.length === 0) {
-    return <Text style={styles.emptyCartText}>Your cart is empty.</Text>;
+    return (
+      <View style={{flex: 1, backgroundColor: 'white'}}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Your Cart</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Icon name="close" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.emptyCartText}>Your cart is empty.</Text>
+      </View>
+    );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={{flex: 1, backgroundColor: 'white'}}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Your Cart</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Icon name="close" size={24} color="#333" />
+        </TouchableOpacity>
+      </View>
       <FlatList
         data={cart.cart_items}
         renderItem={renderCartItem}
         keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.container}
       />
       <TouchableOpacity style={styles.checkoutButton} onPress={() => navigation.navigate('Checkout', { cart: cart })}>
         <Text style={styles.checkoutButtonText}>Checkout</Text>
@@ -96,8 +175,24 @@ const CartScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
+  center: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  container: {
     padding: 10,
   },
   itemContainer: {
@@ -149,7 +244,7 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 5,
     alignItems: 'center',
-    marginTop: 20,
+    margin: 20,
   },
   checkoutButtonText: {
     color: 'white',

@@ -57,40 +57,40 @@ export default function LoginScreen({ navigation, route }) {
           return;
         }
 
-        // If no customer data, prevent login and show alert
         if (!customerData) {
-          Alert.alert('Login Error', 'User not found in customer records. Please contact admin.');
-          setLoading(false);
-          return;
+          console.log("User not found in customer records, but proceeding to catalog.");
+          if (onAuthSuccess) {
+            onAuthSuccess(data.user);
+          }
+          navigation.navigate('Catalog');
+        } else {
+          // Use the customer data (existing)
+          const authenticatedUser = {
+            id: customerData.id,
+            email: customerData.email,
+            name: customerData.name,
+            customerId: customerData.id,
+          };
+
+          // Update Supabase user metadata with customerId
+          const { error: updateError } = await supabase.auth.updateUser({
+            data: { customerId: customerData.id },
+          });
+
+          if (updateError) {
+            console.error("Error updating user metadata:", updateError.message);
+            Alert.alert("Error", "Failed to update user profile with customer ID.");
+            setLoading(false);
+            return;
+          }
+          
+          // Call the auth success callback if provided
+          if (onAuthSuccess) {
+            onAuthSuccess(authenticatedUser);
+          }
+
+          navigation.navigate('Catalog');
         }
-
-        // Use the customer data (existing)
-        const authenticatedUser = {
-          id: customerData.id,
-          email: customerData.email,
-          name: customerData.name,
-          customerId: customerData.id,
-        };
-
-        // Update Supabase user metadata with customerId
-        const { error: updateError } = await supabase.auth.updateUser({
-          data: { customerId: customerData.id },
-        });
-
-        if (updateError) {
-          console.error("Error updating user metadata:", updateError.message);
-          Alert.alert("Error", "Failed to update user profile with customer ID.");
-          setLoading(false);
-          return;
-        }
-        
-        // Call the auth success callback if provided
-        if (onAuthSuccess) {
-          onAuthSuccess(authenticatedUser);
-        }
-
-        // Navigate to Dashboard or other screen
-        // The App.js navigation handles this based on session state
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');

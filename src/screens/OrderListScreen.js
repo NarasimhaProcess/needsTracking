@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
-import { getOrders, deleteOrder, supabase } from '../services/supabase'; // Assuming getOrders is in supabase.js
-import Icon from 'react-native-vector-icons/FontAwesome'; // Assuming FontAwesome for icons
+import { getOrders, deleteOrder, supabase } from '../services/supabase';
+import Icon from 'react-native-vector-icons/FontAwesome';
 
-const OrderListScreen = ({ navigation }) => {
+const OrderListScreen = ({ navigation, route }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchOrders = async () => {
     setLoading(true);
+    const { customerId } = route.params || {};
     const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const fetchedOrders = await getOrders(user.id);
+    const targetUserId = customerId || user?.id;
+
+    if (targetUserId) {
+      const fetchedOrders = await getOrders(targetUserId);
       if (fetchedOrders) {
         setOrders(fetchedOrders);
       }
@@ -22,7 +25,7 @@ const OrderListScreen = ({ navigation }) => {
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+  }, [route.params]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -59,7 +62,7 @@ const OrderListScreen = ({ navigation }) => {
   const renderOrderItem = ({ item }) => (
     <TouchableOpacity
       style={styles.orderItem}
-      onPress={() => navigation.navigate('OrderDetail', { orderId: item.id })} // Assuming an OrderDetailScreen
+      onPress={() => navigation.navigate('OrderDetail', { orderId: item.id })}
     >
       <View style={styles.orderHeader}>
         <Text style={styles.orderId}>Order ID: {item.id.substring(0, 8)}...</Text>
@@ -87,8 +90,13 @@ const OrderListScreen = ({ navigation }) => {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Your Orders</Text>
+    <View style={{flex: 1, backgroundColor: 'white'}}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Your Orders</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Icon name="close" size={24} color="#333" />
+        </TouchableOpacity>
+      </View>
       {orders.length === 0 ? (
         <Text style={styles.noOrdersText}>No orders found.</Text>
       ) : (
@@ -106,6 +114,18 @@ const OrderListScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
   container: {
     flex: 1,
     padding: 16,

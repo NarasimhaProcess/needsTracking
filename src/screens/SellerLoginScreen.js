@@ -12,71 +12,95 @@ import {
 } from 'react-native';
 import { supabase } from '../services/supabase';
 
-export default function SignupScreen({ navigation, route }) {
+
+export default function SellerLoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
 
-  const handleSignup = async () => {
-    if (!email || !password || !confirmPassword || !name) {
+  const handleLogin = async () => {
+    if (!email || !password) {
       Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
       return;
     }
 
     setLoading(true);
     try {
-      // Create auth account
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
-        options: {
-          data: {
-            name: name,
-          }
-        }
       });
 
       if (error) {
-        Alert.alert('Signup Error', error.message);
+        Alert.alert('Login Error', error.message);
       } else {
-        // After successful auth signup, create a profile entry
-        const userId = data.user.id;
-        const { error: insertProfileError } = await supabase
-          .from('profiles')
-          .insert({ id: userId, role: 'agent' }); // Set role to 'agent' for email/password signups
+        console.log('Login successful:', data.user);
 
-        if (insertProfileError) {
-          console.error('Error creating profile during signup:', insertProfileError.message);
-          Alert.alert('Error', 'Account created, but failed to create user profile.');
+        let { data: sellerData, error: sellerError } = await supabase
+          .from('sellers')
+          .select('id, email, name')
+          .eq('user_id', data.user.id)
+          .maybeSingle();
+
+        if (sellerError) {
+          console.error("Error checking seller existence:", sellerError.message);
+          Alert.alert("Error", "An error occurred while checking seller data.");
           setLoading(false);
           return;
         }
 
-        Alert.alert(
-          'Success',
-          'Account created successfully! Please check your email for verification.',
-          [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
-        );
+        if (!sellerData) {
+          Alert.alert('Login Error', 'User not found in seller records. Please contact admin.');
+          setLoading(false);
+          return;
+        }
+
+        const authenticatedUser = {
+          id: sellerData.id,
+          email: sellerData.email,
+          name: sellerData.name,
+          sellerId: sellerData.id,
+        };
+
+        const { error: updateError } = await supabase.auth.updateUser({
+          data: { sellerId: sellerData.id },
+        });
+
+        if (updateError) {
+          console.error("Error updating user metadata:", updateError.message);
+          Alert.alert("Error", "Failed to update user profile with seller ID.");
+          setLoading(false);
+          return;
+        }
+        
+        if (onAuthSuccess) {
+          onAuthSuccess(authenticatedUser);
+        }
+
+        navigation.navigate('Inventory');
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
-      console.error('Signup error:', error);
+      console.error('Login error:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleForgotPassword = () => {
+    if (!email) {
+      Alert.alert('Error', 'Please enter your email first');
+      return;
+    }
+
+    supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'user-tracking-mobile://reset-password',
+    }).then(() => {
+      Alert.alert('Success', 'Password reset email sent');
+    }).catch((error) => {
+      Alert.alert('Error', error.message);
+    });
   };
 
   return (
@@ -86,23 +110,12 @@ export default function SignupScreen({ navigation, route }) {
     >
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
-          <Text style={styles.icon}>📍</Text>
-          <Text style={styles.title}>NeedsTracking</Text>
-          <Text style={styles.subtitle}>Create your tracking account</Text>
+          <Text style={styles.icon}>📦</Text>
+          <Text style={styles.title}>Seller Login</Text>
+          <Text style={styles.subtitle}>Sign in to manage your inventory</Text>
         </View>
 
         <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your full name"
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-            />
-          </View>
-
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Email</Text>
             <TextInput
@@ -128,36 +141,28 @@ export default function SignupScreen({ navigation, route }) {
             />
           </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm your password"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
-
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleSignup}
+            onPress={handleLogin}
             disabled={loading}
           >
             <Text style={styles.buttonText}>
-              {loading ? 'Creating Account...' : 'Create Account'}
+              {loading ? 'Signing In...' : 'Sign In'}
             </Text>
           </TouchableOpacity>
 
-          <View style={styles.loginContainer}>
-            <Text style={styles.loginText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-              <Text style={styles.loginLink}>Sign In</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={styles.forgotPassword}
+            onPress={handleForgotPassword}
+          >
+            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+          </TouchableOpacity>
+
         </View>
       </ScrollView>
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>© 2025 localwala's. Version 1.0</Text>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -225,18 +230,37 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  loginContainer: {
+  forgotPassword: {
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  forgotPasswordText: {
+    color: '#007AFF',
+    fontSize: 16,
+  },
+  signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 40,
   },
-  loginText: {
+  signupText: {
     fontSize: 16,
     color: '#8E8E93',
   },
-  loginLink: {
+  signupLink: {
     fontSize: 16,
     color: '#007AFF',
     fontWeight: '600',
+  },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+    backgroundColor: '#F2F2F7',
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#8E8E93',
   },
 });
