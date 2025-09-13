@@ -25,7 +25,7 @@ const OrderListScreen = ({ navigation, route }) => {
 
   useEffect(() => {
     fetchOrders();
-  }, [route.params]);
+  }, [route.params, route.params?.customerId]);
 
   const handleRefresh = async () => {
     setRefreshing(true);

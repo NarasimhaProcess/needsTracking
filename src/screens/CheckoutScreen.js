@@ -94,7 +94,27 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    const orderUserId = customerId || user?.id;
+    let orderUserId;
+
+    if (customerId) {
+      // If customerId is provided (agent placing order for a customer)
+      const { data: customerData, error: customerError } = await supabase
+        .from('customers')
+        .select('user_id')
+        .eq('id', customerId)
+        .single();
+
+      if (customerError) {
+        console.error('Error fetching user_id for customer:', customerError.message);
+        Alert.alert('Error', 'Failed to get customer user ID.');
+        setLoading(false);
+        return;
+      }
+      orderUserId = customerData.user_id;
+    } else {
+      // If no customerId (customer placing their own order)
+      orderUserId = user?.id;
+    }
 
     if (!orderUserId) {
       Alert.alert('Error', 'User not authenticated or customer not selected.');
@@ -103,6 +123,9 @@ const CheckoutScreen = ({ navigation, route }) => {
     }
 
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
+
+    console.log('CheckoutScreen: Placing order with customerId:', customerId);
+    console.log('CheckoutScreen: Placing order with user_id:', orderUserId);
 
     const { data: order, error: orderError } = await supabase
       .from('orders')

@@ -167,7 +167,22 @@ const CartScreen = ({ navigation }) => {
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.container}
       />
-      <TouchableOpacity style={styles.checkoutButton} onPress={() => navigation.navigate('Checkout', { cart: cart })}>
+      <TouchableOpacity style={styles.checkoutButton} onPress={() => {
+        let customerIdToPass = null;
+        if (user && user.user_metadata && user.user_metadata.customerId) {
+          customerIdToPass = user.user_metadata.customerId;
+        } else if (cart && cart.cart_items.length > 0) {
+          // Assuming all products in cart belong to the same customer (catalog provider)
+          customerIdToPass = cart.cart_items[0].product_variant_combinations.products.customer_id;
+        }
+        navigation.navigate('Checkout', { cart: cart, customerId: customerIdToPass });
+        console.log('CartScreen: customerIdToPass', customerIdToPass);
+        console.log('CartScreen: user', user);
+        console.log('CartScreen: user.user_metadata.customerId', user?.user_metadata?.customerId);
+        console.log('CartScreen: cart', cart);
+        console.log('CartScreen: cart.cart_items.length', cart?.cart_items?.length);
+        console.log('CartScreen: cart.cart_items[0].product_variant_combinations.products.customer_id', cart?.cart_items?.[0]?.product_variant_combinations?.products?.customer_id);
+      }}>
         <Text style={styles.checkoutButtonText}>Checkout</Text>
       </TouchableOpacity>
     </View>

@@ -357,7 +357,7 @@ const CatalogScreen = ({ navigation, route }) => {
             )}
             <Button title="Checkout" onPress={() => {
               setIsCartModalVisible(false);
-              navigation.navigate('Checkout', { cart: cart });
+              navigation.navigate('Checkout', { cart: cart, customerId: customerId });
             }} />
           </View>
         </View>

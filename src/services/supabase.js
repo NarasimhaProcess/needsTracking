@@ -364,6 +364,7 @@ export async function getCart(userId) {
           products (
             id,
             product_name,
+            customer_id,
             product_media (media_url, media_type)
           )
         )
@@ -729,6 +730,8 @@ export async function getCustomerDocuments(customerId) {
 
 // Order Management Functions
 export async function getOrders(userId) {
+  console.log('getOrders: userId', userId);
+
   const { data, error } = await supabase
     .from('orders')
     .select(`
@@ -743,6 +746,7 @@ export async function getOrders(userId) {
           products (
             id,
             product_name,
+            customer_id,
             product_media (media_url, media_type)
           )
         )
@@ -752,9 +756,10 @@ export async function getOrders(userId) {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('Error fetching orders:', error.message);
+    console.error('getOrders: Error fetching orders:', error.message);
     return null;
   }
+  console.log('getOrders: Fetched orders data', data);
   return data;
 }
 
