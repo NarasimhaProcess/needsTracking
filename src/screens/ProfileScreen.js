@@ -13,6 +13,7 @@ import {
   Image
 } from 'react-native';
 import { supabase, uploadQrImage, addQrCode, getActiveQrCode } from '../services/supabase';
+import { schedulePushNotification } from '../services/notificationService';
 import * as Location from 'expo-location';
 import LeafletMap from '../components/LeafletMap'; // Assuming you have this component
 import QRCode from 'react-native-qrcode-svg';
@@ -293,6 +294,16 @@ const ProfileScreen = ({ navigation }) => {
       <TouchableOpacity style={styles.button} onPress={handleUpdateProfile}>
         <Text style={styles.buttonText}>Update Profile</Text>
       </TouchableOpacity>
+
+      <TouchableOpacity style={styles.button} onPress={() => schedulePushNotification("Test Title", "This is a test notification")}>
+        <Text style={styles.buttonText}>Send Test Notification</Text>
+      </TouchableOpacity>
+
+      {profile && profile.role === 'admin' && (
+        <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('AdminMap')}>
+          <Text style={styles.buttonText}>View Delivery Managers Map</Text>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity style={[styles.button, styles.logoutButton]} onPress={handleLogout}>
         <Text style={styles.buttonText}>Logout</Text>

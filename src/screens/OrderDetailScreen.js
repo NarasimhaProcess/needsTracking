@@ -1,18 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { getOrderById, updateOrderStatus } from '../services/supabase';
+import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
+import { WebView } from 'react-native-webview';
 
 const OrderDetailScreen = ({ navigation, route }) => {
   const { orderId } = route.params;
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState(null);
+  const webViewRef = useRef(null);
 
   useEffect(() => {
     const fetchOrderDetails = async () => {
-      setLoading(true);
       const fetchedOrder = await getOrderById(orderId);
       if (fetchedOrder) {
         setOrder(fetchedOrder);
@@ -22,7 +23,33 @@ const OrderDetailScreen = ({ navigation, route }) => {
     };
 
     fetchOrderDetails();
-  }, [orderId]);
+
+    const channel = supabase
+      .channel(`order-details:${orderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'delivery_manager_locations',
+          filter: `manager_id=eq.${order?.delivery_manager_id}`,
+        },
+        (payload) => {
+          if (payload.new && webViewRef.current) {
+            const point = payload.new.location.match(/POINT\(([-\d\.]+) ([-\d\.]+)\)/);
+            if (point) {
+              const newCoords = { lat: parseFloat(point[2]), lon: parseFloat(point[1]) };
+              webViewRef.current.injectJavaScript(`updateMarkerLocation(${newCoords.lat}, ${newCoords.lon});`);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [orderId, order]);
 
   const handleUpdateStatus = async () => {
     if (selectedStatus !== order.status) {
@@ -49,7 +76,83 @@ const OrderDetailScreen = ({ navigation, route }) => {
     </View>
   );
 
-  if (loading) {
+  const getHtmlContent = () => {
+    const deliveryManagerLocation = order?.profiles?.latest_delivery_manager_locations[0]?.location;
+    const shippingLocation = order?.shipping_address;
+
+    let managerCoords = null;
+    if (deliveryManagerLocation) {
+      const point = deliveryManagerLocation.match(/POINT\(([-\d\.]+) ([-\d\.]+)\)/);
+      if (point) {
+        managerCoords = { lat: parseFloat(point[2]), lon: parseFloat(point[1]) };
+      }
+    }
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Order Tracking</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+          <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.AnimatedMarker/1.0.0/Leaflet.AnimatedMarker.js"></script>
+          <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+          <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+          <style>
+              body { margin: 0; padding: 0; }
+              #mapid { width: 100%; height: 300px; }
+          </style>
+      </head>
+      <body>
+          <div id="mapid"></div>
+          <script>
+              document.addEventListener('DOMContentLoaded', function() {
+                var map = L.map('mapid');
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+                var managerLocation = ${JSON.stringify(managerCoords)};
+                var shippingLocation = ${JSON.stringify(shippingLocation)};
+                var deliveryMarker = null;
+
+                var waypoints = [];
+                if (managerLocation) {
+                  waypoints.push(L.latLng(managerLocation.lat, managerLocation.lon));
+                  deliveryMarker = L.animatedMarker([L.latLng(managerLocation.lat, managerLocation.lon)], { autoStart: false, distance: 3000, interval: 2000 }).addTo(map);
+                  deliveryMarker.bindPopup('Delivery Manager');
+                }
+                if (shippingLocation && shippingLocation.latitude && shippingLocation.longitude) {
+                  waypoints.push(L.latLng(shippingLocation.latitude, shippingLocation.longitude));
+                  L.marker([shippingLocation.latitude, shippingLocation.longitude]).addTo(map).bindPopup('Delivery Address');
+                }
+
+                if (waypoints.length > 0) {
+                  setTimeout(function() { 
+                    map.fitBounds(L.latLngBounds(waypoints).pad(0.5));
+                    map.invalidateSize();
+                  }, 200);
+                }
+
+                if (waypoints.length === 2) {
+                  L.Routing.control({ waypoints: waypoints, routeWhileDragging: false, show: false }).addTo(map);
+                }
+
+                window.updateMarkerLocation = function(lat, lon) {
+                  if (deliveryMarker) {
+                    deliveryMarker.moveTo(L.latLng(lat, lon), 2000);
+                  } else {
+                    deliveryMarker = L.animatedMarker([L.latLng(lat, lon)], { autoStart: false, distance: 3000, interval: 2000 }).addTo(map);
+                    deliveryMarker.bindPopup('Delivery Manager');
+                  }
+                }
+              });
+          </script>
+      </body>
+      </html>
+    `;
+  };
+
+  if (loading && !order) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#0000ff" />
@@ -74,6 +177,15 @@ const OrderDetailScreen = ({ navigation, route }) => {
         </TouchableOpacity>
       </View>
       <ScrollView style={styles.container}>
+        {order.delivery_manager_id && (
+          <WebView
+            ref={webViewRef}
+            originWhitelist={['*']}
+            source={{ html: getHtmlContent() }}
+            style={{ height: 300, width: '100%' }}
+            javaScriptEnabled={true}
+          />
+        )}
         <View style={styles.detailCard}>
           <Text style={styles.label}>Order ID:</Text>
           <Text style={styles.value}>{order.id}</Text>
@@ -92,6 +204,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
             style={styles.picker}
           >
             <Picker.Item label="Pending" value="pending" />
+            <Picker.Item label="Out for Delivery" value="out_for_delivery" />
             <Picker.Item label="Completed" value="completed" />
             <Picker.Item label="Shipped" value="shipped" />
             <Picker.Item label="Cancelled" value="cancelled" />
@@ -111,7 +224,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
         <View style={styles.detailCard}>
           <Text style={styles.label}>Shipping Address:</Text>
           <Text style={styles.value}>
-            {order.shipping_address.street}, {order.shipping_address.city}, {order.shipping_address.state} {order.shipping_address.zipCode}
+            {order.shipping_address.address}, {order.shipping_address.city}
           </Text>
         </View>
 

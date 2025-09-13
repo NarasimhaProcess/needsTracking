@@ -5,6 +5,9 @@ export default {
     "name": "NeedsTracking",
     "slug": "needstracking",
     "version": "1.0.0",
+    "android": {
+      "googleServicesFile": "./google-services.json"
+     },
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -32,6 +35,7 @@ export default {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF"
       },
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -66,6 +70,13 @@ export default {
         "expo-image-picker",
         {
           "photosPermission": "Allow NeedsTracking to access your photos to upload profile images."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff"
         }
       ]
     ],

@@ -781,6 +781,13 @@ export async function getOrderById(orderId) {
             product_media (media_url, media_type)
           )
         )
+      ),
+      profiles!orders_delivery_manager_id_fkey (
+        full_name,
+        mobile,
+        latest_delivery_manager_locations (
+          location
+        )
       )
     `)
     .eq('id', orderId)
@@ -819,4 +826,60 @@ export async function getPendingOrdersCount(userId) {
     return 0;
   }
   return count;
+}
+
+export async function getAssignedOrders(deliveryManagerId) {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      order_items (
+        id,
+        quantity,
+        price,
+        product_variant_combinations (
+          id,
+          combination_string,
+          products (
+            id,
+            product_name,
+            customer_id
+          )
+        )
+      )
+    `)
+    .eq('delivery_manager_id', deliveryManagerId)
+    .order('created_at', { ascending: false });
+
+  return data;
+}
+
+export async function updateDeliveryManagerLocation(managerId, location) {
+  const { data, error } = await supabase
+    .from('delivery_manager_locations')
+    .insert({
+      manager_id: managerId,
+      location: `POINT(${location.coords.longitude} ${location.coords.latitude})`,
+    });
+
+  return data;
+}
+
+export async function getDeliveryManagerLocations() {
+  const { data, error } = await supabase
+    .from('latest_delivery_manager_locations')
+    .select(`
+      manager_id,
+      location,
+      profiles (
+        full_name,
+        mobile
+      )
+    `);
+
+  if (error) {
+    console.error('Error fetching delivery manager locations:', error.message);
+    return null;
+  }
+  return data;
 } 

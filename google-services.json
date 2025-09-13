@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "104845017449",
+    "project_id": "needstracking",
+    "storage_bucket": "needstracking.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:104845017449:android:0c6db031334016310afdf8",
+        "android_client_info": {
+          "package_name": "com.narasimhaexpo.needstrackingmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAMJ4jYObEx6AkGXymHOqDl1Eu7QFaN7gM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -185,6 +185,13 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
   const [isLoginMenuVisible, setIsLoginMenuVisible] = useState(false);
 
   useEffect(() => {
+    // Role-based redirection
+    if (role === 'delivery_manager') {
+      navigation.replace('DeliveryManagerDashboard');
+    }
+  }, [role, navigation]);
+
+  useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
@@ -506,6 +513,10 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
             <TouchableOpacity onPress={() => { navigation.navigate('SellerLogin'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
               <Icon name="user-secret" size={24} color="#007AFF" />
               <Text style={styles.loginMenuItemText}>Seller Login</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { navigation.navigate('DeliveryManagerLogin'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
+              <Icon name="truck" size={24} color="#007AFF" />
+              <Text style={styles.loginMenuItemText}>Delivery Login</Text>
             </TouchableOpacity>
           </View>
         )}
