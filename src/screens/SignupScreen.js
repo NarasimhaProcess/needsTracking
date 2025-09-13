@@ -56,11 +56,38 @@ export default function SignupScreen({ navigation, route }) {
         const userId = data.user.id;
         const { error: insertProfileError } = await supabase
           .from('profiles')
-          .insert({ id: userId, role: 'agent' }); // Set role to 'agent' for email/password signups
+          .insert({ id: userId });
 
         if (insertProfileError) {
           console.error('Error creating profile during signup:', insertProfileError.message);
           Alert.alert('Error', 'Account created, but failed to create user profile.');
+          setLoading(false);
+          return;
+        }
+
+        // Create a customer entry
+        const { data: customerData, error: customerError } = await supabase
+          .from('customers')
+          .insert({ user_id: userId, name: name, email: email })
+          .select();
+
+        if (customerError) {
+          console.error('Error creating customer during signup:', customerError.message);
+          Alert.alert('Error', 'Account created, but failed to create customer record.');
+          setLoading(false);
+          return;
+        }
+
+        const customerId = customerData[0].id;
+
+        // Update user metadata with customerId
+        const { error: updateError } = await supabase.auth.updateUser({
+          data: { customerId: customerId },
+        });
+
+        if (updateError) {
+          console.error("Error updating user metadata:", updateError.message);
+          Alert.alert("Error", "Failed to update user profile with customer ID.");
           setLoading(false);
           return;
         }

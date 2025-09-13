@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { supabase } from '../services/supabase';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,186 +8,233 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   TextInput,
-  Alert,
+  Button,
+  Alert
 } from 'react-native';
-import { supabase } from '../services/supabase';
+import { Picker } from '@react-native-picker/picker';
+import debounce from 'lodash.debounce';
+import InventoryHistory from '../components/InventoryHistory';
 
-const InventoryScreen = ({ route }) => {
-  const { customerId } = route.params;
-  const [loading, setLoading] = useState(false);
-  const [products, setProducts] = useState([]);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [inventoryHistory, setInventoryHistory] = useState([]);
-  const [adjustmentNotes, setAdjustmentNotes] = useState('');
-  const [adjustmentQuantity, setAdjustmentQuantity] = useState('0');
-  const [restockQuantity, setRestockQuantity] = useState('0');
+
+const InventoryScreen = () => {
+  const [loading, setLoading] = useState(true);
+  const [inventory, setInventory] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItemId, setSelectedItemId] = useState(null);
+  const [quantityChange, setQuantityChange] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState('adjust'); // 'adjust' or 'restock'
 
   useEffect(() => {
-    fetchProducts();
+    fetchInventory();
   }, []);
 
+  const fetchInventory = async (query = '') => {
+    setLoading(true);
+    let supabaseQuery = supabase
+      .from('product_variant_combinations')
+      .select(`
+        id,
+        combination_string,
+        quantity,
+        products (product_name)
+      `);
+
+    if (query) {
+      supabaseQuery = supabaseQuery.ilike('products.product_name', `%${query}%`);
+    }
+
+    const { data, error } = await supabaseQuery;
+
+    if (error) {
+      console.error('Error fetching inventory:', error.message);
+      Alert.alert('Error', 'Failed to fetch inventory.');
+    } else {
+      setInventory(data);
+    }
+    setLoading(false);
+  };
+
+  const debouncedFetchInventory = useCallback(debounce(fetchInventory, 300), []);
+
   useEffect(() => {
-    const allVariants = products.flatMap((p) => p.product_variant_combinations);
-    if (allVariants.length > 0) {
-      if (selectedProduct) {
-        const updatedSelectedProduct = allVariants.find(v => v.id === selectedProduct.id);
-        if (updatedSelectedProduct) {
-          setSelectedProduct(updatedSelectedProduct);
-        }
-      } else {
-        const firstVariant = allVariants[0];
-        setSelectedProduct(firstVariant);
-        fetchInventoryHistory(firstVariant.id);
+    debouncedFetchInventory(searchQuery);
+  }, [searchQuery, debouncedFetchInventory]);
+
+  
+
+  const handleAdjustQuantity = async () => {
+    if (!selectedItem || !quantityChange || isNaN(parseInt(quantityChange))) {
+      Alert.alert('Invalid Input', 'Please select an item and enter a valid quantity.');
+      return;
+    }
+
+    setLoading(true);
+    const parsedQuantityChange = parseInt(quantityChange);
+    const newQuantity = selectedItem.quantity + parsedQuantityChange;
+
+    const { error: updateError } = await supabase
+      .from('product_variant_combinations')
+      .update({ quantity: newQuantity })
+      .eq('id', selectedItem.id);
+
+    if (updateError) {
+      console.error('Error updating quantity:', updateError.message);
+      Alert.alert('Error', 'Failed to update quantity.');
+    } else {
+      // Record in inventory_history
+      const { error: historyError } = await supabase
+        .from('inventory_history')
+        .insert({
+          product_variant_combination_id: selectedItem.id,
+          change_type: parsedQuantityChange > 0 ? 'restock' : 'manual_adjustment',
+          quantity_change: parsedQuantityChange,
+          new_quantity: newQuantity,
+          notes: 'Manual adjustment from app',
+        });
+
+      if (historyError) {
+        console.error('Error recording inventory history:', historyError.message);
       }
-    }
-  }, [products]);
 
-  const fetchProducts = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('products')
-      .select('*, product_variant_combinations(*)')
-      .eq('customer_id', customerId);
-    if (error) {
-      // console.error('Error fetching products:', error.message);
-    } else {
-      setProducts(data);
+      Alert.alert('Success', 'Inventory updated successfully!');
+      setQuantityChange('');
+      fetchInventory(searchQuery); // Refresh inventory list
     }
     setLoading(false);
   };
 
-  const fetchInventoryHistory = async (productVariantCombinationId) => {
+  const handleSelectItem = (item) => {
+    setSelectedItem(item);
+    setSelectedItemId(item.id);
+  };
+
+  const restockProduct = async (product_variant_combination_id, quantity) => {
+    if (!quantity || isNaN(parseInt(quantity))) {
+      Alert.alert('Invalid Input', 'Please enter a valid quantity.');
+      return;
+    }
     setLoading(true);
-    const { data, error } = await supabase
-      .from('inventory_history')
-      .select('*')
-      .eq('product_variant_combination_id', productVariantCombinationId)
-      .order('created_at', { ascending: false });
+    const parsedQuantity = parseInt(quantity);
+    const { error } = await supabase
+      .from('product_variant_combinations')
+      .update({ quantity: parsedQuantity })
+      .eq('id', product_variant_combination_id);
+
     if (error) {
-      // console.error('Error fetching inventory history:', error.message);
+      Alert.alert('Error', `Failed to restock product: ${error.message}`);
     } else {
-      setInventoryHistory(data);
+      // Record in inventory_history
+      const { error: historyError } = await supabase
+        .from('inventory_history')
+        .insert({
+          product_variant_combination_id: product_variant_combination_id,
+          change_type: 'restock',
+          quantity_change: parsedQuantity,
+          new_quantity: parsedQuantity,
+          notes: 'Restocked from app',
+        });
+
+      if (historyError) {
+        console.error('Error recording inventory history:', historyError.message);
+      }
+      Alert.alert('Success', 'Product restocked successfully!');
+      setQuantityChange('');
+      fetchInventory(searchQuery);
     }
     setLoading(false);
   };
 
-  const handleAdjustInventory = async () => {
-    if (!selectedProduct) return;
-
-    const { data, error } = await supabase.functions.invoke('adjust-inventory', {
-      body: {
-        product_variant_combination_id: selectedProduct.id,
-        new_quantity: parseInt(adjustmentQuantity, 10),
-        notes: adjustmentNotes,
-      },
-    });
-
-    if (error) {
-      Alert.alert('Error', 'Failed to adjust inventory.');
-    } else {
-      Alert.alert('Success', 'Inventory adjusted successfully.');
-      fetchProducts();
-      fetchInventoryHistory(selectedProduct.id);
-    }
-  };
-
-  const handleRestockInventory = async () => {
-    if (!selectedProduct) return;
-
-    const { data, error } = await supabase.functions.invoke('restock-inventory', {
-      body: {
-        product_variant_combination_id: selectedProduct.id,
-        quantity_to_add: parseInt(restockQuantity, 10),
-      },
-    });
-
-    if (error) {
-      Alert.alert('Error', 'Failed to restock inventory.');
-    } else {
-      Alert.alert('Success', 'Inventory restocked successfully.');
-      fetchProducts();
-      fetchInventoryHistory(selectedProduct.id);
-    }
-  };
-
-  const renderProductVariant = ({ item }) => (
-    <TouchableOpacity
-      style={styles.variantContainer}
-      onPress={() => {
-        setSelectedProduct(item);
-        fetchInventoryHistory(item.id);
-      }}
-    >
-      <Text>{item.combination_string}</Text>
-      <Text>Quantity: {item.quantity}</Text>
-    </TouchableOpacity>
-  );
-
-  const renderInventoryHistory = ({ item }) => (
-    <View style={styles.historyItem}>
-      <Text>{new Date(item.created_at).toLocaleString()}</Text>
-      <Text>{item.change_type}</Text>
-      <Text>Change: {item.quantity_change}</Text>
-      <Text>New Quantity: {item.new_quantity}</Text>
-      {item.notes && <Text>Notes: {item.notes}</Text>}
-    </View>
-  );
+  if (loading && inventory.length === 0) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <View style={styles.leftPanel}>
-        <FlatList
-          data={products.flatMap((p) => p.product_variant_combinations)}
-          renderItem={renderProductVariant}
-          keyExtractor={(item) => item.id}
+      <View style={styles.header}>
+        <Text style={styles.title}>Inventory Management</Text>
+      </View>
+      <View style={styles.filtersContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by product name..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
         />
       </View>
-      <View style={styles.rightPanel}>
-        {selectedProduct && (
-          <View>
-            <Text style={styles.title}>Inventory for {selectedProduct.combination_string}</Text>
-            <View style={styles.tabContainer}>
-              {/* Tabs would go here */}
-            </View>
-            <View style={styles.managementContainer}>
-              <Text style={styles.subtitle}>Adjust Inventory</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="New Quantity"
-                value={adjustmentQuantity}
-                onChangeText={setAdjustmentQuantity}
-                keyboardType="numeric"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Notes"
-                value={adjustmentNotes}
-                onChangeText={setAdjustmentNotes}
-              />
-              <TouchableOpacity style={styles.button} onPress={handleAdjustInventory}>
-                <Text style={styles.buttonText}>Adjust</Text>
+      <View style={styles.mainContent}>
+        <View style={styles.leftPane}>
+          {loading && <ActivityIndicator style={styles.listLoader} size="small" color="#007AFF" />}
+          <FlatList
+            data={inventory}
+            keyExtractor={(item) => item.id.toString()}
+            renderItem={({ item }) => (
+              <TouchableOpacity 
+                style={[styles.itemContainer, selectedItem?.id === item.id && styles.selectedItemContainer]} 
+                onPress={() => handleSelectItem(item)}
+              >
+                <Text style={styles.itemName}>{item.products ? item.products.product_name : 'Product not found'} - {item.combination_string}</Text>
+                <Text style={styles.itemQuantity}>Stock: {item.quantity}</Text>
               </TouchableOpacity>
+            )}
+            ListEmptyComponent={<Text style={styles.emptyText}>No inventory items found.</Text>}
+          />
+        </View>
+        <View style={styles.rightPane}>
+          {selectedItem ? (
+            <View>
+              <View style={styles.tabContainer}>
+                <TouchableOpacity 
+                  style={[styles.tabButton, activeTab === 'adjust' && styles.activeTabButton]}
+                  onPress={() => setActiveTab('adjust')}
+                >
+                  <Text style={styles.tabButtonText}>Adjust Quantity</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.tabButton, activeTab === 'restock' && styles.activeTabButton]}
+                  onPress={() => setActiveTab('restock')}
+                >
+                  <Text style={styles.tabButtonText}>Restock</Text>
+                </TouchableOpacity>
+              </View>
 
-              <Text style={styles.subtitle}>Restock Inventory</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Quantity to Add"
-                value={restockQuantity}
-                onChangeText={setRestockQuantity}
-                keyboardType="numeric"
-              />
-              <TouchableOpacity style={styles.button} onPress={handleRestockInventory}>
-                <Text style={styles.buttonText}>Restock</Text>
-              </TouchableOpacity>
+              {activeTab === 'adjust' ? (
+                <View style={styles.detailsContainer}>
+                  <Text style={styles.modalTitle}>Adjust Quantity for {selectedItem.products ? selectedItem.products.product_name : 'Product not found'} - {selectedItem.combination_string}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Quantity Change (e.g., 5 or -2)"
+                    keyboardType="numeric"
+                    value={quantityChange}
+                    onChangeText={setQuantityChange}
+                  />
+                  <Button title="Adjust Inventory" onPress={handleAdjustQuantity} />
+                </View>
+              ) : (
+                <View style={styles.detailsContainer}>
+                  <Text style={styles.modalTitle}>Restock Inventory for {selectedItem.products ? selectedItem.products.product_name : 'Product not found'} - {selectedItem.combination_string}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Restock Quantity"
+                    keyboardType="numeric"
+                    value={quantityChange}
+                    onChangeText={setQuantityChange}
+                  />
+                  <Button title="Restock" onPress={() => restockProduct(selectedItem.id, quantityChange)} />
+                </View>
+              )}
             </View>
-            <Text style={styles.title}>Inventory History</Text>
-            <FlatList
-              data={inventoryHistory}
-              renderItem={renderInventoryHistory}
-              keyExtractor={(item) => item.id}
-            />
-          </View>
-        )}
+          ) : (
+            <View style={styles.placeholder}>
+              <Text>Select an item to see details</Text>
+            </View>
+          )}
+          <InventoryHistory product_variant_combination_id={selectedItemId} />
+        </View>
       </View>
     </View>
   );
@@ -195,61 +243,139 @@ const InventoryScreen = ({ route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    flexDirection: 'row',
+    backgroundColor: '#f5f5f5',
   },
-  leftPanel: {
-    flex: 1,
-    borderRightWidth: 1,
-    borderColor: '#ccc',
-  },
-  rightPanel: {
-    flex: 2,
+  header: {
     padding: 20,
-  },
-  variantContainer: {
-    padding: 10,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderColor: '#eee',
-  },
-  historyItem: {
-    padding: 10,
-    borderBottomWidth: 1,
-    borderColor: '#eee',
+    borderBottomColor: '#ddd',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   title: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 10,
   },
-  subtitle: {
+  restockButton: {
+    backgroundColor: '#4CAF50', // Green
+  },
+  filtersContainer: {
+    flexDirection: 'row',
+    padding: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 5,
+    padding: 10,
+    marginRight: 10,
+  },
+  mainContent: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  leftPane: {
+    flex: 1,
+    borderRightWidth: 1,
+    borderRightColor: '#ddd',
+  },
+  rightPane: {
+    flex: 1,
+    padding: 20,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  itemContainer: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  selectedItemContainer: {
+    backgroundColor: '#e0f7ff',
+  },
+  itemName: {
     fontSize: 16,
     fontWeight: 'bold',
-    marginTop: 10,
-    marginBottom: 5,
   },
-  managementContainer: {
+  itemQuantity: {
+    fontSize: 14,
+    color: '#555',
+    marginTop: 5,
+  },
+  emptyText: {
+    textAlign: 'center',
+    marginTop: 20,
+    fontSize: 16,
+    color: '#888',
+  },
+  detailsContainer: {
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+    elevation: 2,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
     marginBottom: 20,
+    textAlign: 'center',
   },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
     padding: 10,
     borderRadius: 5,
-    marginBottom: 10,
-  },
-  button: {
-    backgroundColor: '#007AFF',
-    padding: 10,
-    borderRadius: 5,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    width: '100%',
+    marginBottom: 20,
   },
   tabContainer: {
     flexDirection: 'row',
-    marginBottom: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  tabButton: {
+    flex: 1,
+    padding: 10,
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+  },
+  activeTabButton: {
+    backgroundColor: '#007AFF',
+  },
+  tabButtonText: {
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  activeTabButtonText: {
+    color: '#fff',
+  },
+  placeholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  listLoader: {
+    position: 'absolute',
+    top: 10,
+    alignSelf: 'center',
+    zIndex: 1,
   },
 });
 

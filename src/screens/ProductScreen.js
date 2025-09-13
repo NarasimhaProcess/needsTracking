@@ -12,13 +12,39 @@ import {
 } from 'react-native';
 import { supabase, getProductsWithDetails, deleteProductMedia, deleteProduct } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { Video } from 'expo-av';
-import { useNavigation } from '@react-navigation/native';
+// import { Video } from 'expo-av'; // Temporarily commented out
+
 import ProductFormModal from '../components/ProductFormModal';
 
-const ProductScreen = ({ route }) => {
-  const navigation = useNavigation();
-  const { session, customerId } = route.params;
+const ProductScreen = ({ route, navigation }) => {
+  const { session } = route.params;
+  const [customerId, setCustomerId] = useState(null);
+
+  useEffect(() => {
+    console.log('ProductScreen: useEffect triggered. Current session prop:', session);
+    
+    // Handle cases where the full session object or just the user object is passed.
+    const user = session?.user ? session.user : session;
+
+    if (!user || !user.user_metadata) {
+      console.log('ProductScreen: User or user_metadata is missing.');
+      setCustomerId(null);
+      setProducts([]);
+      return;
+    }
+
+    if (user.user_metadata.customerId) {
+      const id = user.user_metadata.customerId;
+      setCustomerId(id);
+      console.log('ProductScreen: Customer ID set from user metadata:', id);
+      fetchProducts(id); // Call fetchProducts immediately after customerId is set
+    } else {
+      console.log('ProductScreen: No customerId found in user metadata. User:', user, 'User metadata:', user.user_metadata);
+      setCustomerId(null);
+      setProducts([]); // Clear products if no customerId
+    }
+  }, [session]);
+  
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState([]); // Stores fetched products
   const [showProductModal, setShowProductModal] = useState(false);
@@ -29,28 +55,32 @@ const ProductScreen = ({ route }) => {
   const [allMediaForViewer, setAllMediaForViewer] = useState([]);
 
   // Define fetchProductsAndMediaUrl outside useEffect to ensure stable reference
-  const fetchProducts = async () => {
-    if (!session || !session.user || !customerId) {
+  const fetchProducts = async (currentCustomerId) => { // Accept customerId as parameter
+    console.log('ProductScreen: fetchProducts called. Current customerId:', currentCustomerId);
+    const user = session?.user ? session.user : session;
+
+    if (!user || !currentCustomerId) { // Use currentCustomerId
+      console.log('ProductScreen: Skipping fetchProducts due to missing user or customerId.');
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const data = await getProductsWithDetails(customerId);
+      const data = await getProductsWithDetails(currentCustomerId); // Use currentCustomerId
+      console.log('ProductScreen: Data received from getProductsWithDetails:', data);
       if (data) {
         setProducts(data);
+        console.log('ProductScreen: products state after setProducts:', data);
       }
     } catch (error) {
-      console.error("Error in fetching products:", error.message);
+      console.error("ProductScreen: Error in fetching products:", error.message);
       Alert.alert("Error", "An unexpected error occurred while fetching data.");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchProducts();
-  }, [session, customerId]);
+  
 
   const handleEditProduct = (product) => {
     setProductToEdit(product);
@@ -58,7 +88,7 @@ const ProductScreen = ({ route }) => {
   };
 
   const handleModalSubmit = () => {
-    fetchProducts(); // Refresh the list after add/edit
+    fetchProducts(customerId); // Refresh the list after add/edit
   };
 
   const handleDeleteProductMedia = async (mediaId, mediaUrl) => {
@@ -116,7 +146,12 @@ const ProductScreen = ({ route }) => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.productsListTitle}>Your Products</Text>
+      <View style={styles.header}>
+        <Text style={styles.productsListTitle}>Your Products</Text>
+        <TouchableOpacity onPress={() => navigation.navigate('ProductMapScreen', { customerId })}>
+          <Icon name="map" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
 
       <TouchableOpacity
         style={styles.fab}
@@ -232,13 +267,14 @@ const ProductScreen = ({ route }) => {
                   resizeMode="contain"
                 />
               ) : allMediaForViewer[currentMediaIndex].media_type === 'video' ? (
-                <Video
-                  source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
-                  style={styles.fullScreenMedia}
-                  useNativeControls
-                  resizeMode="contain"
-                  isLooping
-                />
+                // <Video // Temporarily commented out
+                //   source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
+                //   style={styles.fullScreenMedia}
+                //   useNativeControls
+                //   resizeMode="contain"
+                //   isLooping
+                // />
+                <Text style={styles.noMediaText}>Video playback temporarily disabled</Text> // Placeholder
               ) : (
                 <Text style={styles.noMediaText}>No media to display</Text>
               )}

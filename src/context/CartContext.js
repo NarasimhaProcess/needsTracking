@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { supabase } from '../services/supabase';
+import { Alert } from 'react-native';
 import { getCart, updateCartItem, removeCartItem } from '../services/supabase'; // Assuming these are in supabase.js
 
 const CartContext = createContext();
@@ -82,11 +83,27 @@ export const CartProvider = ({ children }) => {
 
   const removeItem = async (cartItemId) => {
     if (!user) return; // Should not happen
-    await removeCartItem(cartItemId);
-    // Optimistically update UI
-    const newCart = { ...cart };
-    newCart.cart_items = newCart.cart_items.filter(item => item.id !== cartItemId);
-    setCart(newCart);
+    Alert.alert(
+      "Remove Item",
+      "Are you sure you want to remove this item from your cart?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Remove",
+          onPress: async () => {
+            await removeCartItem(cartItemId);
+            // Optimistically update UI
+            const newCart = { ...cart };
+            newCart.cart_items = newCart.cart_items.filter(item => item.id !== cartItemId);
+            setCart(newCart);
+          }
+        }
+      ],
+      { cancelable: true }
+    );
   };
 
   const cartItemCount = cart?.cart_items?.length || 0;

@@ -24,7 +24,8 @@ import { getGuestCart, addGuestCartItem } from '../services/localStorageService'
 const { width } = Dimensions.get('window');
 
 const CatalogScreen = ({ navigation, route }) => {
-  const { customerId } = route.params || {};
+  const { customerId: routeCustomerId } = route.params || {};
+  const [customerId, setCustomerId] = useState(routeCustomerId);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
@@ -39,16 +40,34 @@ const CatalogScreen = ({ navigation, route }) => {
   const [viewerImages, setViewerImages] = useState([]);
 
   useEffect(() => {
-    const fetchProductsAndCart = async () => {
+    const fetchUserAndCustomerId = async () => {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      setUser(currentUser);
+
+      let currentCustomerId = routeCustomerId;
+      if (!currentCustomerId && currentUser?.email) {
+        const { data: customerData, error: customerError } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('email', currentUser.email)
+          .single();
+
+        if (customerError) {
+          console.error('Error fetching customer ID in CatalogScreen:', customerError.message);
+        } else if (customerData) {
+          currentCustomerId = customerData.id;
+          setCustomerId(customerData.id);
+        }
+      }
+      
+      // Now fetch products and cart using the determined customerId
       setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      const data = await getActiveProductsWithDetails(customerId);
+      const data = await getActiveProductsWithDetails(currentCustomerId);
       if (data) {
         setProducts(data);
       }
-      if (user) {
-        const cartData = await getCart(user.id);
+      if (currentUser) {
+        const cartData = await getCart(currentUser.id);
         setCart(cartData);
       } else {
         const guestCartData = await getGuestCart();
@@ -57,8 +76,8 @@ const CatalogScreen = ({ navigation, route }) => {
       setLoading(false);
     };
 
-    fetchProductsAndCart();
-  }, [customerId]);
+    fetchUserAndCustomerId();
+  }, [routeCustomerId]);
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({

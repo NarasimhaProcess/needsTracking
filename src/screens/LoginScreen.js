@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../services/supabase';
+import { StackActions } from '@react-navigation/native';
 
 
 export default function LoginScreen({ navigation, route }) {
@@ -43,12 +44,13 @@ export default function LoginScreen({ navigation, route }) {
         let { data: customerData, error: customerError } = await supabase
           .from('customers')
           .select('id, email, name')
-          .eq('user_id', data.user.id) // Use auth user ID
+          .eq('email', data.user.email) // Use auth user email
           .maybeSingle();
 
         console.log("Login check: Auth user ID:", data.user.id);
         console.log("Login check: Customer data from 'customers' table:", customerData);
         console.log("Login check: Customer error:", customerError);
+        console.log("Login check: Is customerData null?", customerData === null);
 
         if (customerError) {
           console.error("Error checking customer existence:", customerError.message);
@@ -58,11 +60,20 @@ export default function LoginScreen({ navigation, route }) {
         }
 
         if (!customerData) {
-          console.log("User not found in customer records, but proceeding to catalog.");
-          if (onAuthSuccess) {
-            onAuthSuccess(data.user);
+          console.log("User not found in customer records, creating a new customer.");
+          const { data: newCustomerData, error: newCustomerError } = await supabase
+            .from('customers')
+            .insert({ user_id: data.user.id, name: data.user.user_metadata.name, email: data.user.email })
+            .select();
+
+          if (newCustomerError) {
+            console.error("Error creating customer:", newCustomerError.message);
+            Alert.alert("Error", "An error occurred while creating customer data.");
+            setLoading(false);
+            return;
           }
-          navigation.navigate('Catalog');
+
+          customerData = newCustomerData[0];
         } else {
           // Use the customer data (existing)
           const authenticatedUser = {
@@ -73,6 +84,7 @@ export default function LoginScreen({ navigation, route }) {
           };
 
           // Update Supabase user metadata with customerId
+          console.log('LoginScreen customerData.id', customerData.id);
           const { error: updateError } = await supabase.auth.updateUser({
             data: { customerId: customerData.id },
           });
@@ -83,13 +95,22 @@ export default function LoginScreen({ navigation, route }) {
             setLoading(false);
             return;
           }
+
+          // Refresh the session to ensure user_metadata is updated immediately
+          const { error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError) {
+            console.error("Error refreshing session:", refreshError.message);
+            Alert.alert("Error", "Failed to refresh session after updating profile.");
+            setLoading(false);
+            return;
+          }
           
           // Call the auth success callback if provided
           if (onAuthSuccess) {
             onAuthSuccess(authenticatedUser);
           }
 
-          navigation.navigate('Catalog');
+          navigation.dispatch(StackActions.replace('ProductTabs'));
         }
       }
     } catch (error) {

@@ -9,7 +9,7 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 
 const OrderConfirmationScreen = ({ navigation, route }) => {
-  const { order } = route.params;
+  const { order, customerId } = route.params;
 
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>
@@ -23,7 +23,7 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
         <Text style={styles.title}>Thank You for Your Order!</Text>
         <Text style={styles.orderId}>Order ID: {order.id}</Text>
         <Text style={styles.totalAmount}>Total Amount: ₹{order.total_amount}</Text>
-        <Button title="Continue Shopping" onPress={() => navigation.navigate('Catalog')} />
+        <Button title="Continue Shopping" onPress={() => navigation.navigate('Catalog', { customerId })} />
         <Button title="View My Orders" onPress={() => navigation.navigate('OrderList')} />
       </View>
     </View>

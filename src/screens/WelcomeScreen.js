@@ -23,6 +23,9 @@ import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
 import { useCart } from '../context/CartContext';
 import OrderIconComponent from '../components/OrderIconComponent';
 import CartIconComponent from '../components/CartIconComponent';
+import ProfileIconComponent from '../components/ProfileIconComponent';
+import ProductManageIconComponent from '../components/ProductManageIconComponent';
+
 
 function AreaSearchBar({ onAreaSelected, onClear }) {
   const [query, setQuery] = useState('');
@@ -163,7 +166,10 @@ function CustomerSearchBar({ onCustomerSelected, areaId }) {
   );
 }
 
-export default function WelcomeScreen({ navigation }) {
+import { useNavigation } from '@react-navigation/native'; // Add this import
+
+export default function WelcomeScreen({ route }) { // Remove navigation from props
+  const navigation = useNavigation(); // Get navigation from hook
   const { user, role } = useCart();
   const [customerLocations, setCustomerLocations] = useState([]);
   const [allAreas, setAllAreas] = useState([]);
@@ -269,9 +275,9 @@ export default function WelcomeScreen({ navigation }) {
   const onMapMessage = async (event) => {
     const data = JSON.parse(event.nativeEvent.data);
     if (data.type === 'viewProducts') {
-      navigation.navigate('Catalog', { customerId: data.customerId });
+      navigation.navigate('ProductTabs', { customerId: data.customerId });
     } else if (data.type === 'viewTopProducts') {
-      navigation.navigate('TopProducts', { customerId: data.customerId });
+      navigation.navigate('Catalog', { customerId: data.customerId });
     } else if (data.type === 'getDirections') {
       const { latitude, longitude } = data;
       const scheme = Platform.select({
@@ -533,6 +539,11 @@ export default function WelcomeScreen({ navigation }) {
           <View style={styles.bottomRightIcons}>
             <OrderIconComponent navigation={navigation} />
             <CartIconComponent navigation={navigation} />
+            <ProfileIconComponent navigation={navigation} />
+            {/* Assuming 'seller' or 'admin' role can manage products */}
+            {user && ( // Render if any user is logged in
+              <ProductManageIconComponent navigation={navigation} session={user} customerId={user?.id} />
+            )}
           </View>
         )}
     </View>

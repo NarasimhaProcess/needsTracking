@@ -93,9 +93,14 @@ const OrderListScreen = ({ navigation, route }) => {
     <View style={{flex: 1, backgroundColor: 'white'}}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Your Orders</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Icon name="close" size={24} color="#333" />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={() => navigation.navigate('Invoice')} style={{ marginRight: 15 }}>
+            <Icon name="file-text" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Icon name="close" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
       </View>
       {orders.length === 0 ? (
         <Text style={styles.noOrdersText}>No orders found.</Text>
@@ -125,6 +130,10 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   container: {
     flex: 1,

@@ -147,7 +147,7 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     if (paymentMethod === 'cod') {
       Alert.alert('Order Placed', 'Your order has been placed successfully.');
-      navigation.navigate('OrderConfirmation', { order });
+      navigation.navigate('OrderConfirmation', { order, customerId });
     } else {
       Alert.alert('Order Confirmed', 'Your order has been placed. Proceed to payment.');
       navigation.navigate('UpiQr', { order, totalAmount, shippingAddress });

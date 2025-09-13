@@ -269,16 +269,7 @@ const SimpleLeafletMap = forwardRef(({
         
         // Add popup with timestamp if available
         if (location.timestamp) {
-          locationMarker.bindPopup(
-            `
-            <div>
-              <strong>Location ${index + 1}</strong><br>
-              Lat: ${location.latitude.toFixed(6)}<br>
-              Lng: ${location.longitude.toFixed(6)}<br>
-              Time: ${new Date(location.timestamp).toLocaleString()}
-            </div>
-          `
-          );
+        
         }
         
         locationMarkers.push(locationMarker);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text, TextInput, FlatList, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { supabase } from '../services/supabase';
+import { supabase, getProductsWithDetails } from '../services/supabase';
 import { useNavigation } from '@react-navigation/native';
 
 function AreaSearchBar({ onAreaSelected }) {
@@ -78,6 +78,35 @@ export default function CustomerMapScreen({ route }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const webViewRef = useRef(null);
+
+  const fetchAndDisplayCustomerProducts = async (customerId) => {
+    try {
+      const products = await getProductsWithDetails(customerId);
+      let productsHtml = '<b>Products:</b><br/>';
+      if (products && products.length > 0) {
+        products.forEach(product => {
+          productsHtml += `- ${product.product_name} (Stock: ${product.product_variant_combinations.reduce((sum, pvc) => sum + pvc.quantity, 0)})<br/>`;
+        });
+      } else {
+        productsHtml += 'No products found.';
+      }
+      webViewRef.current.injectJavaScript(`
+        window.updateCustomerProducts('${customerId}', '${productsHtml}');
+      `);
+    } catch (err) {
+      console.error('Error fetching and displaying customer products:', err);
+      webViewRef.current.injectJavaScript(`
+        window.updateCustomerProducts('${customerId}', 'Error loading products.');
+      `);
+    }
+  };
+
+  const onWebViewMessage = (event) => {
+    const message = JSON.parse(event.nativeEvent.data);
+    if (message.type === 'customerClick') {
+      fetchAndDisplayCustomerProducts(message.customerId);
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -216,63 +245,34 @@ export default function CustomerMapScreen({ route }) {
                 name: loc.name || loc.email,
                 mobile: loc.mobile || 'N/A',
                 book_no: loc.book_no || 'N/A',
-                id: loc.id
+                id: loc.id, // Pass customer ID
             })))};
 
-            var allAreas = ${JSON.stringify(allAreas)};
+            var markers = {}; // To store markers by customer ID
 
-            allAreas.forEach(function(area) {
-                L.circle([area.latitude, area.longitude], { 
-                    color: 'red',
-                    fillColor: '#f03',
-                    fillOpacity: 0.5,
-                    radius: 500
-                }).addTo(map).bindPopup(area.area_name);
+            customerLocations.forEach(function(location) {
+                var marker = L.marker([location.latitude, location.longitude])
+                    .addTo(map)
+                    .bindPopup(
+                       '<b>' + (location.name || 'Customer') + '</b><br/>' +
+                       'Mobile: ' + (location.mobile || 'N/A') + '<br/>' +
+                       'Card No: ' + (location.book_no || 'N/A') + '<br/><br/>' +
+                       '<div id="products-' + location.id + '">Loading products...</div>'
+                     );
+                marker.on('click', function() {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'customerClick', customerId: location.id }));
+                });
+                markers[location.id] = marker;
             });
 
-            if (customerLocations.length > 0) {
-                var waypoints = customerLocations.map(function(loc) {
-                    return L.latLng(loc.latitude, loc.longitude);
-                });
-
-                var routingControl = L.Routing.control({
-                    waypoints: waypoints,
-                    routeWhileDragging: false,
-                    showAlternatives: false,
-                    addWaypoints: false,
-                    draggableWaypoints: false,
-                    fitSelectedRoutes: true,
-                    show: false,
-                    lineOptions: {
-                        styles: [{ color: 'blue', weight: 5 }]
-                    },
-                    router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' })
-                }).addTo(map);
-
-                routingControl.on('routesfound', function(e) {
-                    var routes = e.routes;
-                    if (routes.length > 0) {
-                        var bounds = L.latLngBounds(waypoints);
-                        map.fitBounds(bounds.pad(0.1));
-
-                        customerLocations.forEach(function(location) {
-                            L.marker([location.latitude, location.longitude])
-                                .addTo(map)
-                                .bindPopup(
-                                   '<b>' + (location.name || 'Customer') + '</b><br/>' +
-                                   'Mobile: ' + (location.mobile || 'N/A') + '<br/>' +
-                                   'Card No: ' + (location.book_no || 'N/A')
-                                 );
-                        });
-                    }
-                });
-            } else if (allAreas.length > 0) {
-                var areaBounds = L.latLngBounds(allAreas.map(a => [a.latitude, a.longitude]));
-                map.fitBounds(areaBounds.pad(0.1));
-            }
-        </script>
-    </body>
-    </html>
+            // Function to update marker popup with products
+            window.updateCustomerProducts = function(customerId, productsHtml) {
+                if (markers[customerId]) {
+                    var popupContent = markers[customerId].getPopup().getContent();
+                    var newContent = popupContent.replace('<div id="products-' + customerId + '">Loading products...</div>', productsHtml);
+                    markers[customerId].setPopupContent(newContent);
+                }
+            };
   `;
 
   return (
@@ -284,7 +284,8 @@ export default function CustomerMapScreen({ route }) {
             source={{ html: htmlContent }}
             style={styles.webview}
             javaScriptEnabled={true}
-            domStorageEnabled={true}
+                        domStorageEnabled={true}
+            onMessage={onWebViewMessage}
         />
     </View>
   );

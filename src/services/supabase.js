@@ -174,7 +174,20 @@ export async function saveProductMedia(productId, mediaData, mediaType, customer
 }
 
 
+export async function getAllProducts() {
+  const { data, error } = await supabase.from('products').select('*');
+  if (error) {
+    console.error('Error fetching all products:', error.message);
+    return null;
+  }
+  return data;
+}
+
 export async function getProductsWithDetails(customerId) {
+  console.log('getProductsWithDetails: Received customerId:', customerId);
+  const { data: { user } } = await supabase.auth.getUser();
+  console.log('getProductsWithDetails: Authenticated user UID:', user?.id);
+
   const { data, error } = await supabase
     .from('products')
     .select(`
@@ -194,12 +207,13 @@ export async function getProductsWithDetails(customerId) {
     console.error('Error fetching products with details:', error.message);
     return null;
   }
+  console.log('getProductsWithDetails: Fetched products data:', data);
   return data;
 }
 
 export async function getActiveProductsWithDetails(customerId) {
   const now = new Date();
-  const currentTime = now.toLocaleTimeString('en-GB');
+  const currentTime = new Date().toTimeString().split(' ')[0];
 
   let query = supabase
     .from('products')
@@ -219,6 +233,7 @@ export async function getActiveProductsWithDetails(customerId) {
     .order('display_order');
 
   if (customerId) {
+    console.log('Filtering products by customerId:', customerId);
     query = query.eq('customer_id', customerId);
   }
 
@@ -233,7 +248,7 @@ export async function getActiveProductsWithDetails(customerId) {
 
 export async function getTopProductsWithDetails(customerId) {
   const now = new Date();
-  const currentTime = now.toLocaleTimeString('en-GB');
+  const currentTime = new Date().toTimeString().split(' ')[0];
 
   const { data, error } = await supabase
     .from('products')

@@ -21,7 +21,8 @@ import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCa
 import { useCart } from '../context/CartContext';
 
 const TopProductsScreen = ({ navigation, route }) => {
-  const { customerId } = route.params;
+  const { customerId: routeCustomerId } = route.params;
+  const [customerId, setCustomerId] = useState(routeCustomerId);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const { cart, setCart, role, updateItemQuantity, removeItem } = useCart();
@@ -35,19 +36,37 @@ const TopProductsScreen = ({ navigation, route }) => {
   const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
 
   useEffect(() => {
-    const fetchProductsAndUser = async () => {
+    const fetchUserAndCustomerId = async () => {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      setUser(currentUser);
+
+      let currentCustomerId = routeCustomerId;
+      if (!currentCustomerId && currentUser?.email) {
+        const { data: customerData, error: customerError } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('email', currentUser.email)
+          .single();
+
+        if (customerError) {
+          console.error('Error fetching customer ID in TopProductsScreen:', customerError.message);
+        } else if (customerData) {
+          currentCustomerId = customerData.id;
+          setCustomerId(customerData.id);
+        }
+      }
+      
+      // Now fetch products and cart using the determined customerId
       setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      const data = await getTopProductsWithDetails(customerId);
+      const data = await getTopProductsWithDetails(currentCustomerId);
       if (data) {
         setProducts(data);
       }
       setLoading(false);
     };
 
-    fetchProductsAndUser();
-  }, [customerId]);
+    fetchUserAndCustomerId();
+  }, [routeCustomerId]);
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({
