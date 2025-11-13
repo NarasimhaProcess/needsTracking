@@ -1,8 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
-const supabaseUrl = process.env.SUPABASE_URL
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY
+// These should be set as environment variables in your Supabase project settings
+const supabaseUrl = Deno.env.get('SUPABASE_URL')
+const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
 serve(async (req) => {
   const { order_id } = await req.json()
@@ -11,7 +12,8 @@ serve(async (req) => {
     return new Response('Missing order_id', { status: 400 })
   }
 
-  const supabase = createClient(supabaseUrl, supabaseAnonKey)
+  // Use the service role key to bypass RLS policies
+  const supabase = createClient(supabaseUrl, serviceRoleKey)
 
   const { data: orderItems, error: orderItemsError } = await supabase
     .from('order_items')
@@ -32,7 +34,7 @@ serve(async (req) => {
 
     if (variantError) {
       console.error('Error fetching variant quantity:', variantError)
-      continue
+      continue // Or handle more gracefully
     }
 
     const newQuantity = variant.quantity - item.quantity
@@ -44,6 +46,7 @@ serve(async (req) => {
 
     if (updateError) {
       console.error('Error updating variant quantity:', updateError)
+      // Decide if you want to stop or continue
     } else {
       const { error: historyError } = await supabase
         .from('inventory_history')

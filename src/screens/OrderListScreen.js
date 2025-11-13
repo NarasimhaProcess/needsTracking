@@ -1,10 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert, TextInput } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import DateTimePickerModal from "react-native-modal-datetime-picker";
 
 const OrderListScreen = ({ navigation, route }) => {
   const [orders, setOrders] = useState([]);
+  const [filteredOrders, setFilteredOrders] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
+  const [totalAmount, setTotalAmount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -18,6 +25,7 @@ const OrderListScreen = ({ navigation, route }) => {
       const fetchedOrders = await getOrders(targetUserId);
       if (fetchedOrders) {
         setOrders(fetchedOrders);
+        setFilteredOrders(fetchedOrders);
       }
     }
     setLoading(false);
@@ -26,6 +34,46 @@ const OrderListScreen = ({ navigation, route }) => {
   useEffect(() => {
     fetchOrders();
   }, [route.params, route.params?.customerId]);
+
+  useEffect(() => {
+    let filtered = orders;
+
+    if (searchQuery) {
+      filtered = filtered.filter(order =>
+        order.order_number && order.order_number.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    if (selectedStatus) {
+      filtered = filtered.filter(order => order.status === selectedStatus);
+    }
+
+    if (selectedDate) {
+      filtered = filtered.filter(order =>
+        new Date(order.created_at).toLocaleDateString() === new Date(selectedDate).toLocaleDateString()
+      );
+    }
+
+    setFilteredOrders(filtered);
+  }, [searchQuery, selectedStatus, selectedDate, orders]);
+
+  useEffect(() => {
+    const total = filteredOrders.reduce((sum, order) => sum + order.total_amount, 0);
+    setTotalAmount(total);
+  }, [filteredOrders]);
+
+  const showDatePicker = () => {
+    setDatePickerVisibility(true);
+  };
+
+  const hideDatePicker = () => {
+    setDatePickerVisibility(false);
+  };
+
+  const handleConfirmDate = (date) => {
+    setSelectedDate(date);
+    hideDatePicker();
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -65,7 +113,7 @@ const OrderListScreen = ({ navigation, route }) => {
       onPress={() => navigation.navigate('OrderDetail', { orderId: item.id })}
     >
       <View style={styles.orderHeader}>
-        <Text style={styles.orderId}>Order ID: {item.id.substring(0, 8)}...</Text>
+        <Text style={styles.orderId}>Order No: {item.order_number}</Text>
         <Text style={styles.orderStatus}>Status: {item.status}</Text>
       </View>
       <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
@@ -102,11 +150,44 @@ const OrderListScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </View>
-      {orders.length === 0 ? (
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by Order No..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        <View style={styles.statusFilterContainer}>
+          {['All', 'pending', 'processing', 'shipped', 'delivered', 'completed', 'cancelled'].map(status => (
+            <TouchableOpacity
+              key={status}
+              style={[styles.statusButton, selectedStatus === (status === 'All' ? null : status) && styles.selectedStatusButton]}
+              onPress={() => setSelectedStatus(status === 'All' ? null : status)}
+            >
+              <Text style={styles.statusButtonText}>{status}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={styles.datePickerButton} onPress={showDatePicker}>
+          <Text style={styles.datePickerButtonText}>
+            {selectedDate ? new Date(selectedDate).toLocaleDateString() : 'Select Date'}
+          </Text>
+        </TouchableOpacity>
+        <DateTimePickerModal
+          isVisible={isDatePickerVisible}
+          mode="date"
+          onConfirm={handleConfirmDate}
+          onCancel={hideDatePicker}
+        />
+      </View>
+      <View style={styles.totalAmountContainer}>
+        <Text style={styles.totalAmountText}>Total Amount: ₹{totalAmount.toFixed(2)}</Text>
+      </View>
+      {filteredOrders.length === 0 ? (
         <Text style={styles.noOrdersText}>No orders found.</Text>
       ) : (
         <FlatList
-          data={orders}
+          data={filteredOrders}
           keyExtractor={(item) => item.id}
           renderItem={renderOrderItem}
           onRefresh={handleRefresh}
@@ -134,6 +215,60 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  searchContainer: {
+    padding: 10,
+    backgroundColor: '#f0f0f0',
+  },
+  searchInput: {
+    backgroundColor: 'white',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    marginBottom: 10,
+  },
+  statusFilterContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  statusButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    margin: 4,
+  },
+  selectedStatusButton: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  statusButtonText: {
+    color: '#333',
+  },
+  datePickerButton: {
+    backgroundColor: 'white',
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    alignItems: 'center',
+  },
+  datePickerButtonText: {
+    fontSize: 16,
+  },
+  totalAmountContainer: {
+    padding: 10,
+    backgroundColor: '#f8f8f8',
+    alignItems: 'center',
+  },
+  totalAmountText: {
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   container: {
     flex: 1,

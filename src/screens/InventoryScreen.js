@@ -16,7 +16,8 @@ import debounce from 'lodash.debounce';
 import InventoryHistory from '../components/InventoryHistory';
 
 
-const InventoryScreen = () => {
+const InventoryScreen = ({ route }) => {
+  const { session, userId } = route.params || {};
   const [loading, setLoading] = useState(true);
   const [inventory, setInventory] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -26,10 +27,18 @@ const InventoryScreen = () => {
   const [activeTab, setActiveTab] = useState('adjust'); // 'adjust' or 'restock'
 
   useEffect(() => {
-    fetchInventory();
-  }, []);
+    if (userId) {
+      fetchInventory();
+    }
+  }, [userId]);
 
   const fetchInventory = async (query = '') => {
+    if (!userId) {
+      setInventory([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     let supabaseQuery = supabase
       .from('product_variant_combinations')
@@ -37,8 +46,9 @@ const InventoryScreen = () => {
         id,
         combination_string,
         quantity,
-        products (product_name)
-      `);
+        products!inner(product_name, user_id)
+      `)
+      .eq('products.user_id', userId);
 
     if (query) {
       supabaseQuery = supabaseQuery.ilike('products.product_name', `%${query}%`);
@@ -55,7 +65,7 @@ const InventoryScreen = () => {
     setLoading(false);
   };
 
-  const debouncedFetchInventory = useCallback(debounce(fetchInventory, 300), []);
+  const debouncedFetchInventory = useCallback(debounce(fetchInventory, 300), [userId]);
 
   useEffect(() => {
     debouncedFetchInventory(searchQuery);

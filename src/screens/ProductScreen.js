@@ -18,31 +18,24 @@ import ProductFormModal from '../components/ProductFormModal';
 
 const ProductScreen = ({ route, navigation }) => {
   const { session } = route.params;
-  const [customerId, setCustomerId] = useState(null);
+  const [userId, setUserId] = useState(null);
 
   useEffect(() => {
     console.log('ProductScreen: useEffect triggered. Current session prop:', session);
     
-    // Handle cases where the full session object or just the user object is passed.
     const user = session?.user ? session.user : session;
 
-    if (!user || !user.user_metadata) {
-      console.log('ProductScreen: User or user_metadata is missing.');
-      setCustomerId(null);
+    if (!user) {
+      console.log('ProductScreen: User is missing.');
+      setUserId(null);
       setProducts([]);
       return;
     }
 
-    if (user.user_metadata.customerId) {
-      const id = user.user_metadata.customerId;
-      setCustomerId(id);
-      console.log('ProductScreen: Customer ID set from user metadata:', id);
-      fetchProducts(id); // Call fetchProducts immediately after customerId is set
-    } else {
-      console.log('ProductScreen: No customerId found in user metadata. User:', user, 'User metadata:', user.user_metadata);
-      setCustomerId(null);
-      setProducts([]); // Clear products if no customerId
-    }
+    const id = user.id;
+    setUserId(id);
+    console.log('ProductScreen: User ID set:', id);
+    fetchProducts(id); // Call fetchProducts immediately after userId is set
   }, [session]);
   
   const [loading, setLoading] = useState(false);
@@ -55,18 +48,18 @@ const ProductScreen = ({ route, navigation }) => {
   const [allMediaForViewer, setAllMediaForViewer] = useState([]);
 
   // Define fetchProductsAndMediaUrl outside useEffect to ensure stable reference
-  const fetchProducts = async (currentCustomerId) => { // Accept customerId as parameter
-    console.log('ProductScreen: fetchProducts called. Current customerId:', currentCustomerId);
+  const fetchProducts = async (currentUserId) => { // Accept userId as parameter
+    console.log('ProductScreen: fetchProducts called. Current userId:', currentUserId);
     const user = session?.user ? session.user : session;
 
-    if (!user || !currentCustomerId) { // Use currentCustomerId
-      console.log('ProductScreen: Skipping fetchProducts due to missing user or customerId.');
+    if (!user || !currentUserId) { // Use currentUserId
+      console.log('ProductScreen: Skipping fetchProducts due to missing user or userId.');
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const data = await getProductsWithDetails(currentCustomerId); // Use currentCustomerId
+      const data = await getProductsWithDetails(currentUserId); // Use currentUserId
       console.log('ProductScreen: Data received from getProductsWithDetails:', data);
       if (data) {
         setProducts(data);
@@ -88,7 +81,7 @@ const ProductScreen = ({ route, navigation }) => {
   };
 
   const handleModalSubmit = () => {
-    fetchProducts(customerId); // Refresh the list after add/edit
+    fetchProducts(userId); // Refresh the list after add/edit
   };
 
   const handleDeleteProductMedia = async (mediaId, mediaUrl) => {
@@ -223,7 +216,6 @@ const ProductScreen = ({ route, navigation }) => {
         onClose={() => setShowProductModal(false)}
         onSubmit={handleModalSubmit}
         productToEdit={productToEdit}
-        customerId={customerId}
         customerMediaUrl={customerMediaUrl}
         onDeleteMedia={handleDeleteProductMedia}
         onDeleteProduct={handleDeleteProduct}

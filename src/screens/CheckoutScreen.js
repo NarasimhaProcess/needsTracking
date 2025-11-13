@@ -37,44 +37,27 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   useEffect(() => {
     const fetchProfileData = async () => {
-      if (customerId) {
-        const { data: customer, error } = await supabase
-          .from('customers')
-          .select('name, address_line_1, address_line_2, city, state, zip_code')
-          .eq('id', customerId)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setName(user.user_metadata?.name || '');
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('address_line_1, address_line_2, city, state, zip_code')
+          .eq('id', user.id)
           .single();
 
-        if (error) {
-          console.error('Error fetching customer profile:', error.message);
-        } else if (customer) {
-          setName(customer.name || '');
-          setAddress(customer.address_line_1 || '');
-          setCity(customer.city || '');
-          setPostalCode(customer.zip_code || '');
-        }
-      } else {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          setName(user.user_metadata?.name || '');
-          const { data: profile, error } = await supabase
-            .from('profiles')
-            .select('address_line_1, address_line_2, city, state, zip_code')
-            .eq('id', user.id)
-            .single();
-
-          if (error && error.code !== 'PGRST116') {
-            console.error('Error fetching user profile:', error.message);
-          } else if (profile) {
-            setAddress(profile.address_line_1 || '');
-            setCity(profile.city || '');
-            setPostalCode(profile.zip_code || '');
-          }
+        if (error && error.code !== 'PGRST116') {
+          console.error('Error fetching user profile:', error.message);
+        } else if (profile) {
+          setAddress(profile.address_line_1 || '');
+          setCity(profile.city || '');
+          setPostalCode(profile.zip_code || '');
         }
       }
     };
 
     fetchProfileData();
-  }, [customerId]);
+  }, []);
 
   useEffect(() => {
     setShippingAddress({
@@ -94,27 +77,7 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    let orderUserId;
-
-    if (customerId) {
-      // If customerId is provided (agent placing order for a customer)
-      const { data: customerData, error: customerError } = await supabase
-        .from('customers')
-        .select('user_id')
-        .eq('id', customerId)
-        .single();
-
-      if (customerError) {
-        console.error('Error fetching user_id for customer:', customerError.message);
-        Alert.alert('Error', 'Failed to get customer user ID.');
-        setLoading(false);
-        return;
-      }
-      orderUserId = customerData.user_id;
-    } else {
-      // If no customerId (customer placing their own order)
-      orderUserId = user?.id;
-    }
+    const orderUserId = user?.id;
 
     if (!orderUserId) {
       Alert.alert('Error', 'User not authenticated or customer not selected.');
@@ -170,10 +133,10 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     if (paymentMethod === 'cod') {
       Alert.alert('Order Placed', 'Your order has been placed successfully.');
-      navigation.navigate('OrderConfirmation', { order, customerId });
+      navigation.navigate('Catalog', { userId: orderUserId });
     } else {
       Alert.alert('Order Confirmed', 'Your order has been placed. Proceed to payment.');
-      navigation.navigate('UpiQr', { order, totalAmount, shippingAddress });
+      navigation.navigate('Catalog', { userId: orderUserId });
     }
   };
 
@@ -208,9 +171,10 @@ const CheckoutScreen = ({ navigation, route }) => {
             <Text style={styles.paymentButtonText}>Cash on Delivery</Text>
           </TouchableOpacity>
         </View>
-
-        <Button title={loading ? 'Placing Order...' : 'Place Order'} onPress={handlePlaceOrder} disabled={loading} />
       </ScrollView>
+      <View style={styles.buttonContainer}>
+        <Button title={loading ? 'Placing Order...' : 'Place Order'} onPress={handlePlaceOrder} disabled={loading} />
+      </View>
     </View>
   );
 };
@@ -264,6 +228,12 @@ const styles = StyleSheet.create({
   },
   paymentButtonText: {
     fontSize: 16,
+  },
+  buttonContainer: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    backgroundColor: 'white',
   },
 });
 

@@ -10,15 +10,16 @@ import CatalogScreen from '../screens/CatalogScreen';
 import OrderListScreen from '../screens/OrderListScreen';
 import CustomerDamageScreen from '../screens/CustomerDamageScreen';
 import CustomerMapScreen from '../screens/CustomerMapScreen';
+import CartScreen from '../screens/CartScreen';
 
 const Tab = createBottomTabNavigator();
 
 function ProductTabNavigator({ route }) {
   console.log('ProductTabNavigator: route.params', route.params);
   const { session } = route.params || {};
-  const customerId = session?.user_metadata?.customerId;
+  const userId = session?.id;
   console.log('ProductTabNavigator: session', session);
-  console.log('ProductTabNavigator: customerId', customerId);
+  console.log('ProductTabNavigator: userId', userId);
 
   return (
     <Tab.Navigator
@@ -40,6 +41,8 @@ function ProductTabNavigator({ route }) {
             iconName = focused ? 'map' : 'map-o';
           } else if (route.name === 'InventoryTab') {
             iconName = focused ? 'cubes' : 'cubes';
+          } else if (route.name === 'CartTab') {
+            iconName = focused ? 'shopping-cart' : 'shopping-cart';
           }
 
           // You can return any component that you like here!
@@ -50,51 +53,69 @@ function ProductTabNavigator({ route }) {
         headerShown: false, // Hide header for tab screens, stack navigator will handle it
       })}
     >
-      <Tab.Screen
-        name="ProductsTab"
-        component={ProductScreen}
-        options={{ title: 'Products' }}
-        initialParams={{ session, customerId }} // Pass params to initial screen
-      />
-      
-      <Tab.Screen
-        name="ProfileTab"
-        component={ProfileScreen}
-        options={{ title: 'Profile' }}
-        initialParams={{ session, customerId }} // Pass params to initial screen
-      />
-      
-      <Tab.Screen
-        name="CatalogTab"
-        component={CatalogScreen}
-        options={{ title: 'Catalog' }}
-        initialParams={{ session, customerId }} // Pass params to initial screen
-      />
+      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+        <>
+          <Tab.Screen
+            name="CatalogTab"
+            component={CatalogScreen}
+            options={{ title: 'Catalog' }}
+            initialParams={{ session, userId }}
+          />
+          <Tab.Screen
+            name="CartTab"
+            component={CartScreen}
+            options={{ title: 'Cart' }}
+            initialParams={{ session, userId }}
+          />
+        </>
+      ) : null}
+
       <Tab.Screen
         name="OrdersTab"
         component={OrderListScreen}
         options={{ title: 'Orders' }}
-        initialParams={{ session, customerId }} // Pass params to initial screen
+        initialParams={{ session, userId }}
       />
-      <Tab.Screen
-        name="DamageTab"
-        component={CustomerDamageScreen}
-        options={{ title: 'Damage' }}
-        initialParams={{ session, customerId }} // Pass params to initial screen
-      />
-      {session?.user?.role === 'seller' || session?.user?.role === 'admin' ? (
+
+      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+        <Tab.Screen
+          name="ProductsTab"
+          component={ProductScreen}
+          options={{ title: 'Products' }}
+          initialParams={{ session, userId }}
+        />
+      ) : null}
+
+      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
         <Tab.Screen
           name="InventoryTab"
           component={InventoryScreen}
           options={{ title: 'Inventory' }}
-          initialParams={{ session, customerId }} // Pass params to initial screen
+          initialParams={{ session, userId }}
         />
       ) : null}
+
+      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+        <Tab.Screen
+          name="DamageTab"
+          component={CustomerDamageScreen}
+          options={{ title: 'Damage' }}
+          initialParams={{ session, userId }}
+        />
+      ) : null}
+
       <Tab.Screen
         name="MapTab"
         component={CustomerMapScreen}
         options={{ title: 'Map' }}
-        initialParams={{ session, customerId }} // Pass params to initial screen
+        initialParams={{ session, userId }}
+      />
+
+      <Tab.Screen
+        name="ProfileTab"
+        component={ProfileScreen}
+        options={{ title: 'Profile' }}
+        initialParams={{ session, userId }}
       />
     </Tab.Navigator>
   );

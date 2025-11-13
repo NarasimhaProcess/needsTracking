@@ -51,7 +51,7 @@ export async function createProduct(productData) {
   return data ? data[0] : null;
 }
 
-export async function saveProductMedia(productId, mediaData, mediaType, customerId, accessToken) {
+export async function saveProductMedia(productId, mediaData, mediaType, userId, accessToken) {
   if (mediaType === 'url') {
     const { error: insertError } = await supabase
       .from('product_media')
@@ -90,7 +90,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, customer
           file_name: fileName,
           file_path: filePath,
           content_type: contentType,
-          customer_id: customerId,
+          user_id: userId,
         }),
       });
 
@@ -132,7 +132,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, customer
         body: JSON.stringify({
           action: 'confirmUpload',
           file_path: filePath, // Use the original filePath to get the public URL
-          customer_id: customerId,
+          user_id: userId,
         }),
       });
 
@@ -183,8 +183,8 @@ export async function getAllProducts() {
   return data;
 }
 
-export async function getProductsWithDetails(customerId) {
-  console.log('getProductsWithDetails: Received customerId:', customerId);
+export async function getProductsWithDetails(userId) {
+  console.log('getProductsWithDetails: Received userId:', userId);
   const { data: { user } } = await supabase.auth.getUser();
   console.log('getProductsWithDetails: Authenticated user UID:', user?.id);
 
@@ -200,7 +200,7 @@ export async function getProductsWithDetails(customerId) {
       ),
       product_variant_combinations (id, combination_string, price, quantity, sku)
     `)
-    .eq('customer_id', customerId)
+    .eq('user_id', userId)
     .order('display_order');
 
   if (error) {
@@ -211,42 +211,24 @@ export async function getProductsWithDetails(customerId) {
   return data;
 }
 
-export async function getActiveProductsWithDetails(customerId) {
-  const now = new Date();
-  const currentTime = new Date().toTimeString().split(' ')[0];
-
-  let query = supabase
-    .from('products')
-    .select(`
-      *,
-      product_media (id, media_url, media_type),
-      product_variants (
-        id,
-        name,
-        variant_options (id, value)
-      ),
-      product_variant_combinations (id, combination_string, price, quantity, sku)
-    `)
-    .eq('is_active', true)
-    .or(`visible_from.is.null,visible_from.lte.${currentTime}`)
-    .or(`visible_to.is.null,visible_to.gte.${currentTime}`)
-    .order('display_order');
-
-  if (customerId) {
-    console.log('Filtering products by customerId:', customerId);
-    query = query.eq('customer_id', customerId);
+export async function getActiveProductsWithDetails(userId) {
+  if (!userId) {
+    return [];
   }
-
-  const { data, error } = await query;
+  
+  const { data, error } = await supabase.rpc('get_active_products_with_details', {
+    p_user_id: userId,
+  });
 
   if (error) {
-    console.error('Error fetching active products with details:', error.message);
+    console.error('Error fetching active products with details:', error);
     return null;
   }
+  console.log('Fetched active products data:', data);
   return data;
 }
 
-export async function getTopProductsWithDetails(customerId) {
+export async function getTopProductsWithDetails() {
   const now = new Date();
   const currentTime = new Date().toTimeString().split(' ')[0];
 
@@ -262,7 +244,6 @@ export async function getTopProductsWithDetails(customerId) {
       ),
       product_variant_combinations (id, combination_string, price, quantity, sku)
     `)
-    .eq('customer_id', customerId)
     .eq('is_active', true)
     .or(`visible_from.is.null,visible_from.lte.${currentTime}`)
     .or(`visible_to.is.null,visible_to.gte.${currentTime}`)
@@ -881,5 +862,35 @@ export async function getDeliveryManagerLocations() {
     console.error('Error fetching delivery manager locations:', error.message);
     return null;
   }
+  return data;
+}
+
+export async function getSellersInRange(latitude, longitude, radius) {
+  const { data, error } = await supabase.rpc('get_sellers_in_range', {
+    user_lat: latitude,
+    user_lon: longitude,
+    radius_meters: radius,
+  });
+
+  if (error) {
+    console.error('Error fetching sellers in range:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function getProductsInRange(latitude, longitude, radius) {
+  console.log('Calling get_products_in_range RPC with:', { user_lat: latitude, user_lon: longitude, radius_meters: radius });
+  const { data, error } = await supabase.rpc('get_products_in_range', {
+    user_lat: latitude,
+    user_lon: longitude,
+    radius_meters: radius,
+  });
+
+  if (error) {
+    console.error('Error fetching products in range:', error);
+    return null;
+  }
+  console.log('Products in range data:', data);
   return data;
 } 

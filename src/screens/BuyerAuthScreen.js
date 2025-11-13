@@ -75,6 +75,11 @@ export default function BuyerAuthScreen({ navigation, route }) {
       const bypassOtp = `${year}${month}${day}`;
 
       if (otp === bypassOtp) {
+        Alert.alert(
+          'Development Login',
+          'This is a guest login for development. A new profile will not be created.'
+        );
+
         const { data: guestAuthData, error: guestAuthError } = await supabase.auth.signInWithPassword({
           email: 'guest@example.com',
           password: 'guestpassword',
@@ -119,9 +124,9 @@ export default function BuyerAuthScreen({ navigation, route }) {
         const userId = data.user.id;
         const { data: existingProfile } = await supabase
           .from('profiles')
-          .select('id')
-          .eq('id', userId)
-          .single();
+          .select('id, mobile')
+          .eq('mobile', mobileNumber)
+          .maybeSingle();
 
         if (!existingProfile) {
           const { data: customer } = await supabase

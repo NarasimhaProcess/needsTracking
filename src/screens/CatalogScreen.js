@@ -1,3 +1,4 @@
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -24,8 +25,7 @@ import { getGuestCart, addGuestCartItem } from '../services/localStorageService'
 const { width } = Dimensions.get('window');
 
 const CatalogScreen = ({ navigation, route }) => {
-  const { customerId: routeCustomerId } = route.params || {};
-  const [customerId, setCustomerId] = useState(routeCustomerId);
+  const { userId: sellerId } = route.params || {};
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
@@ -39,45 +39,32 @@ const CatalogScreen = ({ navigation, route }) => {
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
 
-  useEffect(() => {
-    const fetchUserAndCustomerId = async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      setUser(currentUser);
+  useFocusEffect(
+    useCallback(() => {
+      const fetchUserAndProducts = async () => {
+        setLoading(true);
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        setUser(currentUser);
 
-      let currentCustomerId = routeCustomerId;
-      if (!currentCustomerId && currentUser?.email) {
-        const { data: customerData, error: customerError } = await supabase
-          .from('customers')
-          .select('id')
-          .eq('email', currentUser.email)
-          .single();
-
-        if (customerError) {
-          console.error('Error fetching customer ID in CatalogScreen:', customerError.message);
-        } else if (customerData) {
-          currentCustomerId = customerData.id;
-          setCustomerId(customerData.id);
+        const userIdToFetch = sellerId || currentUser?.id;
+        const data = await getActiveProductsWithDetails(userIdToFetch);
+        if (data) {
+          setProducts(data);
         }
-      }
-      
-      // Now fetch products and cart using the determined customerId
-      setLoading(true);
-      const data = await getActiveProductsWithDetails(currentCustomerId);
-      if (data) {
-        setProducts(data);
-      }
-      if (currentUser) {
-        const cartData = await getCart(currentUser.id);
-        setCart(cartData);
-      } else {
-        const guestCartData = await getGuestCart();
-        setGuestCart(guestCartData);
-      }
-      setLoading(false);
-    };
 
-    fetchUserAndCustomerId();
-  }, [routeCustomerId]);
+        if (currentUser) {
+          const cartData = await getCart(currentUser.id);
+          setCart(cartData);
+        } else {
+          const guestCartData = await getGuestCart();
+          setGuestCart(guestCartData);
+        }
+        setLoading(false);
+      };
+
+      fetchUserAndProducts();
+    }, [sellerId])
+  );
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({
@@ -114,7 +101,6 @@ const CatalogScreen = ({ navigation, route }) => {
       };
       await addGuestCartItem(guestCartItem);
       Alert.alert('Added to Cart', 'Item has been added to your guest cart.');
-      setIsProductDetailModalVisible(false);
       return;
     }
 
@@ -122,7 +108,6 @@ const CatalogScreen = ({ navigation, route }) => {
     if (result) {
       const cartData = await getCart(user.id);
       setCart(cartData);
-      setIsProductDetailModalVisible(false);
       setIsCartModalVisible(true);
     } else {
       Alert.alert('Error', 'Failed to add item to cart.');
@@ -163,6 +148,19 @@ const CatalogScreen = ({ navigation, route }) => {
     }
   };
 
+  const getPriceDisplay = (product) => {
+    if (product.product_variant_combinations && product.product_variant_combinations.length > 0) {
+      const prices = product.product_variant_combinations.map(p => p.price);
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      if (minPrice === maxPrice) {
+        return `₹${minPrice}`;
+      }
+      return `₹${minPrice} - ₹${maxPrice}`;
+    }
+    return `₹${product.amount}`;
+  };
+
   const renderProduct = ({ item }) => (
     <View style={styles.productContainer}>
       <TouchableOpacity onPress={() => openProductDetailModal(item)}>
@@ -171,7 +169,7 @@ const CatalogScreen = ({ navigation, route }) => {
           source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
         />
         <Text style={styles.productName}>{item.product_name}</Text>
-        <Text style={styles.productPrice}>₹{item.amount}</Text>
+        <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -357,7 +355,7 @@ const CatalogScreen = ({ navigation, route }) => {
             )}
             <Button title="Checkout" onPress={() => {
               setIsCartModalVisible(false);
-              navigation.navigate('Checkout', { cart: cart, customerId: customerId });
+              navigation.navigate('Checkout', { cart: cart });
             }} />
           </View>
         </View>
@@ -488,7 +486,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   swiper: {
-    height: 300,
+    height: 150,
   },
   slide: {
     flex: 1,
@@ -510,7 +508,7 @@ const styles = StyleSheet.create({
   },
   media: {
     width: width - 40, // modal padding is 20 on each side
-    height: 300,
+    height: 150,
     resizeMode: 'contain',
   },
   detailsContainer: {

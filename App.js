@@ -34,6 +34,7 @@ import DeliveryManagerLoginScreen from './src/screens/DeliveryManagerLoginScreen
 import DeliveryManagerDashboard from './src/screens/DeliveryManagerDashboard';
 import DeliveryManagerSignupScreen from './src/screens/DeliveryManagerSignupScreen';
 import AdminMapScreen from './src/screens/AdminMapScreen';
+import UpiQrScreen from './src/screens/UpiQrScreen';
 // import InventoryScreen from './src/screens/InventoryScreen'; // Moved to ProductTabNavigator
 // import InvoiceScreen from './src/screens/InvoiceScreen'; // Moved to ProductTabNavigator
 
@@ -159,6 +160,7 @@ export default function App() {
           <Stack.Screen name="Cart" component={CartScreen} />
           <Stack.Screen name="Checkout" component={CheckoutScreen} />
           <Stack.Screen name="OrderConfirmation" component={OrderConfirmationScreen} />
+          <Stack.Screen name="UpiQr" component={UpiQrScreen} />
           <Stack.Screen name="OrderList" component={OrderListScreen} />
           <Stack.Screen name="TopProducts" component={TopProductsScreen} />
           <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />

@@ -55,7 +55,9 @@ const generateVariantCombinations = (variants, basePrice) => {
   return combinations;
 };
 
-const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerId, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
+const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
+  const userId = session?.user?.id || session?.id; // Get userId from session
+  const accessToken = session?.access_token; // Get access token for media upload
   const [productName, setProductName] = useState('');
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -89,16 +91,10 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       setStartDate(new Date(productToEdit.start_date));
       setEndDate(new Date(productToEdit.end_date));
       if (productToEdit.visible_from) {
-        const [hours, minutes, seconds] = productToEdit.visible_from.split(':');
-        const fromDate = new Date();
-        fromDate.setHours(hours, minutes, seconds);
-        setVisibleFrom(fromDate);
+        setVisibleFrom(new Date(productToEdit.visible_from));
       }
       if (productToEdit.visible_to) {
-        const [hours, minutes, seconds] = productToEdit.visible_to.split(':');
-        const toDate = new Date();
-        toDate.setHours(hours, minutes, seconds);
-        setVisibleTo(toDate);
+        setVisibleTo(new Date(productToEdit.visible_to));
       }
       setIsActive(productToEdit.is_active);
       setDisplayOrder(productToEdit.display_order ? productToEdit.display_order.toString() : '0');
@@ -125,12 +121,23 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   }, [productToEdit]);
 
   useEffect(() => {
-    // Only generate new combinations if creating a new product
-    if (!productToEdit && productVariants.length > 0) {
+    if (productVariants.length > 0) {
       const newCombinations = generateVariantCombinations(productVariants, parseFloat(amount) || 0);
-      setVariantCombinations(newCombinations);
+      
+      // Preserve existing prices and quantities
+      const updatedCombinations = newCombinations.map(newCombo => {
+        const existingCombo = variantCombinations.find(
+          oldCombo => oldCombo.combination_string === newCombo.combination_string
+        );
+        return existingCombo ? { ...newCombo, price: existingCombo.price, quantity: existingCombo.quantity } : newCombo;
+      });
+
+      setVariantCombinations(updatedCombinations);
+    } else {
+      // If there are no variants, clear the combinations
+      setVariantCombinations([]);
     }
-  }, [productVariants, amount, productToEdit]);
+  }, [productVariants, amount]);
 
   const handleMediaPick = async (mediaType) => {
     let result;
@@ -179,14 +186,14 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 
   const handleSubmit = async () => {
     setLoading(true);
-    if (!customerId) {
-      Alert.alert("Error", "Customer ID is missing. Cannot create/edit product.");
+    if (!userId) {
+      Alert.alert("Error", "User ID is missing. Cannot create/edit product.");
       setLoading(false);
       return;
     }
 
     const productData = {
-      customer_id: customerId,
+      user_id: userId,
       product_name: productName,
       description: description,
       amount: parseFloat(amount),
@@ -194,8 +201,8 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       unit: unit,
       start_date: startDate.toISOString().split('T')[0],
       end_date: endDate.toISOString().split('T')[0],
-      visible_from: visibleFrom.toLocaleTimeString('en-GB'),
-      visible_to: visibleTo.toLocaleTimeString('en-GB'),
+      visible_from: visibleFrom.toISOString(),
+      visible_to: visibleTo.toISOString(),
       is_active: isActive,
       display_order: parseInt(displayOrder, 10),
     };
@@ -248,7 +255,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         }
 
         for (const media of selectedMedia.filter(m => !m.id)) {
-          const mediaUrl = await saveProductMedia(productResult.id, media.uri, media.type, customerId, session.access_token);
+          const mediaUrl = await saveProductMedia(productResult.id, media.uri, media.type, userId, accessToken);
           if (!mediaUrl) {
             throw new Error("Failed to upload media.");
           }

@@ -131,6 +131,12 @@ const OrderDetailScreen = ({ navigation, route }) => {
                     map.fitBounds(L.latLngBounds(waypoints).pad(0.5));
                     map.invalidateSize();
                   }, 200);
+                } else {
+                  // Fallback if no waypoints are available
+                  setTimeout(function() { 
+                    map.setView([20.5937, 78.9629], 5); // Default view of India
+                    map.invalidateSize();
+                  }, 200);
                 }
 
                 if (waypoints.length === 2) {
