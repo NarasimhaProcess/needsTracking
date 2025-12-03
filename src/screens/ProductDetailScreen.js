@@ -24,15 +24,17 @@ const ProductDetailScreen = ({ route }) => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [images, setImages] = useState([]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const fetchUser = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        setUser(user);
-      };
-      fetchUser();
-    }, [])
-  );
+  useEffect(() => {
+    const defaultVariants = {};
+    if (product.product_variants) {
+      product.product_variants.forEach(variant => {
+        if (variant.variant_options && variant.variant_options.length > 0) {
+          defaultVariants[variant.name] = variant.variant_options[0].value;
+        }
+      });
+    }
+    setSelectedVariants(defaultVariants);
+  }, [product]);
 
   const handleVariantSelect = (variantName, optionValue) => {
     setSelectedVariants({
@@ -42,11 +44,21 @@ const ProductDetailScreen = ({ route }) => {
   };
 
   const getVariantCombination = () => {
-    const combinationString = Object.entries(selectedVariants)
-      .map(([key, value]) => `${key}:${value}`)
+    const sortedKeys = Object.keys(selectedVariants).sort();
+    const combinationString = sortedKeys
+      .map((key) => `${key}:${selectedVariants[key]}`)
       .join(',');
+
+    const normalizedCombinationString = combinationString.replace(/\s/g, '');
+
     return product.product_variant_combinations.find(
-      (c) => c.combination_string === combinationString
+      (c) => {
+        if (c.combination_string) {
+          const normalizedDbString = c.combination_string.replace(/\s/g, '');
+          return normalizedDbString === normalizedCombinationString;
+        }
+        return false;
+      }
     );
   };
 

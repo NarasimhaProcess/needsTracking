@@ -1,5 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -31,13 +31,32 @@ const CatalogScreen = ({ navigation, route }) => {
   const [cart, setCart] = useState(null);
   const [guestCart, setGuestCart] = useState([]);
   const [isCartModalVisible, setIsCartModalVisible] = useState(false);
-  const [isProductDetailModalVisible, setIsProductDetailModalVisible] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [selectedVariants, setSelectedVariants] = useState({});
-  const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
+  const [expandedProducts, setExpandedProducts] = useState({});
+
+  const quantityMap = useMemo(() => {
+    const map = {};
+    if (cart && cart.cart_items) {
+      cart.cart_items.forEach(item => {
+        map[item.product_variant_combination_id] = item.quantity;
+      });
+    }
+    return map;
+  }, [cart]);
+
+  const cartTotals = useMemo(() => {
+    let totalItems = 0;
+    let totalPrice = 0;
+    if (cart && cart.cart_items) {
+      cart.cart_items.forEach(item => {
+        totalItems += item.quantity;
+        totalPrice += item.quantity * item.product_variant_combinations.price;
+      });
+    }
+    return { totalItems, totalPrice };
+  }, [cart]);
 
   useFocusEffect(
     useCallback(() => {
@@ -66,52 +85,38 @@ const CatalogScreen = ({ navigation, route }) => {
     }, [sellerId])
   );
 
-  const handleVariantSelect = (variantName, optionValue) => {
-    setSelectedVariants({
-      ...selectedVariants,
-      [variantName]: optionValue,
-    });
+  const toggleProductExpansion = (productId) => {
+    setExpandedProducts(prevState => ({
+      ...prevState,
+      [productId]: !prevState[productId]
+    }));
   };
 
-  const getVariantCombination = () => {
-    if (!selectedProduct) return null;
-    const combinationString = Object.entries(selectedVariants)
-      .map(([key, value]) => `${key}:${value}`)
-      .join(',');
-    return selectedProduct.product_variant_combinations.find(
-      (c) => c.combination_string === combinationString
-    );
-  };
-
-  const handleAddToCart = async () => {
-    const combination = getVariantCombination();
-    if (!combination) {
-      Alert.alert('Please select all variant options.');
-      return;
-    }
-
+  const handleUpdateCart = async (combinationId, currentQuantity, change) => {
     if (!user) {
-      const guestCartItem = {
-        product_variant_combination_id: combination.id,
-        quantity: quantity,
-        product_name: selectedProduct.product_name,
-        combination_string: combination.combination_string,
-        price: combination.price,
-        image_url: selectedProduct.product_media[0]?.media_url || 'https://placehold.co/600x400'
-      };
-      await addGuestCartItem(guestCartItem);
-      Alert.alert('Added to Cart', 'Item has been added to your guest cart.');
+      Alert.alert("Please log in to add items to your cart.");
       return;
     }
+    
+    const newQuantity = currentQuantity + change;
 
-    const result = await addToCart(user.id, combination.id, quantity);
-    if (result) {
-      const cartData = await getCart(user.id);
-      setCart(cartData);
-      setIsCartModalVisible(true);
+    if (newQuantity > 0) {
+      const cartItem = cart.cart_items.find(item => item.product_variant_combination_id === combinationId);
+      if (cartItem) {
+        await updateCartItem(cartItem.id, newQuantity);
+      } else {
+        await addToCart(user.id, combinationId, newQuantity);
+      }
     } else {
-      Alert.alert('Error', 'Failed to add item to cart.');
+      const cartItem = cart.cart_items.find(item => item.product_variant_combination_id === combinationId);
+      if (cartItem) {
+        await removeCartItem(cartItem.id);
+      }
     }
+
+    // Refresh cart data to reflect changes
+    const cartData = await getCart(user.id);
+    setCart(cartData);
   };
 
   const handleUpdateQuantity = async (cartItemId, quantity) => {
@@ -131,25 +136,8 @@ const CatalogScreen = ({ navigation, route }) => {
     setCart(newCart);
   };
 
-  const openProductDetailModal = (product) => {
-    setSelectedProduct(product);
-    setQuantity(1);
-    setIsProductDetailModalVisible(true);
-    const imagesForViewer = product.product_media
-      .filter(media => media.media_type === 'image')
-      .map(media => ({ url: media.media_url }));
-    setViewerImages(imagesForViewer);
-    if (product.product_variants.length === 1 && product.product_variants[0].variant_options.length === 1) {
-      const variantName = product.product_variants[0].name;
-      const optionValue = product.product_variants[0].variant_options[0].value;
-      setSelectedVariants({ [variantName]: optionValue });
-    } else {
-      setSelectedVariants({});
-    }
-  };
-
   const getPriceDisplay = (product) => {
-    if (product.product_variant_combinations && product.product_variant_combinations.length > 0) {
+    if (product.product_variant_combinations && product.product_variant_combinations.length > 1) {
       const prices = product.product_variant_combinations.map(p => p.price);
       const minPrice = Math.min(...prices);
       const maxPrice = Math.max(...prices);
@@ -158,21 +146,88 @@ const CatalogScreen = ({ navigation, route }) => {
       }
       return `₹${minPrice} - ₹${maxPrice}`;
     }
+    if (product.product_variant_combinations && product.product_variant_combinations.length === 1) {
+      return `₹${product.product_variant_combinations[0].price}`;
+    }
     return `₹${product.amount}`;
   };
 
-  const renderProduct = ({ item }) => (
-    <View style={styles.productContainer}>
-      <TouchableOpacity onPress={() => openProductDetailModal(item)}>
-        <Image
-          style={styles.productImage}
-          source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
-        />
-        <Text style={styles.productName}>{item.product_name}</Text>
-        <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  const renderProduct = ({ item }) => {
+    const isExpanded = !!expandedProducts[item.id];
+    const hasVariants = item.product_variants && item.product_variants.length > 0 && item.product_variant_combinations.length > 1;
+
+    if (hasVariants) {
+      return (
+        <View style={styles.productContainer}>
+          <Image style={styles.productImage} source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }} />
+          <View style={styles.productDetails}>
+            <Text style={styles.productName}>{item.product_name}</Text>
+            <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
+          </View>
+          <TouchableOpacity style={styles.addButton} onPress={() => toggleProductExpansion(item.id)}>
+            <Text style={styles.addButtonText}>{isExpanded ? 'Hide Options' : 'Show Options'}</Text>
+          </TouchableOpacity>
+          {isExpanded && (
+            <View style={styles.variantsContainer}>
+              {item.product_variant_combinations.map(combo => {
+                const quantity = quantityMap[combo.id] || 0;
+                return (
+                  <View key={combo.id} style={styles.variantRow}>
+                    <Text style={styles.variantNameText}>{combo.combination_string}</Text>
+                    {quantity === 0 ? (
+                      <TouchableOpacity style={styles.addButton} onPress={() => handleUpdateCart(combo.id, 0, 1)}>
+                        <Text style={styles.addButtonText}>ADD</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.quantitySelector}>
+                        <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, -1)}>
+                          <Icon name="minus-circle" size={28} color="#E53935" />
+                        </TouchableOpacity>
+                        <Text style={styles.quantityText}>{quantity}</Text>
+                        <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, 1)}>
+                          <Icon name="plus-circle" size={28} color="#43A047" />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      );
+    } else {
+      const combo = item.product_variant_combinations[0];
+      if (!combo) return null;
+      const quantity = quantityMap[combo.id] || 0;
+      return (
+        <View style={styles.productContainer}>
+          <Image style={styles.productImage} source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }} />
+          <View style={styles.productDetails}>
+            <Text style={styles.productName}>{item.product_name}</Text>
+            <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
+          </View>
+          <View style={styles.actionsContainer}>
+            {quantity === 0 ? (
+              <TouchableOpacity style={styles.addButton} onPress={() => handleUpdateCart(combo.id, 0, 1)}>
+                <Text style={styles.addButtonText}>ADD</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.quantitySelector}>
+                <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, -1)}>
+                  <Icon name="minus-circle" size={28} color="#E53935" />
+                </TouchableOpacity>
+                <Text style={styles.quantityText}>{quantity}</Text>
+                <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, 1)}>
+                  <Icon name="plus-circle" size={28} color="#43A047" />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      );
+    }
+  };
 
   const renderCartItem = ({ item }) => (
     <View style={styles.itemContainer}>
@@ -220,106 +275,7 @@ const CatalogScreen = ({ navigation, route }) => {
         contentContainerStyle={styles.container}
       />
 
-      {/* Product Detail Modal */}
-      {selectedProduct && (
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={isProductDetailModalVisible}
-          onRequestClose={() => {
-            setIsProductDetailModalVisible(!isProductDetailModalVisible);
-          }}
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => setIsProductDetailModalVisible(false)}
-              >
-                <Icon name="times-circle" size={30} color="#333" />
-              </TouchableOpacity>
-              <ScrollView>
-                <Swiper style={styles.swiper} showsButtons={true} removeClippedSubviews={false}>
-                  {selectedProduct.product_media.map((media) => (
-                    <View key={media.id} style={styles.slide}>
-                      {media.media_type === 'image' ? (
-                        <View style={styles.mediaContainer}>
-                          <Image source={{ uri: media.media_url }} style={styles.media} />
-                          <TouchableOpacity
-                            style={styles.zoomIcon}
-                            onPress={() => setIsImageViewerVisible(true)}
-                          >
-                            <MaterialIcons name="zoom-out-map" size={24} color="white" />
-                          </TouchableOpacity>
-                        </View>
-                      ) : (
-                        <Video
-                          source={{ uri: media.media_url }}
-                          style={styles.media}
-                          useNativeControls
-                          resizeMode="contain"
-                        />
-                      )}
-                    </View>
-                  ))}
-                </Swiper>
-
-                <View style={styles.detailsContainer}>
-                  <Text style={styles.productName}>{selectedProduct.product_name}</Text>
-                  <Text style={styles.productDescription}>{selectedProduct.description}</Text>
-                  
-                  {(() => {
-                    const selectedCombination = getVariantCombination();
-                    const displayPrice = selectedCombination ? selectedCombination.price : selectedProduct.amount;
-                    const displayQuantity = selectedCombination ? selectedCombination.quantity : 'N/A';
-
-                    return (
-                      <>
-                        <Text style={styles.productPrice}>₹{displayPrice}</Text>
-                        <Text style={styles.stockText}>In Stock: {displayQuantity} {selectedProduct.unit}</Text>
-                      </>
-                    );
-                  })()}
-
-                  {selectedProduct.product_variants.map((variant) => (
-                    <View key={variant.id} style={styles.variantContainer}>
-                      <Text style={styles.variantName}>{variant.name}</Text>
-                      <View style={styles.optionsContainer}>
-                        {variant.variant_options.map((option) => (
-                          <TouchableOpacity
-                            key={option.id}
-                            style={[
-                              styles.optionButton,
-                              selectedVariants[variant.name] === option.value && styles.selectedOption,
-                            ]}
-                            onPress={() => handleVariantSelect(variant.name, option.value)}
-                          >
-                            <Text>{option.value}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  ))}
-
-                  {getVariantCombination() && (
-                    <View style={styles.quantitySelector}>
-                      <TouchableOpacity onPress={() => setQuantity(Math.max(1, quantity - 1))}>
-                        <Icon name="minus-circle" size={24} color="#555" />
-                      </TouchableOpacity>
-                      <Text style={styles.quantityText}>{quantity}</Text>
-                      <TouchableOpacity onPress={() => setQuantity(quantity + 1)}>
-                        <Icon name="plus-circle" size={24} color="#555" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  
-                  <Button title="Add to Cart" onPress={handleAddToCart} />
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-      )}
+      {/* Product Detail Modal was here, now removed */}
 
       {/* Image Viewer Modal */}
       <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
@@ -360,6 +316,18 @@ const CatalogScreen = ({ navigation, route }) => {
           </View>
         </View>
       </Modal>
+      {cartTotals.totalItems > 0 && (
+        <View style={styles.viewCartContainer}>
+          <View style={styles.viewCartButton}>
+            <Text style={styles.viewCartText}>
+              {cartTotals.totalItems} {cartTotals.totalItems > 1 ? 'items' : 'item'} | ₹{cartTotals.totalPrice.toFixed(2)}
+            </Text>
+            <TouchableOpacity onPress={() => setIsCartModalVisible(true)}>
+              <Text style={styles.viewCartText}>View Cart <Icon name="shopping-bag" size={16} /></Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -383,39 +351,77 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   container: {
-    padding: 10,
+    padding: 5,
+    paddingBottom: 80, // Add padding to the bottom to avoid overlap with the cart button
   },
   productContainer: {
     flex: 1,
-    margin: 10,
+    margin: 5,
     backgroundColor: '#fff',
     borderRadius: 10,
-    overflow: 'hidden',
     elevation: 3,
+    overflow: 'hidden',
   },
   productImage: {
     width: '100%',
     height: 150,
   },
+  productDetails: {
+    padding: 10,
+  },
   productName: {
     fontSize: 16,
     fontWeight: 'bold',
-    margin: 10,
+    minHeight: 44, // Two lines
   },
   productPrice: {
     fontSize: 14,
     color: '#888',
-    margin: 10,
+    marginTop: 5,
   },
-  productDescription: {
-    fontSize: 14,
-    color: '#666',
-    margin: 10,
+  actionsContainer: {
+    paddingHorizontal: 10,
+    paddingBottom: 10,
   },
-  stockText: {
+  addButton: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 5,
+  },
+  addButtonText: {
+    color: '#43A047',
+    fontWeight: 'bold',
     fontSize: 14,
-    color: '#555',
-    marginBottom: 10,
+  },
+  quantitySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    marginTop: 5,
+    paddingVertical: 4,
+  },
+  quantityText: {
+    marginHorizontal: 10,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  variantsContainer: {
+    padding: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  variantRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  variantNameText: {
+    fontSize: 14,
+    flex: 1,
   },
   modalContainer: {
     flex: 1,
@@ -476,75 +482,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
   },
-  quantityText: {
-    marginHorizontal: 10,
-    fontSize: 16,
-  },
   emptyCartText: {
     textAlign: 'center',
     marginTop: 50,
     fontSize: 18,
   },
-  swiper: {
-    height: 150,
-  },
-  slide: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mediaContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  zoomIcon: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 20,
-    padding: 5,
-  },
   media: {
-    width: width - 40, // modal padding is 20 on each side
+    width: width - 40,
     height: 150,
     resizeMode: 'contain',
   },
-  detailsContainer: {
-    padding: 20,
+  viewCartContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 10,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
   },
-  variantContainer: {
-    marginBottom: 20,
+  viewCartButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  variantName: {
+  viewCartText: {
+    color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 10,
   },
-  optionsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  optionButton: {
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 5,
-    marginRight: 10,
-    marginBottom: 10,
-  },
-  selectedOption: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  quantitySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 20,
-  },
-  
 });
 
 export default CatalogScreen;
