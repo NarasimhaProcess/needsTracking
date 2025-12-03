@@ -35,12 +35,31 @@ const CatalogScreen = ({ navigation, route }) => {
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
   const [expandedProducts, setExpandedProducts] = useState({});
+  const [updatingCart, setUpdatingCart] = useState(false);
 
   const quantityMap = useMemo(() => {
     const map = {};
     if (cart && cart.cart_items) {
       cart.cart_items.forEach(item => {
         map[item.product_variant_combination_id] = item.quantity;
+      });
+    }
+    return map;
+  }, [cart]);
+
+  const productTotalQuantityInCart = useMemo(() => {
+    const map = {}; // { productId: total_quantity }
+    if (cart && cart.cart_items) {
+      cart.cart_items.forEach(cartItem => {
+        if (cartItem.product_variant_combinations && cartItem.product_variant_combinations.products) {
+          const productId = cartItem.product_variant_combinations.products.id;
+          if (productId) {
+            if (!map[productId]) {
+              map[productId] = 0;
+            }
+            map[productId] += cartItem.quantity; // Sum the quantity
+          }
+        }
       });
     }
     return map;
@@ -92,31 +111,64 @@ const CatalogScreen = ({ navigation, route }) => {
     }));
   };
 
-  const handleUpdateCart = async (combinationId, currentQuantity, change) => {
+  const handleUpdateCart = async (product, combinationId, currentQuantity, change) => {
+    if (updatingCart) return; // Prevent concurrent updates
     if (!user) {
       Alert.alert("Please log in to add items to your cart.");
       return;
     }
-    
-    const newQuantity = currentQuantity + change;
 
-    if (newQuantity > 0) {
-      const cartItem = cart.cart_items.find(item => item.product_variant_combination_id === combinationId);
-      if (cartItem) {
-        await updateCartItem(cartItem.id, newQuantity);
+    setUpdatingCart(true);
+    try {
+      const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
+      const newQuantity = currentQuantity + change;
+
+      // Optimistic Update
+      const newCart = JSON.parse(JSON.stringify(cart || { cart_items: [] }));
+      const itemIndex = newCart.cart_items.findIndex(item => item.product_variant_combination_id === combinationId);
+
+      if (newQuantity > 0) {
+        if (itemIndex > -1) {
+          newCart.cart_items[itemIndex].quantity = newQuantity;
+        } else {
+          const combination = product.product_variant_combinations.find(c => c.id === combinationId);
+          newCart.cart_items.push({
+            id: Date.now(),
+            quantity: newQuantity,
+            product_variant_combination_id: combinationId,
+            product_variant_combinations: { ...combination, products: { id: product.id, product_name: product.product_name, product_media: product.product_media } }
+          });
+        }
       } else {
-        await addToCart(user.id, combinationId, newQuantity);
+        if (itemIndex > -1) {
+          newCart.cart_items.splice(itemIndex, 1);
+        }
       }
-    } else {
-      const cartItem = cart.cart_items.find(item => item.product_variant_combination_id === combinationId);
-      if (cartItem) {
-        await removeCartItem(cartItem.id);
-      }
-    }
+      setCart(newCart);
 
-    // Refresh cart data to reflect changes
-    const cartData = await getCart(user.id);
-    setCart(cartData);
+      // Database Operation
+      if (newQuantity > 0) {
+        if (originalCartItem) {
+          await updateCartItem(originalCartItem.id, newQuantity);
+        } else {
+          await addToCart(user.id, combinationId, newQuantity);
+        }
+      } else {
+        if (originalCartItem) {
+          await removeCartItem(originalCartItem.id);
+        }
+      }
+    } catch (error) {
+      console.error("Error updating cart:", error);
+      Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
+    } finally {
+      // Final sync with the server
+      if (user) {
+        const finalCartData = await getCart(user.id);
+        setCart(finalCartData);
+      }
+      setUpdatingCart(false);
+    }
   };
 
   const handleUpdateQuantity = async (cartItemId, quantity) => {
@@ -157,6 +209,13 @@ const CatalogScreen = ({ navigation, route }) => {
     const hasVariants = item.product_variants && item.product_variants.length > 0 && item.product_variant_combinations.length > 1;
 
     if (hasVariants) {
+      const totalQuantity = productTotalQuantityInCart[item.id] || 0;
+      const buttonText = isExpanded 
+        ? 'Hide Options' 
+        : (totalQuantity > 0 
+            ? `${totalQuantity} item${totalQuantity > 1 ? 's' : ''} added` 
+            : 'Show Options');
+
       return (
         <View style={styles.productContainer}>
           <Image style={styles.productImage} source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }} />
@@ -165,7 +224,7 @@ const CatalogScreen = ({ navigation, route }) => {
             <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
           </View>
           <TouchableOpacity style={styles.addButton} onPress={() => toggleProductExpansion(item.id)}>
-            <Text style={styles.addButtonText}>{isExpanded ? 'Hide Options' : 'Show Options'}</Text>
+            <Text style={styles.addButtonText}>{buttonText}</Text>
           </TouchableOpacity>
           {isExpanded && (
             <View style={styles.variantsContainer}>
@@ -174,21 +233,15 @@ const CatalogScreen = ({ navigation, route }) => {
                 return (
                   <View key={combo.id} style={styles.variantRow}>
                     <Text style={styles.variantNameText}>{combo.combination_string}</Text>
-                    {quantity === 0 ? (
-                      <TouchableOpacity style={styles.addButton} onPress={() => handleUpdateCart(combo.id, 0, 1)}>
-                        <Text style={styles.addButtonText}>ADD</Text>
+                    <View style={styles.quantitySelector}>
+                      <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
+                        <Icon name="minus-circle" size={28} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
                       </TouchableOpacity>
-                    ) : (
-                      <View style={styles.quantitySelector}>
-                        <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, -1)}>
-                          <Icon name="minus-circle" size={28} color="#E53935" />
-                        </TouchableOpacity>
-                        <Text style={styles.quantityText}>{quantity}</Text>
-                        <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, 1)}>
-                          <Icon name="plus-circle" size={28} color="#43A047" />
-                        </TouchableOpacity>
-                      </View>
-                    )}
+                      <Text style={styles.quantityText}>{quantity}</Text>
+                      <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, 1)} disabled={updatingCart}>
+                        <Icon name="plus-circle" size={28} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 );
               })}
@@ -197,6 +250,7 @@ const CatalogScreen = ({ navigation, route }) => {
         </View>
       );
     } else {
+      // Simple product
       const combo = item.product_variant_combinations[0];
       if (!combo) return null;
       const quantity = quantityMap[combo.id] || 0;
@@ -208,21 +262,15 @@ const CatalogScreen = ({ navigation, route }) => {
             <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
           </View>
           <View style={styles.actionsContainer}>
-            {quantity === 0 ? (
-              <TouchableOpacity style={styles.addButton} onPress={() => handleUpdateCart(combo.id, 0, 1)}>
-                <Text style={styles.addButtonText}>ADD</Text>
+            <View style={styles.quantitySelector}>
+              <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
+                <Icon name="minus-circle" size={28} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
               </TouchableOpacity>
-            ) : (
-              <View style={styles.quantitySelector}>
-                <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, -1)}>
-                  <Icon name="minus-circle" size={28} color="#E53935" />
-                </TouchableOpacity>
-                <Text style={styles.quantityText}>{quantity}</Text>
-                <TouchableOpacity onPress={() => handleUpdateCart(combo.id, quantity, 1)}>
-                  <Icon name="plus-circle" size={28} color="#43A047" />
-                </TouchableOpacity>
-              </View>
-            )}
+              <Text style={styles.quantityText}>{quantity}</Text>
+              <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, 1)} disabled={updatingCart}>
+                <Icon name="plus-circle" size={28} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       );
@@ -273,6 +321,7 @@ const CatalogScreen = ({ navigation, route }) => {
         keyExtractor={(item) => item.id.toString()}
         numColumns={2}
         contentContainerStyle={styles.container}
+        extraData={{ cart, expandedProducts }}
       />
 
       {/* Product Detail Modal was here, now removed */}
