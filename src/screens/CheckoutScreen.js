@@ -21,6 +21,8 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [country, setCountry] = useState('');
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [tableNo, setTableNo] = useState('');
 
   const totalAmount = cart.cart_items.reduce(
     (total, item) => total + item.product_variant_combinations.price * item.quantity,
@@ -40,18 +42,19 @@ const CheckoutScreen = ({ navigation, route }) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setName(user.user_metadata?.name || '');
-        const { data: profile, error } = await supabase
+        const { data: profileData, error } = await supabase
           .from('profiles')
-          .select('address_line_1, address_line_2, city, state, zip_code')
+          .select('*')
           .eq('id', user.id)
           .single();
 
         if (error && error.code !== 'PGRST116') {
           console.error('Error fetching user profile:', error.message);
-        } else if (profile) {
-          setAddress(profile.address_line_1 || '');
-          setCity(profile.city || '');
-          setPostalCode(profile.zip_code || '');
+        } else if (profileData) {
+          setProfile(profileData);
+          setAddress(profileData.address_line_1 || '');
+          setCity(profileData.city || '');
+          setPostalCode(profileData.zip_code || '');
         }
       }
     };
@@ -87,18 +90,22 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
 
-    console.log('CheckoutScreen: Placing order with customerId:', customerId);
-    console.log('CheckoutScreen: Placing order with user_id:', orderUserId);
+    const orderPayload = {
+      user_id: orderUserId,
+      shipping_address: shippingAddress,
+      total_amount: totalAmount,
+      status: orderStatus,
+      payment_method: paymentMethod,
+    };
+
+    if (profile && profile.role === 'seller' && tableNo) {
+      orderPayload.order_type = 'shop-order';
+      orderPayload.table_no = tableNo;
+    }
 
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .insert({
-        user_id: orderUserId,
-        shipping_address: shippingAddress,
-        total_amount: totalAmount,
-        status: orderStatus,
-        payment_method: paymentMethod,
-      })
+      .insert(orderPayload)
       .select()
       .single();
 
@@ -155,6 +162,19 @@ const CheckoutScreen = ({ navigation, route }) => {
         <TextInput style={styles.input} placeholder="City" value={city} onChangeText={setCity} />
         <TextInput style={styles.input} placeholder="Postal Code" value={postalCode} onChangeText={setPostalCode} />
         <TextInput style={styles.input} placeholder="Country" value={country} onChangeText={setCountry} />
+
+        {profile && profile.role === 'seller' && (
+          <>
+            <Text style={styles.title}>Dine-in Details</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Table Number"
+              value={tableNo}
+              onChangeText={setTableNo}
+              keyboardType="numeric"
+            />
+          </>
+        )}
 
         <Text style={styles.title}>Payment Method</Text>
         <View style={styles.paymentMethodContainer}>

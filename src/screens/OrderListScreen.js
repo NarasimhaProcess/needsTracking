@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert, TextInput } from 'react-native';
+import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert, TextInput } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 
 const OrderListScreen = ({ navigation, route }) => {
   const [orders, setOrders] = useState([]);
-  const [filteredOrders, setFilteredOrders] = useState([]);
+  const [sectionedOrders, setSectionedOrders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -25,7 +25,6 @@ const OrderListScreen = ({ navigation, route }) => {
       const fetchedOrders = await getOrders(targetUserId);
       if (fetchedOrders) {
         setOrders(fetchedOrders);
-        setFilteredOrders(fetchedOrders);
       }
     }
     setLoading(false);
@@ -54,13 +53,35 @@ const OrderListScreen = ({ navigation, route }) => {
       );
     }
 
-    setFilteredOrders(filtered);
+    const shopOrders = [];
+    const onlineOrders = [];
+
+    filtered.forEach(order => {
+      if (order.order_type === 'shop-order') {
+        shopOrders.push(order);
+      } else {
+        onlineOrders.push(order);
+      }
+    });
+
+    const sections = [];
+    if (shopOrders.length > 0) {
+      sections.push({ title: 'Shop Orders', data: shopOrders });
+    }
+    if (onlineOrders.length > 0) {
+      sections.push({ title: 'Online Orders', data: onlineOrders });
+    }
+    
+    setSectionedOrders(sections);
+
   }, [searchQuery, selectedStatus, selectedDate, orders]);
 
   useEffect(() => {
-    const total = filteredOrders.reduce((sum, order) => sum + order.total_amount, 0);
+    const total = sectionedOrders.reduce((sum, section) => {
+      return sum + section.data.reduce((sectionSum, order) => sectionSum + order.total_amount, 0);
+    }, 0);
     setTotalAmount(total);
-  }, [filteredOrders]);
+  }, [sectionedOrders]);
 
   const showDatePicker = () => {
     setDatePickerVisibility(true);
@@ -118,6 +139,7 @@ const OrderListScreen = ({ navigation, route }) => {
       </View>
       <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
       <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
+      {item.table_no && <Text style={styles.orderDate}>Table No: {item.table_no}</Text>}
       <View style={styles.actionButtons}>
         <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id })}>
           <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
@@ -183,13 +205,16 @@ const OrderListScreen = ({ navigation, route }) => {
       <View style={styles.totalAmountContainer}>
         <Text style={styles.totalAmountText}>Total Amount: ₹{totalAmount.toFixed(2)}</Text>
       </View>
-      {filteredOrders.length === 0 ? (
+      {sectionedOrders.length === 0 ? (
         <Text style={styles.noOrdersText}>No orders found.</Text>
       ) : (
-        <FlatList
-          data={filteredOrders}
+        <SectionList
+          sections={sectionedOrders}
           keyExtractor={(item) => item.id}
           renderItem={renderOrderItem}
+          renderSectionHeader={({ section: { title } }) => (
+            <Text style={styles.sectionHeader}>{title}</Text>
+          )}
           onRefresh={handleRefresh}
           refreshing={refreshing}
           contentContainerStyle={styles.listContent}
@@ -270,31 +295,27 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  container: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: '#f8f8f8',
-  },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
-    textAlign: 'center',
-  },
   listContent: {
     paddingBottom: 20,
+  },
+  sectionHeader: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    backgroundColor: '#f0f0f0',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
   },
   orderItem: {
     backgroundColor: '#fff',
     padding: 15,
     borderRadius: 10,
     marginBottom: 10,
+    marginHorizontal: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,

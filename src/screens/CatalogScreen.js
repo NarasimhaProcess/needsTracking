@@ -1,5 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,14 +13,13 @@ import {
   Alert,
   ScrollView,
   Dimensions,
+  TextInput,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Swiper from 'react-native-swiper';
-import { Video } from 'expo-av';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
-import { getGuestCart, addGuestCartItem } from '../services/localStorageService';
+import { getGuestCart } from '../services/localStorageService';
 
 const { width } = Dimensions.get('window');
 
@@ -34,8 +33,10 @@ const CatalogScreen = ({ navigation, route }) => {
   const [user, setUser] = useState(null);
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
-  const [expandedProducts, setExpandedProducts] = useState({});
   const [updatingCart, setUpdatingCart] = useState(false);
+  const [variantSearch, setVariantSearch] = useState({});
+  const [isProductModalVisible, setIsProductModalVisible] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
   const quantityMap = useMemo(() => {
     const map = {};
@@ -104,11 +105,14 @@ const CatalogScreen = ({ navigation, route }) => {
     }, [sellerId])
   );
 
-  const toggleProductExpansion = (productId) => {
-    setExpandedProducts(prevState => ({
-      ...prevState,
-      [productId]: !prevState[productId]
-    }));
+  const openProductModal = (product) => {
+    setSelectedProduct(product);
+    setIsProductModalVisible(true);
+  };
+
+  const closeProductModal = () => {
+    setSelectedProduct(null);
+    setIsProductModalVisible(false);
   };
 
   const handleUpdateCart = async (product, combinationId, currentQuantity, change) => {
@@ -120,33 +124,9 @@ const CatalogScreen = ({ navigation, route }) => {
 
     setUpdatingCart(true);
     try {
-      const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
       const newQuantity = currentQuantity + change;
+      const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
 
-      // Optimistic Update
-      const newCart = JSON.parse(JSON.stringify(cart || { cart_items: [] }));
-      const itemIndex = newCart.cart_items.findIndex(item => item.product_variant_combination_id === combinationId);
-
-      if (newQuantity > 0) {
-        if (itemIndex > -1) {
-          newCart.cart_items[itemIndex].quantity = newQuantity;
-        } else {
-          const combination = product.product_variant_combinations.find(c => c.id === combinationId);
-          newCart.cart_items.push({
-            id: Date.now(),
-            quantity: newQuantity,
-            product_variant_combination_id: combinationId,
-            product_variant_combinations: { ...combination, products: { id: product.id, product_name: product.product_name, product_media: product.product_media } }
-          });
-        }
-      } else {
-        if (itemIndex > -1) {
-          newCart.cart_items.splice(itemIndex, 1);
-        }
-      }
-      setCart(newCart);
-
-      // Database Operation
       if (newQuantity > 0) {
         if (originalCartItem) {
           await updateCartItem(originalCartItem.id, newQuantity);
@@ -162,7 +142,6 @@ const CatalogScreen = ({ navigation, route }) => {
       console.error("Error updating cart:", error);
       Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
     } finally {
-      // Final sync with the server
       if (user) {
         const finalCartData = await getCart(user.id);
         setCart(finalCartData);
@@ -188,6 +167,17 @@ const CatalogScreen = ({ navigation, route }) => {
     setCart(newCart);
   };
 
+  const openImageViewer = (product) => {
+    const imageUrls = product.product_media
+      .filter(m => m.media_type === 'image')
+      .map(m => ({ url: m.media_url }));
+    
+    if (imageUrls.length > 0) {
+      setViewerImages(imageUrls);
+      setIsImageViewerVisible(true);
+    }
+  };
+
   const getPriceDisplay = (product) => {
     if (product.product_variant_combinations && product.product_variant_combinations.length > 1) {
       const prices = product.product_variant_combinations.map(p => p.price);
@@ -205,76 +195,25 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const renderProduct = ({ item }) => {
-    const isExpanded = !!expandedProducts[item.id];
-    const hasVariants = item.product_variants && item.product_variants.length > 0 && item.product_variant_combinations.length > 1;
+    const totalQuantity = productTotalQuantityInCart[item.id] || 0;
+    const buttonText = totalQuantity > 0 
+      ? `${totalQuantity} item${totalQuantity > 1 ? 's' : ''} added` 
+      : 'Add';
 
-    if (hasVariants) {
-      const totalQuantity = productTotalQuantityInCart[item.id] || 0;
-      const buttonText = isExpanded 
-        ? 'Hide Options' 
-        : (totalQuantity > 0 
-            ? `${totalQuantity} item${totalQuantity > 1 ? 's' : ''} added` 
-            : 'Show Options');
-
-      return (
-        <View style={styles.productContainer}>
+    return (
+      <View style={styles.productContainer}>
+        <TouchableOpacity onPress={() => openProductModal(item)}>
           <Image style={styles.productImage} source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }} />
-          <View style={styles.productDetails}>
-            <Text style={styles.productName}>{item.product_name}</Text>
-            <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
-          </View>
-          <TouchableOpacity style={styles.addButton} onPress={() => toggleProductExpansion(item.id)}>
-            <Text style={styles.addButtonText}>{buttonText}</Text>
-          </TouchableOpacity>
-          {isExpanded && (
-            <View style={styles.variantsContainer}>
-              {item.product_variant_combinations.map(combo => {
-                const quantity = quantityMap[combo.id] || 0;
-                return (
-                  <View key={combo.id} style={styles.variantRow}>
-                    <Text style={styles.variantNameText}>{combo.combination_string}</Text>
-                    <View style={styles.quantitySelector}>
-                      <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
-                        <Icon name="minus-circle" size={28} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
-                      </TouchableOpacity>
-                      <Text style={styles.quantityText}>{quantity}</Text>
-                      <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, 1)} disabled={updatingCart}>
-                        <Icon name="plus-circle" size={28} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          )}
+        </TouchableOpacity>
+        <View style={styles.productDetails}>
+          <Text style={styles.productName}>{item.product_name}</Text>
+          <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
         </View>
-      );
-    } else {
-      // Simple product
-      const combo = item.product_variant_combinations[0];
-      if (!combo) return null;
-      const quantity = quantityMap[combo.id] || 0;
-      return (
-        <View style={styles.productContainer}>
-          <Image style={styles.productImage} source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }} />
-          <View style={styles.productDetails}>
-            <Text style={styles.productName}>{item.product_name}</Text>
-            <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
-          </View>
-          <View style={styles.actionsContainer}>
-            <View style={styles.quantitySelector}>
-              <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
-                <Icon name="minus-circle" size={28} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
-              </TouchableOpacity>
-              <Text style={styles.quantityText}>{quantity}</Text>
-              <TouchableOpacity onPress={() => handleUpdateCart(item, combo.id, quantity, 1)} disabled={updatingCart}>
-                <Icon name="plus-circle" size={28} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      );
-    }
+        <TouchableOpacity style={styles.addButton} onPress={() => openProductModal(item)}>
+          <Text style={styles.addButtonText}>{buttonText}</Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
 
   const renderCartItem = ({ item }) => (
@@ -321,10 +260,100 @@ const CatalogScreen = ({ navigation, route }) => {
         keyExtractor={(item) => item.id.toString()}
         numColumns={2}
         contentContainerStyle={styles.container}
-        extraData={{ cart, expandedProducts }}
+        extraData={{ cart }}
       />
 
-      {/* Product Detail Modal was here, now removed */}
+      {selectedProduct && (
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={isProductModalVisible}
+          onRequestClose={closeProductModal}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.productModalContent}>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={closeProductModal}
+              >
+                <Icon name="times-circle" size={30} color="#333" />
+              </TouchableOpacity>
+              
+              <View style={styles.swiperContainer}>
+                <Swiper showsButtons={false} loop={false}>
+                  {selectedProduct.product_media.map((media, index) => (
+                    <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)}>
+                      <Image source={{ uri: media.media_url }} style={styles.modalProductImage} />
+                    </TouchableOpacity>
+                  ))}
+                </Swiper>
+              </View>
+
+              <Text style={styles.modalProductName}>{selectedProduct.product_name}</Text>
+              
+              <ScrollView>
+                {selectedProduct.product_variant_combinations.length > 1 ? (
+                  <View style={styles.variantsContainer}>
+                    <TextInput
+                      style={styles.variantSearchInput}
+                      placeholder="Search options..."
+                      value={variantSearch[selectedProduct.id] || ''}
+                      onChangeText={text => {
+                        setVariantSearch(prevState => ({
+                          ...prevState,
+                          [selectedProduct.id]: text
+                        }));
+                      }}
+                    />
+                    {selectedProduct.product_variant_combinations
+                      .filter(combo => 
+                        combo.combination_string.toLowerCase().includes((variantSearch[selectedProduct.id] || '').toLowerCase())
+                      )
+                      .map(combo => {
+                        const quantity = quantityMap[combo.id] || 0;
+                        return (
+                          <View key={combo.id} style={styles.variantRow}>
+                            <Text style={styles.variantNameText}>{combo.combination_string} - ₹{combo.price}</Text>
+                            <View style={styles.quantitySelector}>
+                              <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
+                                <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
+                              </TouchableOpacity>
+                              <Text style={styles.quantityText}>{quantity}</Text>
+                              <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, 1)} disabled={updatingCart}>
+                                <Icon name="plus-circle" size={32} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })}
+                  </View>
+                ) : (
+                  <View style={styles.variantRow}>
+                      <Text style={styles.variantNameText}>{getPriceDisplay(selectedProduct)}</Text>
+                      <View style={styles.quantitySelector}>
+                          {(() => {
+                              const combo = selectedProduct.product_variant_combinations[0];
+                              const quantity = quantityMap[combo.id] || 0;
+                              return (
+                                  <>
+                                      <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
+                                          <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
+                                      </TouchableOpacity>
+                                      <Text style={styles.quantityText}>{quantity}</Text>
+                                      <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, 1)} disabled={updatingCart}>
+                                          <Icon name="plus-circle" size={32} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
+                                      </TouchableOpacity>
+                                  </>
+                              );
+                          })()}
+                      </View>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* Image Viewer Modal */}
       <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
@@ -439,6 +468,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 5,
+    marginHorizontal: 10,
+    marginBottom: 10,
   },
   addButtonText: {
     color: '#43A047',
@@ -453,7 +484,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   quantityText: {
-    marginHorizontal: 10,
+    marginHorizontal: 15,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -466,11 +497,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
   },
   variantNameText: {
-    fontSize: 14,
+    fontSize: 16,
     flex: 1,
+  },
+  variantSearchInput: {
+    height: 40,
+    borderColor: '#eee',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    marginBottom: 10,
   },
   modalContainer: {
     flex: 1,
@@ -484,6 +525,13 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     height: '80%',
   },
+  productModalContent: {
+    backgroundColor: 'white',
+    padding: 20,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '90%',
+  },
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
@@ -492,9 +540,11 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     position: 'absolute',
-    top: 10,
-    right: 10,
+    top: 15,
+    right: 15,
     zIndex: 1,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    borderRadius: 15,
   },
   itemContainer: {
     flexDirection: 'row',
@@ -563,6 +613,23 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  swiperContainer: {
+    height: 250,
+    marginBottom: 20,
+    borderRadius: 10,
+    overflow: 'hidden'
+  },
+  modalProductImage: {
+    width: '100%',
+    height: 250,
+    resizeMode: 'contain',
+  },
+  modalProductName: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 15,
   },
 });
 
