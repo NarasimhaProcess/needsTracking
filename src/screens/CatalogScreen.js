@@ -18,6 +18,7 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
 
@@ -40,18 +41,20 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const quantityMap = useMemo(() => {
     const map = {};
-    if (cart && cart.cart_items) {
-      cart.cart_items.forEach(item => {
+    const items = user ? cart?.cart_items : guestCart;
+    if (items) {
+      items.forEach(item => {
         map[item.product_variant_combination_id] = item.quantity;
       });
     }
     return map;
-  }, [cart]);
+  }, [cart, guestCart, user]);
 
   const productTotalQuantityInCart = useMemo(() => {
     const map = {}; // { productId: total_quantity }
-    if (cart && cart.cart_items) {
-      cart.cart_items.forEach(cartItem => {
+    const items = user ? cart?.cart_items : guestCart;
+    if (items) {
+        items.forEach(cartItem => {
         if (cartItem.product_variant_combinations && cartItem.product_variant_combinations.products) {
           const productId = cartItem.product_variant_combinations.products.id;
           if (productId) {
@@ -64,19 +67,42 @@ const CatalogScreen = ({ navigation, route }) => {
       });
     }
     return map;
-  }, [cart]);
+  }, [cart, guestCart, user]);
+
+  const productTotalPriceInCart = useMemo(() => {
+    const map = {}; // { productId: total_price }
+    const items = user ? cart?.cart_items : guestCart;
+    if (items) {
+      items.forEach(cartItem => {
+        if (cartItem.product_variant_combinations && cartItem.product_variant_combinations.products) {
+          const productId = cartItem.product_variant_combinations.products.id;
+          const price = cartItem.product_variant_combinations.price;
+          const quantity = cartItem.quantity;
+          
+          if (productId) {
+            if (!map[productId]) {
+              map[productId] = 0;
+            }
+            map[productId] += quantity * price;
+          }
+        }
+      });
+    }
+    return map;
+  }, [cart, guestCart, user]);
 
   const cartTotals = useMemo(() => {
     let totalItems = 0;
     let totalPrice = 0;
-    if (cart && cart.cart_items) {
-      cart.cart_items.forEach(item => {
+    const items = user ? cart?.cart_items : guestCart;
+    if (items) {
+        items.forEach(item => {
         totalItems += item.quantity;
         totalPrice += item.quantity * item.product_variant_combinations.price;
       });
     }
     return { totalItems, totalPrice };
-  }, [cart]);
+  }, [cart, guestCart, user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -116,55 +142,177 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const handleUpdateCart = async (product, combinationId, currentQuantity, change) => {
-    if (updatingCart) return; // Prevent concurrent updates
-    if (!user) {
-      Alert.alert("Please log in to add items to your cart.");
-      return;
-    }
+    if (updatingCart) return;
 
     setUpdatingCart(true);
-    try {
-      const newQuantity = currentQuantity + change;
-      const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
 
-      if (newQuantity > 0) {
-        if (originalCartItem) {
-          await updateCartItem(originalCartItem.id, newQuantity);
+    const newQuantity = currentQuantity + change;
+
+    if (user) {
+        // Logged-in user logic
+        const optimisticCart = JSON.parse(JSON.stringify(cart || { cart_items: [] }));
+        const itemIndex = optimisticCart.cart_items.findIndex(item => item.product_variant_combination_id === combinationId);
+        const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
+
+        if (newQuantity > 0) {
+            if (itemIndex > -1) {
+                optimisticCart.cart_items[itemIndex].quantity = newQuantity;
+            } else {
+                const combination = product.product_variant_combinations.find(c => c.id === combinationId);
+                optimisticCart.cart_items.push({
+                    id: Date.now(), // Temporary ID
+                    quantity: newQuantity,
+                    product_variant_combination_id: combinationId,
+                    product_variant_combinations: { ...combination, products: { id: product.id, product_name: product.product_name, product_media: product.product_media } }
+                });
+            }
         } else {
-          await addToCart(user.id, combinationId, newQuantity);
+            if (itemIndex > -1) {
+                optimisticCart.cart_items.splice(itemIndex, 1);
+            }
         }
-      } else {
-        if (originalCartItem) {
-          await removeCartItem(originalCartItem.id);
+        setCart(optimisticCart);
+
+        try {
+            if (newQuantity > 0) {
+                if (originalCartItem) {
+                    await updateCartItem(originalCartItem.id, newQuantity);
+                } else {
+                    await addToCart(user.id, combinationId, newQuantity);
+                }
+            } else {
+                if (originalCartItem) {
+                    await removeCartItem(originalCartItem.id);
+                }
+            }
+        } catch (error) {
+            console.error("Error updating cart:", error);
+            Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
+            setCart(cart); // Revert on error
+        } finally {
+            setUpdatingCart(false);
         }
-      }
-    } catch (error) {
-      console.error("Error updating cart:", error);
-      Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
-    } finally {
-      if (user) {
-        const finalCartData = await getCart(user.id);
-        setCart(finalCartData);
-      }
-      setUpdatingCart(false);
+    } else {
+        // Guest user logic
+        const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart));
+        const itemIndex = optimisticGuestCart.findIndex(item => item.product_variant_combination_id === combinationId);
+
+        if (newQuantity > 0) {
+            if (itemIndex > -1) {
+                optimisticGuestCart[itemIndex].quantity = newQuantity;
+            } else {
+                const combination = product.product_variant_combinations.find(c => c.id === combinationId);
+                optimisticGuestCart.push({
+                    product_variant_combination_id: combinationId,
+                    quantity: newQuantity,
+                    product_variant_combinations: { ...combination, products: { id: product.id, product_name: product.product_name, product_media: product.product_media } }
+                });
+            }
+        } else {
+            if (itemIndex > -1) {
+                optimisticGuestCart.splice(itemIndex, 1);
+            }
+        }
+        setGuestCart(optimisticGuestCart);
+
+        try {
+            const jsonValue = JSON.stringify(optimisticGuestCart);
+            await AsyncStorage.setItem('guest_cart', jsonValue);
+        } catch (error) {
+            console.error("Error updating guest cart:", error);
+            Alert.alert("Error", "There was a problem updating your cart.");
+            setGuestCart(guestCart); // Revert
+        } finally {
+            setUpdatingCart(false);
+        }
     }
   };
 
-  const handleUpdateQuantity = async (cartItemId, quantity) => {
-    const updatedItem = await updateCartItem(cartItemId, quantity);
-    if (updatedItem) {
-      const newCart = { ...cart };
-      const itemIndex = newCart.cart_items.findIndex((item) => item.id === cartItemId);
-      newCart.cart_items[itemIndex].quantity = quantity;
-      setCart(newCart);
+  const handleUpdateQuantity = async (cartItemId, newQuantity) => {
+    if (newQuantity < 1) return;
+    if (updatingCart) return;
+    setUpdatingCart(true);
+
+    if (user) {
+        const optimisticCart = JSON.parse(JSON.stringify(cart));
+        const itemIndex = optimisticCart.cart_items.findIndex(item => item.id === cartItemId);
+        if (itemIndex === -1) {
+            setUpdatingCart(false);
+            return;
+        }
+
+        optimisticCart.cart_items[itemIndex].quantity = newQuantity;
+        setCart(optimisticCart);
+
+        try {
+            await updateCartItem(cartItemId, newQuantity);
+        } catch (error) {
+            console.error("Error updating cart quantity:", error);
+            Alert.alert("Error", "Could not update item quantity.");
+            setCart(cart); // Revert
+        } finally {
+            setUpdatingCart(false);
+        }
+
+    } else {
+        // Guest cart
+        const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart));
+        const itemIndex = optimisticGuestCart.findIndex(item => item.product_variant_combination_id === cartItemId);
+        if (itemIndex === -1) {
+            setUpdatingCart(false);
+            return;
+        }
+
+        optimisticGuestCart[itemIndex].quantity = newQuantity;
+        setGuestCart(optimisticGuestCart);
+
+        try {
+            const jsonValue = JSON.stringify(optimisticGuestCart);
+            await AsyncStorage.setItem('guest_cart', jsonValue);
+        } catch (error) {
+            console.error("Error updating guest cart quantity:", error);
+            Alert.alert("Error", "Could not update item quantity.");
+            setGuestCart(guestCart); // Revert
+        } finally {
+            setUpdatingCart(false);
+        }
     }
   };
 
   const handleRemoveItem = async (cartItemId) => {
-    await removeCartItem(cartItemId);
-    const newCart = { ...cart };
-    newCart.cart_items = newCart.cart_items.filter((item) => item.id !== cartItemId);
-    setCart(newCart);
+    if (updatingCart) return;
+    setUpdatingCart(true);
+
+    if (user) {
+        const optimisticCart = JSON.parse(JSON.stringify(cart));
+        optimisticCart.cart_items = optimisticCart.cart_items.filter(item => item.id !== cartItemId);
+        setCart(optimisticCart);
+
+        try {
+            await removeCartItem(cartItemId);
+        } catch (error) {
+            console.error("Error removing item:", error);
+            Alert.alert("Error", "Could not remove item from cart.");
+            setCart(cart); // Revert
+        } finally {
+            setUpdatingCart(false);
+        }
+    } else {
+        // Guest cart
+        const optimisticGuestCart = guestCart.filter(item => item.product_variant_combination_id !== cartItemId);
+        setGuestCart(optimisticGuestCart);
+
+        try {
+            const jsonValue = JSON.stringify(optimisticGuestCart);
+            await AsyncStorage.setItem('guest_cart', jsonValue);
+        } catch (error) {
+            console.error("Error removing guest item:", error);
+            Alert.alert("Error", "Could not remove item from cart.");
+            setGuestCart(guestCart); // Revert
+        } finally {
+            setUpdatingCart(false);
+        }
+    }
   };
 
   const openImageViewer = (product) => {
@@ -196,9 +344,11 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const renderProduct = ({ item }) => {
     const totalQuantity = productTotalQuantityInCart[item.id] || 0;
+    const totalPrice = productTotalPriceInCart[item.id] || 0;
+    
     const buttonText = totalQuantity > 0 
-      ? `${totalQuantity} item${totalQuantity > 1 ? 's' : ''} added` 
-      : 'Add';
+      ? `Qty: ${totalQuantity} | ₹${totalPrice.toFixed(2)}`
+      : `Add | ${getPriceDisplay(item)}`;
 
     return (
       <View style={styles.productContainer}>
@@ -216,35 +366,40 @@ const CatalogScreen = ({ navigation, route }) => {
     );
   };
 
-  const renderCartItem = ({ item }) => (
-    <View style={styles.itemContainer}>
-      <Image
-        style={styles.itemImage}
-        source={{ uri: item.product_variant_combinations.products.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
-      />
-      <View style={styles.itemDetails}>
-        <Text style={styles.itemName}>{item.product_variant_combinations.products.product_name}</Text>
-        <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
-        <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
-        <View style={styles.quantityContainer}>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
-            <Icon name="minus-circle" size={20} color="#555" />
-          </TouchableOpacity>
-          <Text style={styles.quantityText}>{item.quantity}</Text>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}>
-            <Icon name="plus-circle" size={20} color="#555" />
-          </TouchableOpacity>
+  const renderCartItem = ({ item }) => {
+    const cartItemId = user ? item.id : item.product_variant_combination_id;
+    return (
+        <View style={styles.itemContainer}>
+        <Image
+            style={styles.itemImage}
+            source={{ uri: item.product_variant_combinations.products.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
+        />
+        <View style={styles.itemDetails}>
+            <Text style={styles.itemName}>{item.product_variant_combinations.products.product_name}</Text>
+            <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
+            <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
+            <View style={styles.quantityContainer}>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(cartItemId, item.quantity - 1)} disabled={item.quantity <= 1}>
+                <Icon name="minus-circle" size={24} color="#555" />
+            </TouchableOpacity>
+            <Text style={styles.quantityText}>{item.quantity}</Text>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(cartItemId, item.quantity + 1)}>
+                <Icon name="plus-circle" size={24} color="#555" />
+            </TouchableOpacity>
+            </View>
         </View>
-      </View>
-      <TouchableOpacity onPress={() => handleRemoveItem(item.id)}>
-        <Icon name="trash" size={24} color="red" />
-      </TouchableOpacity>
-    </View>
-  );
+        <TouchableOpacity onPress={() => handleRemoveItem(cartItemId)}>
+            <Icon name="trash" size={24} color="red" />
+        </TouchableOpacity>
+        </View>
+    );
+  };
 
   if (loading) {
     return <View style={styles.center}><ActivityIndicator size="large" color="#0000ff" /></View>;
   }
+
+  const cartItems = user ? cart?.cart_items : guestCart;
 
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>
@@ -260,7 +415,7 @@ const CatalogScreen = ({ navigation, route }) => {
         keyExtractor={(item) => item.id.toString()}
         numColumns={2}
         contentContainerStyle={styles.container}
-        extraData={{ cart }}
+        extraData={{ cart, guestCart }}
       />
 
       {selectedProduct && (
@@ -378,18 +533,18 @@ const CatalogScreen = ({ navigation, route }) => {
               <Icon name="times-circle" size={30} color="#333" />
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Your Cart</Text>
-            {cart && cart.cart_items.length > 0 ? (
+            {cartItems && cartItems.length > 0 ? (
               <FlatList
-                data={cart.cart_items}
+                data={cartItems}
                 renderItem={renderCartItem}
-                keyExtractor={(item) => item.id.toString()}
+                keyExtractor={(item) => (user ? item.id.toString() : item.product_variant_combination_id.toString())}
               />
             ) : (
               <Text style={styles.emptyCartText}>Your cart is empty.</Text>
             )}
             <Button title="Checkout" onPress={() => {
               setIsCartModalVisible(false);
-              navigation.navigate('Checkout', { cart: cart });
+              navigation.navigate('Checkout', { cart: user ? cart : { cart_items: guestCart } });
             }} />
           </View>
         </View>

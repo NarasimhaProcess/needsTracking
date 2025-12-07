@@ -98,7 +98,7 @@ const ProductScreen = ({ route, navigation }) => {
               const success = await deleteProductMedia(mediaId, mediaUrl);
               if (success) {
                 Alert.alert("Success", "Media deleted successfully.");
-                fetchProducts(); // Refresh the list
+                fetchProducts(userId); // Refresh the list
                 resolve(true);
               } else {
                 Alert.alert("Error", "Failed to delete media.");
@@ -125,7 +125,7 @@ const ProductScreen = ({ route, navigation }) => {
             const success = await deleteProduct(productId);
             if (success) {
               Alert.alert("Success", "Product deleted successfully.");
-              fetchProducts(); // Refresh the list
+              fetchProducts(userId); // Refresh the list
             } else {
               Alert.alert("Error", "Failed to delete product.");
             }
@@ -141,34 +141,30 @@ const ProductScreen = ({ route, navigation }) => {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.productsListTitle}>Your Products</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('ProductMapScreen', { customerId })}>
+        <TouchableOpacity onPress={() => navigation.navigate('ProductMapScreen', { userId })}>
           <Icon name="map" size={24} color="#007AFF" />
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => { setProductToEdit(null); setShowProductModal(true); }}
-      >
-        <Icon name="plus" size={24} color="white" />
-      </TouchableOpacity>
-
       {loading ? (
         <ActivityIndicator size="large" color="#007AFF" />
       ) : products.length > 0 ? (
-        <View>
+        <View style={{flex: 1}}>
           <View style={styles.tableHeader}>
+            <Text style={[styles.tableHeaderCell, styles.tableHeaderCellEdit]}>Edit</Text>
             <Text style={styles.tableHeaderCell}>Name</Text>
             <Text style={styles.tableHeaderCell}>Start Date</Text>
             <Text style={styles.tableHeaderCell}>End Date</Text>
             <Text style={styles.tableHeaderCell}>Media</Text>
-            <Text style={styles.tableHeaderCell}>Edit</Text>
           </View>
           <FlatList
             data={products}
             renderItem={({ item }) => {
               return (
                 <View style={styles.productRow}>
+                  <TouchableOpacity onPress={() => handleEditProduct(item)} style={styles.editIcon}>
+                    <Icon name="edit" size={20} color="#007AFF" />
+                  </TouchableOpacity>
                   <Text style={styles.productCell}>{item.product_name}</Text>
                   <Text style={styles.productCell}>{new Date(item.start_date).toLocaleDateString()}</Text>
                   <Text style={styles.productCell}>{new Date(item.end_date).toLocaleDateString()}</Text>
@@ -196,9 +192,6 @@ const ProductScreen = ({ route, navigation }) => {
                       )}
                     />
                   </View>
-                  <TouchableOpacity onPress={() => handleEditProduct(item)} style={styles.editIcon}>
-                    <Icon name="edit" size={20} color="#007AFF" />
-                  </TouchableOpacity>
                 </View>
               );
             }}
@@ -208,7 +201,9 @@ const ProductScreen = ({ route, navigation }) => {
           />
         </View>
       ) : (
-        <Text>No products found.</Text>
+        <View style={styles.center}>
+            <Text>No products found.</Text>
+        </View>
       )}
 
       <ProductFormModal
@@ -259,13 +254,6 @@ const ProductScreen = ({ route, navigation }) => {
                   resizeMode="contain"
                 />
               ) : allMediaForViewer[currentMediaIndex].media_type === 'video' ? (
-                // <Video // Temporarily commented out
-                //   source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
-                //   style={styles.fullScreenMedia}
-                //   useNativeControls
-                //   resizeMode="contain"
-                //   isLooping
-                // />
                 <Text style={styles.noMediaText}>Video playback temporarily disabled</Text> // Placeholder
               ) : (
                 <Text style={styles.noMediaText}>No media to display</Text>
@@ -274,6 +262,13 @@ const ProductScreen = ({ route, navigation }) => {
           )}
         </View>
       </Modal>
+
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => { setProductToEdit(null); setShowProductModal(true); }}
+      >
+        <Icon name="plus" size={24} color="white" />
+      </TouchableOpacity>
     </View>
   );
 };
@@ -284,11 +279,20 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: '#f5f5f5',
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
   productsListTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 15,
-    textAlign: 'center',
   },
   fab: {
     position: 'absolute',
@@ -301,6 +305,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#03A9F4',
     borderRadius: 30,
     elevation: 8,
+    zIndex: 10,
   },
   productsList: {
     marginTop: 10,
@@ -310,7 +315,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#fff',
-    padding: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 5,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
@@ -319,13 +325,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  productNameCell: {
-    flex: 2, // Give more space to the product name
-  },
   productCellMedia: {
     flex: 1.5,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     justifyContent: 'center',
   },
   productImage: {
@@ -342,7 +343,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
     textAlign: 'center',
-    textAlignVertical: 'center',
+    lineHeight: 40,
     fontSize: 8,
     backgroundColor: '#f0f0f0',
   },
@@ -363,6 +364,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
     textAlign: 'center',
+  },
+  tableHeaderCellEdit: {
+    flex: 0.5,
+    textAlign: 'left',
+    paddingLeft: 5
   },
   mediaViewerContainer: {
     flex: 1,
@@ -397,7 +403,9 @@ const styles = StyleSheet.create({
     right: 10,
   },
   editIcon: {
-    padding: 5,
+    flex: 0.5,
+    alignItems: 'flex-start',
+    paddingLeft: 5,
   },
 });
 
