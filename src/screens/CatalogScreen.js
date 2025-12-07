@@ -68,7 +68,7 @@ const CatalogScreen = ({ navigation, route }) => {
     }
     return map;
   }, [cart, guestCart, user]);
-
+  
   const productTotalPriceInCart = useMemo(() => {
     const map = {}; // { productId: total_price }
     const items = user ? cart?.cart_items : guestCart;
@@ -144,36 +144,33 @@ const CatalogScreen = ({ navigation, route }) => {
   const handleUpdateCart = async (product, combinationId, currentQuantity, change) => {
     if (updatingCart) return;
 
+    const newQuantity = currentQuantity + change;
+    if (newQuantity < 0) return;
+
+    const combination = product.product_variant_combinations.find(c => c.id === combinationId);
+    if (!combination) {
+        Alert.alert("Error", "Product variant not found.");
+        return;
+    }
+
+    const stock = combination.quantity; // Corrected field name
+
+    if (change > 0 && currentQuantity >= stock) {
+        Alert.alert("Out of Stock", "Sorry, this item is out of stock and cannot be added to your cart.");
+        return;
+    }
+    
+    if (newQuantity > stock) {
+        Alert.alert("Stock Limit", `Sorry, you can only add up to ${stock} items.`);
+        return;
+    }
+
     setUpdatingCart(true);
 
-    const newQuantity = currentQuantity + change;
-
     if (user) {
-        // Logged-in user logic
-        const optimisticCart = JSON.parse(JSON.stringify(cart || { cart_items: [] }));
-        const itemIndex = optimisticCart.cart_items.findIndex(item => item.product_variant_combination_id === combinationId);
-        const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
-
-        if (newQuantity > 0) {
-            if (itemIndex > -1) {
-                optimisticCart.cart_items[itemIndex].quantity = newQuantity;
-            } else {
-                const combination = product.product_variant_combinations.find(c => c.id === combinationId);
-                optimisticCart.cart_items.push({
-                    id: Date.now(), // Temporary ID
-                    quantity: newQuantity,
-                    product_variant_combination_id: combinationId,
-                    product_variant_combinations: { ...combination, products: { id: product.id, product_name: product.product_name, product_media: product.product_media } }
-                });
-            }
-        } else {
-            if (itemIndex > -1) {
-                optimisticCart.cart_items.splice(itemIndex, 1);
-            }
-        }
-        setCart(optimisticCart);
-
+        // Logged-in user logic (non-optimistic)
         try {
+            const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
             if (newQuantity > 0) {
                 if (originalCartItem) {
                     await updateCartItem(originalCartItem.id, newQuantity);
@@ -185,15 +182,16 @@ const CatalogScreen = ({ navigation, route }) => {
                     await removeCartItem(originalCartItem.id);
                 }
             }
+            const finalCartData = await getCart(user.id);
+            setCart(finalCartData);
         } catch (error) {
             console.error("Error updating cart:", error);
             Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
-            setCart(cart); // Revert on error
         } finally {
             setUpdatingCart(false);
         }
     } else {
-        // Guest user logic
+        // Guest user logic (optimistic)
         const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart));
         const itemIndex = optimisticGuestCart.findIndex(item => item.product_variant_combination_id === combinationId);
 
@@ -201,7 +199,6 @@ const CatalogScreen = ({ navigation, route }) => {
             if (itemIndex > -1) {
                 optimisticGuestCart[itemIndex].quantity = newQuantity;
             } else {
-                const combination = product.product_variant_combinations.find(c => c.id === combinationId);
                 optimisticGuestCart.push({
                     product_variant_combination_id: combinationId,
                     quantity: newQuantity,
@@ -214,7 +211,6 @@ const CatalogScreen = ({ navigation, route }) => {
             }
         }
         setGuestCart(optimisticGuestCart);
-
         try {
             const jsonValue = JSON.stringify(optimisticGuestCart);
             await AsyncStorage.setItem('guest_cart', jsonValue);
@@ -229,31 +225,39 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const handleUpdateQuantity = async (cartItemId, newQuantity) => {
-    if (newQuantity < 1) return;
+    // This function is for the cart modal, stock check is also needed here.
     if (updatingCart) return;
+
+    const items = user ? cart?.cart_items : guestCart;
+    const itemToUpdate = items.find(item => (user ? item.id : item.product_variant_combination_id) === cartItemId);
+
+    if (!itemToUpdate) return;
+    
+    const stock = itemToUpdate.product_variant_combinations.quantity; // Corrected field name
+    if (newQuantity > stock) {
+        Alert.alert("Stock Limit", `Sorry, you can only have up to ${stock} items in your cart.`);
+        return;
+    }
+    
+    if (newQuantity < 1) {
+      handleRemoveItem(cartItemId);
+      return;
+    };
+
     setUpdatingCart(true);
 
     if (user) {
-        const optimisticCart = JSON.parse(JSON.stringify(cart));
-        const itemIndex = optimisticCart.cart_items.findIndex(item => item.id === cartItemId);
-        if (itemIndex === -1) {
-            setUpdatingCart(false);
-            return;
-        }
-
-        optimisticCart.cart_items[itemIndex].quantity = newQuantity;
-        setCart(optimisticCart);
-
+        // Logged-in user logic (non-optimistic)
         try {
             await updateCartItem(cartItemId, newQuantity);
+            const finalCartData = await getCart(user.id);
+            setCart(finalCartData);
         } catch (error) {
             console.error("Error updating cart quantity:", error);
             Alert.alert("Error", "Could not update item quantity.");
-            setCart(cart); // Revert
         } finally {
             setUpdatingCart(false);
         }
-
     } else {
         // Guest cart
         const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart));
@@ -262,10 +266,8 @@ const CatalogScreen = ({ navigation, route }) => {
             setUpdatingCart(false);
             return;
         }
-
         optimisticGuestCart[itemIndex].quantity = newQuantity;
         setGuestCart(optimisticGuestCart);
-
         try {
             const jsonValue = JSON.stringify(optimisticGuestCart);
             await AsyncStorage.setItem('guest_cart', jsonValue);
@@ -284,16 +286,14 @@ const CatalogScreen = ({ navigation, route }) => {
     setUpdatingCart(true);
 
     if (user) {
-        const optimisticCart = JSON.parse(JSON.stringify(cart));
-        optimisticCart.cart_items = optimisticCart.cart_items.filter(item => item.id !== cartItemId);
-        setCart(optimisticCart);
-
+        // Logged-in user logic (non-optimistic)
         try {
             await removeCartItem(cartItemId);
+            const finalCartData = await getCart(user.id);
+            setCart(finalCartData);
         } catch (error) {
             console.error("Error removing item:", error);
             Alert.alert("Error", "Could not remove item from cart.");
-            setCart(cart); // Revert
         } finally {
             setUpdatingCart(false);
         }
@@ -301,7 +301,6 @@ const CatalogScreen = ({ navigation, route }) => {
         // Guest cart
         const optimisticGuestCart = guestCart.filter(item => item.product_variant_combination_id !== cartItemId);
         setGuestCart(optimisticGuestCart);
-
         try {
             const jsonValue = JSON.stringify(optimisticGuestCart);
             await AsyncStorage.setItem('guest_cart', jsonValue);
@@ -345,6 +344,7 @@ const CatalogScreen = ({ navigation, route }) => {
   const renderProduct = ({ item }) => {
     const totalQuantity = productTotalQuantityInCart[item.id] || 0;
     const totalPrice = productTotalPriceInCart[item.id] || 0;
+    const totalStock = item.product_variant_combinations.reduce((sum, combo) => sum + (combo.quantity || 0), 0);
     
     const buttonText = totalQuantity > 0 
       ? `Qty: ${totalQuantity} | ₹${totalPrice.toFixed(2)}`
@@ -358,6 +358,7 @@ const CatalogScreen = ({ navigation, route }) => {
         <View style={styles.productDetails}>
           <Text style={styles.productName}>{item.product_name}</Text>
           <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
+          <Text style={styles.stockText}>Total Stock: {totalStock}</Text>
         </View>
         <TouchableOpacity style={styles.addButton} onPress={() => openProductModal(item)}>
           <Text style={styles.addButtonText}>{buttonText}</Text>
@@ -379,16 +380,16 @@ const CatalogScreen = ({ navigation, route }) => {
             <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
             <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
             <View style={styles.quantityContainer}>
-            <TouchableOpacity onPress={() => handleUpdateQuantity(cartItemId, item.quantity - 1)} disabled={item.quantity <= 1}>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(cartItemId, item.quantity - 1)} disabled={updatingCart}>
                 <Icon name="minus-circle" size={24} color="#555" />
             </TouchableOpacity>
             <Text style={styles.quantityText}>{item.quantity}</Text>
-            <TouchableOpacity onPress={() => handleUpdateQuantity(cartItemId, item.quantity + 1)}>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(cartItemId, item.quantity + 1)} disabled={updatingCart}>
                 <Icon name="plus-circle" size={24} color="#555" />
             </TouchableOpacity>
             </View>
         </View>
-        <TouchableOpacity onPress={() => handleRemoveItem(cartItemId)}>
+        <TouchableOpacity onPress={() => handleRemoveItem(cartItemId)} disabled={updatingCart}>
             <Icon name="trash" size={24} color="red" />
         </TouchableOpacity>
         </View>
@@ -468,7 +469,10 @@ const CatalogScreen = ({ navigation, route }) => {
                         const quantity = quantityMap[combo.id] || 0;
                         return (
                           <View key={combo.id} style={styles.variantRow}>
-                            <Text style={styles.variantNameText}>{combo.combination_string} - ₹{combo.price}</Text>
+                            <View>
+                                <Text style={styles.variantNameText}>{combo.combination_string} - ₹{combo.price}</Text>
+                                <Text style={styles.stockText}>In Stock: {combo.quantity || 0}</Text>
+                            </View>
                             <View style={styles.quantitySelector}>
                               <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
                                 <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
@@ -484,7 +488,10 @@ const CatalogScreen = ({ navigation, route }) => {
                   </View>
                 ) : (
                   <View style={styles.variantRow}>
+                    <View>
                       <Text style={styles.variantNameText}>{getPriceDisplay(selectedProduct)}</Text>
+                      <Text style={styles.stockText}>In Stock: {selectedProduct.product_variant_combinations[0]?.quantity || 0}</Text>
+                    </View>
                       <View style={styles.quantitySelector}>
                           {(() => {
                               const combo = selectedProduct.product_variant_combinations[0];
@@ -612,6 +619,11 @@ const styles = StyleSheet.create({
     color: '#888',
     marginTop: 5,
   },
+  stockText: {
+    fontSize: 12,
+    color: '#388E3C',
+    marginTop: 2,
+  },
   actionsContainer: {
     paddingHorizontal: 10,
     paddingBottom: 10,
@@ -658,7 +670,6 @@ const styles = StyleSheet.create({
   },
   variantNameText: {
     fontSize: 16,
-    flex: 1,
   },
   variantSearchInput: {
     height: 40,
