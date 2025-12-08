@@ -61,7 +61,7 @@ const CatalogScreen = ({ navigation, route }) => {
             if (!map[productId]) {
               map[productId] = 0;
             }
-            map[productId] += cartItem.quantity; // Sum the quantity
+            map[productId] += cartItem.quantity;
           }
         }
       });
@@ -98,7 +98,9 @@ const CatalogScreen = ({ navigation, route }) => {
     if (items) {
         items.forEach(item => {
         totalItems += item.quantity;
-        totalPrice += item.quantity * item.product_variant_combinations.price;
+        if (item.product_variant_combinations) {
+          totalPrice += item.quantity * item.product_variant_combinations.price;
+        }
       });
     }
     return { totalItems, totalPrice };
@@ -153,10 +155,10 @@ const CatalogScreen = ({ navigation, route }) => {
         return;
     }
 
-    const stock = combination.quantity; // Corrected field name
+    const stock = combination.quantity; 
 
     if (change > 0 && currentQuantity >= stock) {
-        Alert.alert("Out of Stock", "Sorry, this item is out of stock and cannot be added to your cart.");
+        Alert.alert("Out of Stock", "Sorry, this item is out of stock.");
         return;
     }
     
@@ -168,7 +170,6 @@ const CatalogScreen = ({ navigation, route }) => {
     setUpdatingCart(true);
 
     if (user) {
-        // Logged-in user logic (non-optimistic)
         try {
             const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
             if (newQuantity > 0) {
@@ -184,6 +185,8 @@ const CatalogScreen = ({ navigation, route }) => {
             }
             const finalCartData = await getCart(user.id);
             setCart(finalCartData);
+            // Force a re-render of the modal's contents
+            setSelectedProduct(prev => ({...prev}));
         } catch (error) {
             console.error("Error updating cart:", error);
             Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
@@ -191,8 +194,8 @@ const CatalogScreen = ({ navigation, route }) => {
             setUpdatingCart(false);
         }
     } else {
-        // Guest user logic (optimistic)
-        const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart));
+        // Guest user logic
+        const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart || []));
         const itemIndex = optimisticGuestCart.findIndex(item => item.product_variant_combination_id === combinationId);
 
         if (newQuantity > 0) {
@@ -212,12 +215,11 @@ const CatalogScreen = ({ navigation, route }) => {
         }
         setGuestCart(optimisticGuestCart);
         try {
-            const jsonValue = JSON.stringify(optimisticGuestCart);
-            await AsyncStorage.setItem('guest_cart', jsonValue);
+            await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
             console.error("Error updating guest cart:", error);
             Alert.alert("Error", "There was a problem updating your cart.");
-            setGuestCart(guestCart); // Revert
+            setGuestCart(guestCart);
         } finally {
             setUpdatingCart(false);
         }
@@ -225,7 +227,6 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const handleUpdateQuantity = async (cartItemId, newQuantity) => {
-    // This function is for the cart modal, stock check is also needed here.
     if (updatingCart) return;
 
     const items = user ? cart?.cart_items : guestCart;
@@ -233,7 +234,7 @@ const CatalogScreen = ({ navigation, route }) => {
 
     if (!itemToUpdate) return;
     
-    const stock = itemToUpdate.product_variant_combinations.quantity; // Corrected field name
+    const stock = itemToUpdate.product_variant_combinations.quantity;
     if (newQuantity > stock) {
         Alert.alert("Stock Limit", `Sorry, you can only have up to ${stock} items in your cart.`);
         return;
@@ -247,7 +248,6 @@ const CatalogScreen = ({ navigation, route }) => {
     setUpdatingCart(true);
 
     if (user) {
-        // Logged-in user logic (non-optimistic)
         try {
             await updateCartItem(cartItemId, newQuantity);
             const finalCartData = await getCart(user.id);
@@ -259,7 +259,6 @@ const CatalogScreen = ({ navigation, route }) => {
             setUpdatingCart(false);
         }
     } else {
-        // Guest cart
         const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart));
         const itemIndex = optimisticGuestCart.findIndex(item => item.product_variant_combination_id === cartItemId);
         if (itemIndex === -1) {
@@ -269,12 +268,11 @@ const CatalogScreen = ({ navigation, route }) => {
         optimisticGuestCart[itemIndex].quantity = newQuantity;
         setGuestCart(optimisticGuestCart);
         try {
-            const jsonValue = JSON.stringify(optimisticGuestCart);
-            await AsyncStorage.setItem('guest_cart', jsonValue);
+            await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
             console.error("Error updating guest cart quantity:", error);
             Alert.alert("Error", "Could not update item quantity.");
-            setGuestCart(guestCart); // Revert
+            setGuestCart(guestCart);
         } finally {
             setUpdatingCart(false);
         }
@@ -286,7 +284,6 @@ const CatalogScreen = ({ navigation, route }) => {
     setUpdatingCart(true);
 
     if (user) {
-        // Logged-in user logic (non-optimistic)
         try {
             await removeCartItem(cartItemId);
             const finalCartData = await getCart(user.id);
@@ -298,16 +295,14 @@ const CatalogScreen = ({ navigation, route }) => {
             setUpdatingCart(false);
         }
     } else {
-        // Guest cart
         const optimisticGuestCart = guestCart.filter(item => item.product_variant_combination_id !== cartItemId);
         setGuestCart(optimisticGuestCart);
         try {
-            const jsonValue = JSON.stringify(optimisticGuestCart);
-            await AsyncStorage.setItem('guest_cart', jsonValue);
+            await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
             console.error("Error removing guest item:", error);
             Alert.alert("Error", "Could not remove item from cart.");
-            setGuestCart(guestCart); // Revert
+            setGuestCart(guestCart);
         } finally {
             setUpdatingCart(false);
         }
@@ -469,11 +464,13 @@ const CatalogScreen = ({ navigation, route }) => {
                         const quantity = quantityMap[combo.id] || 0;
                         return (
                           <View key={combo.id} style={styles.variantRow}>
-                            <View>
-                                <Text style={styles.variantNameText}>{combo.combination_string} - ₹{combo.price}</Text>
-                                <Text style={styles.stockText}>In Stock: {combo.quantity || 0}</Text>
+                            <View style={styles.variantInfo}>
+                                <Text style={styles.variantNameText}>{combo.combination_string}</Text>
+                                <Text style={styles.stockText}><Text style={styles.labelText}>Price: </Text>₹{combo.price}</Text>
+                                <Text style={styles.stockText}><Text style={styles.labelText}>In Stock: </Text>{combo.quantity || 0}</Text>
                             </View>
                             <View style={styles.quantitySelector}>
+                              <Text style={styles.labelText}>Qty:</Text>
                               <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
                                 <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
                               </TouchableOpacity>
@@ -488,9 +485,9 @@ const CatalogScreen = ({ navigation, route }) => {
                   </View>
                 ) : (
                   <View style={styles.variantRow}>
-                    <View>
+                    <View style={styles.variantInfo}>
                       <Text style={styles.variantNameText}>{getPriceDisplay(selectedProduct)}</Text>
-                      <Text style={styles.stockText}>In Stock: {selectedProduct.product_variant_combinations[0]?.quantity || 0}</Text>
+                      <Text style={styles.stockText}><Text style={styles.labelText}>In Stock: </Text>{selectedProduct.product_variant_combinations[0]?.quantity || 0}</Text>
                     </View>
                       <View style={styles.quantitySelector}>
                           {(() => {
@@ -498,6 +495,7 @@ const CatalogScreen = ({ navigation, route }) => {
                               const quantity = quantityMap[combo.id] || 0;
                               return (
                                   <>
+                                      <Text style={styles.labelText}>Qty:</Text>
                                       <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
                                           <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
                                       </TouchableOpacity>
@@ -517,19 +515,11 @@ const CatalogScreen = ({ navigation, route }) => {
         </Modal>
       )}
 
-      {/* Image Viewer Modal */}
-      <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
-        <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
-      </Modal>
-
-      {/* Cart Modal */}
       <Modal
         animationType="slide"
         transparent={true}
         visible={isCartModalVisible}
-        onRequestClose={() => {
-          setIsCartModalVisible(!isCartModalVisible);
-        }}
+        onRequestClose={() => setIsCartModalVisible(!isCartModalVisible)}
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
@@ -592,7 +582,7 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 5,
-    paddingBottom: 80, // Add padding to the bottom to avoid overlap with the cart button
+    paddingBottom: 80,
   },
   productContainer: {
     flex: 1,
@@ -612,7 +602,7 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 16,
     fontWeight: 'bold',
-    minHeight: 44, // Two lines
+    minHeight: 44,
   },
   productPrice: {
     fontSize: 14,
@@ -623,10 +613,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#388E3C',
     marginTop: 2,
-  },
-  actionsContainer: {
-    paddingHorizontal: 10,
-    paddingBottom: 10,
   },
   addButton: {
     backgroundColor: '#E8F5E9',
@@ -646,9 +632,7 @@ const styles = StyleSheet.create({
   quantitySelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
-    marginTop: 5,
-    paddingVertical: 4,
+    justifyContent: 'flex-end',
   },
   quantityText: {
     marginHorizontal: 15,
@@ -668,8 +652,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f5f5f5',
   },
+  variantInfo: {
+      flex: 1,
+  },
   variantNameText: {
     fontSize: 16,
+    fontWeight: '500',
   },
   variantSearchInput: {
     height: 40,
@@ -752,11 +740,6 @@ const styles = StyleSheet.create({
     marginTop: 50,
     fontSize: 18,
   },
-  media: {
-    width: width - 40,
-    height: 150,
-    resizeMode: 'contain',
-  },
   viewCartContainer: {
     position: 'absolute',
     bottom: 0,
@@ -797,6 +780,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 15,
   },
+  labelText: {
+    fontSize: 12,
+    color: '#888',
+  }
 });
 
 export default CatalogScreen;
