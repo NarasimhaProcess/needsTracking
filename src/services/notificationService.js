@@ -1,4 +1,3 @@
-
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
@@ -36,7 +35,6 @@ export async function registerForPushNotificationsAsync() {
       alert('Failed to get push token for push notification!');
       return;
     }
-    // Learn more about projectId: https://docs.expo.dev/push-notifications/push-notifications-setup/#configure-projectid
     const projectId = Constants.expoConfig?.extra?.eas?.projectId;
     if (!projectId) {
       alert('Project ID not found. Please make sure it is set in your app.config.js');
@@ -59,5 +57,26 @@ export async function schedulePushNotification(title, body, data) {
       data: data,
     },
     trigger: { seconds: 2 },
+  });
+}
+
+// New function to send a push notification
+export async function sendPushNotification(expoPushToken, title, body, data = {}) {
+  const message = {
+    to: expoPushToken,
+    sound: 'default',
+    title: title,
+    body: body,
+    data: data,
+  };
+
+  await fetch('https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Accept-encoding': 'gzip, deflate',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(message),
   });
 }

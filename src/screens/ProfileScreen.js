@@ -13,7 +13,7 @@ import {
   Image
 } from 'react-native';
 import { supabase, uploadQrImage, addQrCode, getActiveQrCode } from '../services/supabase';
-import { schedulePushNotification } from '../services/notificationService';
+import { schedulePushNotification, registerForPushNotificationsAsync } from '../services/notificationService';
 import * as Location from 'expo-location';
 import LeafletMap from '../components/LeafletMap'; // Assuming you have this component
 import QRCode from 'react-native-qrcode-svg';
@@ -40,6 +40,24 @@ const ProfileScreen = ({ navigation }) => {
   useEffect(() => {
     fetchProfile();
   }, []);
+  
+  useEffect(() => {
+    const handleNotifications = async () => {
+        if (profile) {
+            const token = await registerForPushNotificationsAsync();
+            if (token && token !== profile.push_token) {
+                const { error } = await supabase
+                    .from('profiles')
+                    .update({ push_token: token })
+                    .eq('id', profile.id);
+                if (error) {
+                    console.error('Error updating push token:', error.message);
+                }
+            }
+        }
+    };
+    handleNotifications();
+  }, [profile]);
 
   const fetchProfile = async () => {
     setLoading(true);

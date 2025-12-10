@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase } from '../services/supabase';
+import { schedulePushNotification } from '../services/notificationService';
 
 const CheckoutScreen = ({ navigation, route }) => {
   const { cart, customerId } = route.params; // Expect customerId for agent orders
@@ -89,6 +90,7 @@ const CheckoutScreen = ({ navigation, route }) => {
     }
 
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
+    const isDineInOrder = profile && profile.role === 'seller' && tableNo;
 
     const orderPayload = {
       user_id: orderUserId,
@@ -98,7 +100,7 @@ const CheckoutScreen = ({ navigation, route }) => {
       payment_method: paymentMethod,
     };
 
-    if (profile && profile.role === 'seller' && tableNo) {
+    if (isDineInOrder) {
       orderPayload.order_type = 'shop-order';
       orderPayload.table_no = tableNo;
     }
@@ -138,13 +140,23 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     setLoading(false);
 
-    if (paymentMethod === 'cod') {
-      Alert.alert('Order Placed', 'Your order has been placed successfully.');
-      navigation.navigate('Catalog', { userId: orderUserId });
-    } else {
-      Alert.alert('Order Confirmed', 'Your order has been placed. Proceed to payment.');
-      navigation.navigate('Catalog', { userId: orderUserId });
+    // --- Send Local Notification for Dine-in ---
+    if (isDineInOrder) {
+        try {
+            await schedulePushNotification(
+                `Order Placed for Table #${tableNo}`,
+                `Total: ₹${totalAmount.toFixed(2)}. The order is now in the system.`,
+                { orderId: order.id }
+            );
+        } catch(e) {
+            console.error("Failed to schedule local notification:", e);
+        }
     }
+    // --- End Notification ---
+
+    Alert.alert('Order Placed', 'Your order has been placed successfully.');
+    navigation.navigate('Catalog', { userId: orderUserId });
+
   };
 
   return (
