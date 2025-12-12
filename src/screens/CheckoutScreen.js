@@ -10,6 +10,7 @@ import {
   TouchableOpacity
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import { Picker } from '@react-native-picker/picker'; // Import Picker
 import { supabase } from '../services/supabase';
 import { schedulePushNotification } from '../services/notificationService';
 
@@ -23,7 +24,7 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [tableNo, setTableNo] = useState('');
+  const [tableNo, setTableNo] = useState('Main counter'); // Default to 'Main counter'
 
   const totalAmount = cart.cart_items.reduce(
     (total, item) => total + item.product_variant_combinations.price * item.quantity,
@@ -37,6 +38,9 @@ const CheckoutScreen = ({ navigation, route }) => {
     postalCode: '',
     country: '',
   });
+
+  // Table number options
+  const tableOptions = ['Main counter', ...Array.from({ length: 10 }, (_, i) => (i + 1).toString())];
 
   useEffect(() => {
     const fetchProfileData = async () => {
@@ -178,13 +182,17 @@ const CheckoutScreen = ({ navigation, route }) => {
         {profile && profile.role === 'seller' && (
           <>
             <Text style={styles.title}>Dine-in Details</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Table Number"
-              value={tableNo}
-              onChangeText={setTableNo}
-              keyboardType="numeric"
-            />
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={tableNo}
+                onValueChange={(itemValue) => setTableNo(itemValue)}
+                style={styles.picker}
+              >
+                {tableOptions.map((option) => (
+                  <Picker.Item key={option} label={option} value={option} />
+                ))}
+              </Picker>
+            </View>
           </>
         )}
 
@@ -240,6 +248,17 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 5,
     marginBottom: 15,
+  },
+  pickerContainer: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 5,
+    marginBottom: 15,
+  },
+  picker: {
+    height: 50,
+    width: '100%',
   },
   paymentMethodContainer: {
     flexDirection: 'row',
