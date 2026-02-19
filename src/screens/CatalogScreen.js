@@ -145,15 +145,47 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const handleUpdateCart = async (product, combinationId, change) => {
     if (updatingCart) return;
+    setUpdatingCart(true);
 
-    // Get the current quantity from the latest quantityMap
-    const currentQuantity = quantityMap[combinationId] || 0;
+    // --- Get fresh data ---
+    let freshCart;
+    let freshGuestCart;
+    let freshUser;
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        freshUser = user;
+        if (user) {
+            freshCart = await getCart(user.id);
+        } else {
+            freshGuestCart = await getGuestCart();
+        }
+    } catch(e) {
+        console.error("Error fetching fresh cart data:", e);
+        setUpdatingCart(false);
+        return;
+    }
+    
+    const items = freshUser ? freshCart?.cart_items : freshGuestCart;
+    const localQuantityMap = {};
+    if (items) {
+      items.forEach(item => {
+        localQuantityMap[item.product_variant_combination_id] = item.quantity;
+      });
+    }
+    // --- End get fresh data ---
+
+    const currentQuantity = localQuantityMap[combinationId] || 0;
     const newQuantity = currentQuantity + change;
-    if (newQuantity < 0) return;
+
+    if (newQuantity < 0) {
+        setUpdatingCart(false);
+        return;
+    }
 
     const combination = product.product_variant_combinations.find(c => c.id === combinationId);
     if (!combination) {
         Alert.alert("Error", "Product variant not found.");
+        setUpdatingCart(false);
         return;
     }
 
@@ -161,34 +193,32 @@ const CatalogScreen = ({ navigation, route }) => {
 
     if (change > 0 && currentQuantity >= stock) {
         Alert.alert("Out of Stock", "Sorry, this item is out of stock.");
+        setUpdatingCart(false);
         return;
     }
     
     if (newQuantity > stock) {
         Alert.alert("Stock Limit", `Sorry, you can only add up to ${stock} items.`);
+        setUpdatingCart(false);
         return;
     }
 
-    setUpdatingCart(true);
-
-    if (user) {
+    if (freshUser) {
         try {
-            const originalCartItem = (cart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
+            const originalCartItem = (freshCart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
             if (newQuantity > 0) {
                 if (originalCartItem) {
                     await updateCartItem(originalCartItem.id, newQuantity);
                 } else {
-                    await addToCart(user.id, combinationId, newQuantity);
+                    await addToCart(freshUser.id, combinationId, newQuantity);
                 }
             } else {
                 if (originalCartItem) {
                     await removeCartItem(originalCartItem.id);
                 }
             }
-            const finalCartData = await getCart(user.id);
+            const finalCartData = await getCart(freshUser.id);
             setCart(finalCartData);
-            // Force a re-render of the modal's contents
-            setSelectedProduct(prev => ({ ...prev, _force_update: Math.random() }));
         } catch (error) {
             console.error("Error updating cart:", error);
             Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
@@ -197,7 +227,7 @@ const CatalogScreen = ({ navigation, route }) => {
         }
     } else {
         // Guest user logic
-        const optimisticGuestCart = JSON.parse(JSON.stringify(guestCart || []));
+        const optimisticGuestCart = JSON.parse(JSON.stringify(freshGuestCart || []));
         const itemIndex = optimisticGuestCart.findIndex(item => item.product_variant_combination_id === combinationId);
 
         if (newQuantity > 0) {
@@ -216,13 +246,12 @@ const CatalogScreen = ({ navigation, route }) => {
             }
         }
         setGuestCart(optimisticGuestCart);
-        setSelectedProduct(prev => ({ ...prev, _force_update: Math.random() }));
         try {
             await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
             console.error("Error updating guest cart:", error);
             Alert.alert("Error", "There was a problem updating your cart.");
-            setGuestCart(guestCart);
+            setGuestCart(freshGuestCart); // set back to original fresh state on error
         } finally {
             setUpdatingCart(false);
         }
@@ -425,7 +454,7 @@ const CatalogScreen = ({ navigation, route }) => {
           onRequestClose={closeProductModal}
         >
           <View style={styles.modalContainer}>
-            <View style={styles.productModalContent} key={selectedProduct._force_update}>
+            <View style={styles.productModalContent}>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={closeProductModal}
@@ -445,7 +474,7 @@ const CatalogScreen = ({ navigation, route }) => {
 
               <Text style={styles.modalProductName}>{selectedProduct.product_name}</Text>
               
-              <ScrollView key={`${cartTotals.totalPrice}-${cartTotals.totalItems}`}>
+              <ScrollView>
                 {selectedProduct.product_variant_combinations.length > 1 ? (
                   <View style={styles.variantsContainer}>
                     <TextInput

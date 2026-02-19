@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList, Toucha
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
+import { printReceipt } from '../services/printerService';
 import { WebView } from 'react-native-webview';
 
 const OrderDetailScreen = ({ navigation, route }) => {
@@ -179,9 +180,14 @@ const OrderDetailScreen = ({ navigation, route }) => {
     <View style={{flex: 1, backgroundColor: 'white'}}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Order Details</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Icon name="close" size={24} color="#333" />
-        </TouchableOpacity>
+        <View style={styles.headerIcons}>
+          <TouchableOpacity style={{marginRight: 20}} onPress={() => printReceipt(order)}>
+            <Icon name="print" size={24} color="#333" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Icon name="close" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
       </View>
       <ScrollView style={styles.container}>
         {order.delivery_manager_id && (
@@ -268,6 +274,9 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  headerIcons: {
+    flexDirection: 'row',
   },
   container: {
     flex: 1,
@@ -365,5 +374,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
 });
+
 
 export default OrderDetailScreen;
