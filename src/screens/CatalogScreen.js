@@ -143,9 +143,11 @@ const CatalogScreen = ({ navigation, route }) => {
     setIsProductModalVisible(false);
   };
 
-  const handleUpdateCart = async (product, combinationId, currentQuantity, change) => {
+  const handleUpdateCart = async (product, combinationId, change) => {
     if (updatingCart) return;
 
+    // Get the current quantity from the latest quantityMap
+    const currentQuantity = quantityMap[combinationId] || 0;
     const newQuantity = currentQuantity + change;
     if (newQuantity < 0) return;
 
@@ -186,7 +188,7 @@ const CatalogScreen = ({ navigation, route }) => {
             const finalCartData = await getCart(user.id);
             setCart(finalCartData);
             // Force a re-render of the modal's contents
-            setSelectedProduct(prev => ({...prev}));
+            setSelectedProduct(prev => ({ ...prev, _force_update: Math.random() }));
         } catch (error) {
             console.error("Error updating cart:", error);
             Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
@@ -214,6 +216,7 @@ const CatalogScreen = ({ navigation, route }) => {
             }
         }
         setGuestCart(optimisticGuestCart);
+        setSelectedProduct(prev => ({ ...prev, _force_update: Math.random() }));
         try {
             await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
@@ -422,7 +425,7 @@ const CatalogScreen = ({ navigation, route }) => {
           onRequestClose={closeProductModal}
         >
           <View style={styles.modalContainer}>
-            <View style={styles.productModalContent}>
+            <View style={styles.productModalContent} key={selectedProduct._force_update}>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={closeProductModal}
@@ -442,7 +445,7 @@ const CatalogScreen = ({ navigation, route }) => {
 
               <Text style={styles.modalProductName}>{selectedProduct.product_name}</Text>
               
-              <ScrollView>
+              <ScrollView key={`${cartTotals.totalPrice}-${cartTotals.totalItems}`}>
                 {selectedProduct.product_variant_combinations.length > 1 ? (
                   <View style={styles.variantsContainer}>
                     <TextInput
@@ -471,11 +474,11 @@ const CatalogScreen = ({ navigation, route }) => {
                             </View>
                             <View style={styles.quantitySelector}>
                               <Text style={styles.labelText}>Qty:</Text>
-                              <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
+                              <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, -1)} disabled={updatingCart || quantity === 0}>
                                 <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
                               </TouchableOpacity>
                               <Text style={styles.quantityText}>{quantity}</Text>
-                              <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, 1)} disabled={updatingCart}>
+                              <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)} disabled={updatingCart}>
                                 <Icon name="plus-circle" size={32} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
                               </TouchableOpacity>
                             </View>
@@ -496,11 +499,11 @@ const CatalogScreen = ({ navigation, route }) => {
                               return (
                                   <>
                                       <Text style={styles.labelText}>Qty:</Text>
-                                      <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, -1)} disabled={updatingCart || quantity === 0}>
+                                      <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, -1)} disabled={updatingCart || quantity === 0}>
                                           <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
                                       </TouchableOpacity>
                                       <Text style={styles.quantityText}>{quantity}</Text>
-                                      <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, quantity, 1)} disabled={updatingCart}>
+                                      <TouchableOpacity onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)} disabled={updatingCart}>
                                           <Icon name="plus-circle" size={32} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
                                       </TouchableOpacity>
                                   </>

@@ -208,7 +208,10 @@ const ProductScreen = ({ route, navigation }) => {
 
       <ProductFormModal
         isVisible={showProductModal}
-        onClose={() => setShowProductModal(false)}
+        onClose={() => {
+    setShowProductModal(false);
+    setProductToEdit(null);
+  }}
         onSubmit={handleModalSubmit}
         productToEdit={productToEdit}
         customerMediaUrl={customerMediaUrl}

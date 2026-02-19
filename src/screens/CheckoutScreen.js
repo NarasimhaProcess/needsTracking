@@ -24,6 +24,7 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [orderType, setOrderType] = useState('Dine-in'); // New state for order type
   const [tableNo, setTableNo] = useState('Main counter'); // Default to 'Main counter'
 
   const totalAmount = cart.cart_items.reduce(
@@ -94,7 +95,7 @@ const CheckoutScreen = ({ navigation, route }) => {
     }
 
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
-    const isDineInOrder = profile && profile.role === 'seller' && tableNo;
+    const isShopOrder = profile && profile.role === 'seller';
 
     const orderPayload = {
       user_id: orderUserId,
@@ -104,9 +105,9 @@ const CheckoutScreen = ({ navigation, route }) => {
       payment_method: paymentMethod,
     };
 
-    if (isDineInOrder) {
+    if (isShopOrder) {
       orderPayload.order_type = 'shop-order';
-      orderPayload.table_no = tableNo;
+      orderPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
     }
 
     const { data: order, error: orderError } = await supabase
@@ -144,12 +145,17 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     setLoading(false);
 
-    // --- Send Local Notification for Dine-in ---
-    if (isDineInOrder) {
+    // --- Send Local Notification for Shop Orders ---
+    if (isShopOrder) {
         try {
+            const notificationTitle = orderType === 'Dine-in' 
+                ? `Order Placed for Table #${tableNo}` 
+                : 'Parcel Order Placed';
+            const notificationBody = `Total: ₹${totalAmount.toFixed(2)}. The order is now in the system.`;
+            
             await schedulePushNotification(
-                `Order Placed for Table #${tableNo}`,
-                `Total: ₹${totalAmount.toFixed(2)}. The order is now in the system.`,
+                notificationTitle,
+                notificationBody,
                 { orderId: order.id }
             );
         } catch(e) {
@@ -181,18 +187,34 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         {profile && profile.role === 'seller' && (
           <>
-            <Text style={styles.title}>Dine-in Details</Text>
+            <Text style={styles.title}>Order Type</Text>
             <View style={styles.pickerContainer}>
               <Picker
-                selectedValue={tableNo}
-                onValueChange={(itemValue) => setTableNo(itemValue)}
+                selectedValue={orderType}
+                onValueChange={(itemValue) => setOrderType(itemValue)}
                 style={styles.picker}
               >
-                {tableOptions.map((option) => (
-                  <Picker.Item key={option} label={option} value={option} />
-                ))}
+                <Picker.Item label="Dine-in" value="Dine-in" />
+                <Picker.Item label="Parcel" value="Parcel" />
               </Picker>
             </View>
+
+            {orderType === 'Dine-in' && (
+              <>
+                <Text style={styles.title}>Dine-in Details</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={tableNo}
+                    onValueChange={(itemValue) => setTableNo(itemValue)}
+                    style={styles.picker}
+                  >
+                    {tableOptions.map((option) => (
+                      <Picker.Item key={option} label={option} value={option} />
+                    ))}
+                  </Picker>
+                </View>
+              </>
+            )}
           </>
         )}
 

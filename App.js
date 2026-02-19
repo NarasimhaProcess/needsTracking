@@ -125,9 +125,13 @@ export default function App() {
       if (expoPushToken && session?.user?.id) {
         console.log(`Saving push token for user ${session.user.id}:`, expoPushToken);
         const { error } = await supabase
-          .from('profiles')
-          .update({ push_token: expoPushToken })
-          .eq('id', session.user.id);
+          .from('push_tokens')
+          .upsert({ 
+            user_id: session.user.id,
+            token: expoPushToken 
+          }, { 
+            onConflict: 'token' 
+          });
 
         if (error) {
           console.error('Error saving push token:', error.message);

@@ -58,6 +58,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
       if (success) {
         setOrder({ ...order, status: selectedStatus });
         Alert.alert('Success', 'Order status updated successfully.');
+        navigation.goBack(); // Go back to the previous screen
       } else {
         Alert.alert('Error', 'Failed to update order status.');
       }

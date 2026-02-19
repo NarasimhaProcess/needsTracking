@@ -106,7 +106,7 @@ export const CartProvider = ({ children }) => {
     );
   };
 
-  const cartItemCount = cart?.cart_items?.length || 0;
+  const cartItemCount = cart?.cart_items?.reduce((total, item) => total + item.quantity, 0) || 0;
 
   return (
     <CartContext.Provider value={{ cart, loading, user, role, cartItemCount, updateItemQuantity, removeItem, setCart }}>
