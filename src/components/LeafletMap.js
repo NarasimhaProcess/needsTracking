@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState, useCallback } from 'react';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from './UniversalWebView';
 import { StyleSheet, View } from 'react-native';
 
 const SimpleLeafletMap = forwardRef(({ 
@@ -391,7 +391,7 @@ const SimpleLeafletMap = forwardRef(({
 
   return (
     <View style={styles.container}>
-      <WebView
+      <UniversalWebView
         ref={webViewRef}
         source={{ html: createMapHtml(initialMapData) }}
         style={styles.webview}

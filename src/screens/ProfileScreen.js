@@ -154,22 +154,46 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   const openLocationPicker = async () => {
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Permission to access location was denied.');
-      return;
-    }
+    try {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Permission to access location was denied. Using default location.');
+        setMapInitialRegion({ latitude: 28.6139, longitude: 77.2090 });
+        setMarkerLocation({ latitude: 28.6139, longitude: 77.2090 });
+        setShowLocationPicker(true);
+        return;
+      }
 
-    let currentLocation = await Location.getCurrentPositionAsync({});
-    setMapInitialRegion({
-      latitude: latitude || currentLocation.coords.latitude,
-      longitude: longitude || currentLocation.coords.longitude,
-    });
-    setMarkerLocation({
-      latitude: latitude || currentLocation.coords.latitude,
-      longitude: longitude || currentLocation.coords.longitude,
-    });
-    setShowLocationPicker(true);
+      try {
+        let currentLocation = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+          timeout: 5000
+        });
+        setMapInitialRegion({
+          latitude: latitude || currentLocation.coords.latitude,
+          longitude: longitude || currentLocation.coords.longitude,
+        });
+        setMarkerLocation({
+          latitude: latitude || currentLocation.coords.latitude,
+          longitude: longitude || currentLocation.coords.longitude,
+        });
+      } catch (err) {
+        console.warn('Location query failed in ProfileScreen:', err.message);
+        // Fallback to default or existing
+        setMapInitialRegion({
+          latitude: latitude || 28.6139,
+          longitude: longitude || 77.2090,
+        });
+        setMarkerLocation({
+          latitude: latitude || 28.6139,
+          longitude: longitude || 77.2090,
+        });
+      }
+      setShowLocationPicker(true);
+    } catch (error) {
+      console.error('Error in openLocationPicker:', error);
+      Alert.alert('Error', 'An unexpected error occurred while opening the location picker.');
+    }
   };
 
   const confirmLocationSelection = () => {

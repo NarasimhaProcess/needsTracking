@@ -15,7 +15,7 @@ import {
   ScrollView,
   Button,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from '../components/UniversalWebView';
 import { supabase, getCustomerDocuments } from '../services/supabase'; // Import getCustomerDocuments
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Location from 'expo-location';
@@ -190,11 +190,23 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
       try {
         setLoading(true);
         let { status } = await Location.requestForegroundPermissionsAsync();
+        
         if (status !== 'granted') {
-          Alert.alert('Permission denied', 'Location permission is required to show your position on the map.');
+          console.warn('Location permission denied');
+          // Default location if permission denied
+          setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
         } else {
-          let location = await Location.getCurrentPositionAsync({});
-          setUserLocation(location.coords);
+          try {
+            let location = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+              timeout: 5000,
+            });
+            setUserLocation(location.coords);
+          } catch (locationError) {
+            console.warn('Location query failed:', locationError.message);
+            // Fallback to default
+            setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
+          }
         }
         // Fetch only the specific customer's location
         await fetchCustomerLocation(customerId);
@@ -306,7 +318,7 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
 
   return (
     <View style={styles.container}>
-        <WebView
+        <UniversalWebView
             ref={webViewRef}
             originWhitelist={['*']}
             source={{ html: htmlContent }}

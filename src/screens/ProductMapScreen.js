@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from '../components/UniversalWebView';
 import { supabase } from '../services/supabase';
 
 export default function ProductMapScreen({ route }) {
@@ -107,7 +107,7 @@ export default function ProductMapScreen({ route }) {
 
   return (
     <View style={styles.container}>
-        <WebView
+        <UniversalWebView
             ref={webViewRef}
             originWhitelist={['*']}
             source={{ html: htmlContent }}

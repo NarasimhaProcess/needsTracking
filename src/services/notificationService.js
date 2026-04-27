@@ -43,7 +43,11 @@ export async function registerForPushNotificationsAsync() {
     token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     console.log(token);
   } else {
-    alert('Must use physical device for Push Notifications');
+    if (Platform.OS !== 'web') {
+      alert('Must use physical device for Push Notifications');
+    } else {
+      console.log('Push notifications are not fully supported on web without additional configuration.');
+    }
   }
 
   return token;

@@ -15,7 +15,7 @@ import {
   ScrollView,
   Button,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from '../components/UniversalWebView';
 import { supabase, getCustomerDocuments } from '../services/supabase'; // Import getCustomerDocuments
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Location from 'expo-location';
@@ -196,14 +196,47 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
       try {
         setLoading(true);
         let { status } = await Location.requestForegroundPermissionsAsync();
+        
         if (status !== 'granted') {
-          Alert.alert('Permission denied', 'Location permission is required to show your position on the map.');
+          Alert.alert('Permission denied', 'Location permission is required to show your position on the map. Using default location.');
+          // Default location (e.g., Delhi, India) if permission denied
+          setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
         } else {
-          let location = await Location.getCurrentPositionAsync({});
-          setUserLocation(location.coords);
+          try {
+            // Attempt to get high accuracy location
+            let location = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+              timeout: 5000,
+            });
+            setUserLocation(location.coords);
+          } catch (locationError) {
+            console.warn('Location query failed:', locationError.message);
+            
+            // Web-specific handling for "Failed to query location from network service"
+            if (Platform.OS === 'web') {
+              console.log('Falling back to IP-based or default location due to web network service failure.');
+            }
+            
+            // Try a less accurate but faster method
+            try {
+              let lastKnown = await Location.getLastKnownPositionAsync({});
+              if (lastKnown) {
+                setUserLocation(lastKnown.coords);
+              } else {
+                throw new Error('No last known location');
+              }
+            } catch (fallbackError) {
+              // Final fallback to a default location if everything fails
+              setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
+              if (Platform.OS === 'web' && !window.isSecureContext) {
+                Alert.alert('Insecure Context', 'Browser location requires HTTPS. Using default location.');
+              }
+            }
+          }
         }
         await Promise.all([fetchCustomerLocations(selectedArea), fetchAllAreas()]);
       } catch (err) {
+        console.error('Data fetching error:', err);
         setError(err.message);
       } finally {
         setLoading(false);
@@ -371,20 +404,28 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
 
+            function postMessage(data) {
+                if (window.ReactNativeWebView) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify(data));
+                } else {
+                    window.parent.postMessage(data, '*');
+                }
+            }
+
             function viewProducts(customerId) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'viewProducts', customerId: customerId }));
+                postMessage({ type: 'viewProducts', customerId: customerId });
             }
 
             function viewTopProducts(customerId) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'viewTopProducts', customerId: customerId }));
+                postMessage({ type: 'viewTopProducts', customerId: customerId });
             }
 
             function getDirections(latitude, longitude) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'getDirections', latitude: latitude, longitude: longitude }));
+                postMessage({ type: 'getDirections', latitude: latitude, longitude: longitude });
             }
 
             function viewCustomerImages(customerId) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'viewCustomerImages', customerId: customerId }));
+                postMessage({ type: 'viewCustomerImages', customerId: customerId });
             }
 
             var customerLocations = ${JSON.stringify(customerLocations.map(loc => ({
@@ -478,7 +519,7 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
     <View style={styles.container}>
         <AreaSearchBar onAreaSelected={onAreaSelected} onClear={() => setSelectedArea(null)} />
         {selectedArea && <CustomerSearchBar onCustomerSelected={onCustomerSelected} areaId={selectedArea} />}
-        <WebView
+        <UniversalWebView
             ref={webViewRef}
             originWhitelist={['*']}
             source={{ html: htmlContent }}

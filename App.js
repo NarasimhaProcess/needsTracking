@@ -10,6 +10,25 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { registerRootComponent } from 'expo';
+import { Platform } from 'react-native';
+
+// Web specific font loading for react-native-vector-icons
+if (Platform.OS === 'web') {
+  const iconFontStyles = `
+    @font-face {
+      src: url(${require('react-native-vector-icons/Fonts/FontAwesome.ttf')});
+      font-family: FontAwesome;
+    }
+  `;
+  const style = document.createElement('style');
+  style.type = 'text/css';
+  if (style.styleSheet) {
+    style.styleSheet.cssText = iconFontStyles;
+  } else {
+    style.appendChild(document.createTextNode(iconFontStyles));
+  }
+  document.head.appendChild(style);
+}
 
 // React Navigation imports
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';

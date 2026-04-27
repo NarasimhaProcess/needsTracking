@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from '../components/UniversalWebView';
 import { supabase, getDeliveryManagerLocations } from '../services/supabase';
 import * as Location from 'expo-location';
 
@@ -16,11 +16,23 @@ export default function AdminMapScreen({ navigation }) {
       try {
         setLoading(true);
         let { status } = await Location.requestForegroundPermissionsAsync();
+        
         if (status !== 'granted') {
-          setError('Permission to access location was denied');
+          console.warn('Location permission denied');
+          // Default location if permission denied
+          setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
         } else {
-          let location = await Location.getCurrentPositionAsync({});
-          setUserLocation(location.coords);
+          try {
+            let location = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+              timeout: 5000,
+            });
+            setUserLocation(location.coords);
+          } catch (locationError) {
+            console.warn('Location query failed:', locationError.message);
+            // Fallback to default
+            setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
+          }
         }
 
         const managerLocations = await getDeliveryManagerLocations();
@@ -109,7 +121,7 @@ export default function AdminMapScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <WebView
+      <UniversalWebView
         ref={webViewRef}
         originWhitelist={['*']}
         source={{ html: htmlContent }}
