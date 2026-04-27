@@ -9,7 +9,7 @@
     "ios": "npx expo start --ios",
     "web": "npx expo start --web",
     "eject": "expo eject",
-    "predeploy": "npx expo export -p web && mv dist/_expo dist/expo-static && sed -i 's/_expo/expo-static/g' dist/index.html && touch dist/.nojekyll",
+    "predeploy": "npx expo export -p web && mv dist/_expo dist/expo-static && sed -i 's/_expo/expo-static/g' dist/index.html && find dist -type d -name 'node_modules' -exec sh -c 'mv \"$1\" \"${1%node_modules}external_assets\"' _ {} \\; && find dist -type f -name '*.js' -exec sed -i 's/node_modules/external_assets/g' {} + && touch dist/.nojekyll",
     "deploy": "gh-pages -t -d dist"
   },
   "dependencies": {
