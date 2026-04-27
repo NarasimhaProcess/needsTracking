@@ -59,7 +59,7 @@ export default {
       "favicon": "./assets/icon.png"
     },
     "experiments": {
-      "baseUrl": "/needsTracking"
+      "baseUrl": "/needsTracking/"
     },
     "plugins": [
       [
