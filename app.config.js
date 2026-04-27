@@ -58,6 +58,9 @@ export default {
       "bundler": "metro",
       "favicon": "./assets/icon.png"
     },
+    "experiments": {
+      "baseUrl": "/needsTracking"
+    },
     "plugins": [
       [
         "expo-location",
