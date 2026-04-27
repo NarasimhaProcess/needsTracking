@@ -386,7 +386,7 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
         <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
         <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
         <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" integrity="sha512-Fo3rlrZj/k7ujTnHg4CGR2D7kSs0V4LLanw2qksYuRlEzO+tcaEPQogQ0KaoGN26/zrn20ImR1DfuLWnOo7aBA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
         <style>
             body { margin: 0; padding: 0; }
             #mapid { width: 100vw; height: 100vh; background-color: #f0f0f0; }
@@ -464,7 +464,8 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
             });
 
             if (customerLocations.length > 0) {
-                var waypoints = customerLocations.map(function(loc) {
+                // Limit routing to first 10 locations to prevent URL length errors
+                var waypoints = customerLocations.slice(0, 10).map(function(loc) {
                     return L.latLng(loc.latitude, loc.longitude);
                 });
 

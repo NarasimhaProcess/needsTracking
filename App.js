@@ -16,17 +16,13 @@ import { Platform } from 'react-native';
 if (Platform.OS === 'web') {
   const iconFontStyles = `
     @font-face {
-      src: url(${require('react-native-vector-icons/Fonts/FontAwesome.ttf')});
+      src: url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff2');
       font-family: FontAwesome;
     }
   `;
   const style = document.createElement('style');
   style.type = 'text/css';
-  if (style.styleSheet) {
-    style.styleSheet.cssText = iconFontStyles;
-  } else {
-    style.appendChild(document.createTextNode(iconFontStyles));
-  }
+  style.appendChild(document.createTextNode(iconFontStyles));
   document.head.appendChild(style);
 }
 
@@ -113,6 +109,8 @@ export default function App() {
   const responseListener = useRef();
 
   useEffect(() => {
+    if (Platform.OS === 'web') return; // Push notifications handled differently on web
+
     registerForPushNotificationsAsync().then(token => setExpoPushToken(token));
 
     notificationListener.current = Notifications.addNotificationReceivedListener(notification => {

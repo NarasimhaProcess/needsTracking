@@ -29,8 +29,9 @@ const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props 
     }, [onMessage]);
 
     return (
-      <View style={[styles.container, style]}>
+      <View key="web-view-container" style={[styles.container, style]}>
         <iframe
+          id="universal-webview-iframe"
           ref={ref}
           srcDoc={htmlContent}
           style={{ width: '100%', height: '100%', border: 'none' }}
