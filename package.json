@@ -10,7 +10,7 @@
     "web": "npx expo start --web",
     "eject": "expo eject",
     "predeploy": "npx expo export -p web && touch dist/.nojekyll",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -t -d dist"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.4",
