@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import UniversalWebView from '../components/UniversalWebView';
 import { supabase, getCustomerDocuments } from '../services/supabase'; // Import getCustomerDocuments
-import Icon from 'react-native-vector-icons/FontAwesome';
+import { FontAwesome as Icon } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
 import { useCart } from '../context/CartContext';

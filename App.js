@@ -12,20 +12,6 @@ import { StatusBar } from 'expo-status-bar';
 import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
 
-// Web specific font loading for react-native-vector-icons
-if (Platform.OS === 'web') {
-  const iconFontStyles = `
-    @font-face {
-      src: url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff2');
-      font-family: FontAwesome;
-    }
-  `;
-  const style = document.createElement('style');
-  style.type = 'text/css';
-  style.appendChild(document.createTextNode(iconFontStyles));
-  document.head.appendChild(style);
-}
-
 // React Navigation imports
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
