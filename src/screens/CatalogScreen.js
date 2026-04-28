@@ -44,7 +44,10 @@ const CatalogScreen = ({ navigation, route }) => {
     const items = user ? cart?.cart_items : guestCart;
     if (items) {
       items.forEach(item => {
-        map[item.product_variant_combination_id] = item.quantity;
+        const combinationId = user ? item.product_variant_combinations?.id : item.product_variant_combination_id;
+        if (combinationId) {
+          map[combinationId] = item.quantity;
+        }
       });
     }
     return map;
@@ -169,7 +172,10 @@ const CatalogScreen = ({ navigation, route }) => {
     const localQuantityMap = {};
     if (items) {
       items.forEach(item => {
-        localQuantityMap[item.product_variant_combination_id] = item.quantity;
+        const comboId = freshUser ? item.product_variant_combinations?.id : item.product_variant_combination_id;
+        if (comboId) {
+          localQuantityMap[comboId] = item.quantity;
+        }
       });
     }
     // --- End get fresh data ---
@@ -205,7 +211,9 @@ const CatalogScreen = ({ navigation, route }) => {
 
     if (freshUser) {
         try {
-            const originalCartItem = (freshCart?.cart_items || []).find(item => item.product_variant_combination_id === combinationId);
+            const originalCartItem = (freshCart?.cart_items || []).find(item => 
+              (item.product_variant_combinations?.id === combinationId)
+            );
             if (newQuantity > 0) {
                 if (originalCartItem) {
                     await updateCartItem(originalCartItem.id, newQuantity);
