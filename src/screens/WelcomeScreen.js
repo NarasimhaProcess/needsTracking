@@ -536,28 +536,22 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
               <Text style={styles.iconText}>Logout</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity onPress={() => setIsLoginMenuVisible(!isLoginMenuVisible)} style={styles.iconWrapper}>
-              <Icon name="ellipsis-v" size={30} color="#007AFF" />
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity onPress={() => navigation.navigate('BuyerAuth')} style={styles.iconWrapper}>
+                <Icon name="sign-in" size={30} color="#007AFF" />
+                <Text style={styles.iconText}>Buyer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.iconWrapper}>
+                <Icon name="user" size={30} color="#007AFF" />
+                <Text style={styles.iconText}>Seller</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('DeliveryManagerLogin')} style={styles.iconWrapper}>
+                <Icon name="truck" size={30} color="#007AFF" />
+                <Text style={styles.iconText}>Delivery</Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
-
-        {isLoginMenuVisible && (
-          <View style={styles.loginMenu}>
-            <TouchableOpacity onPress={() => { navigation.navigate('BuyerAuth'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
-              <Icon name="sign-in" size={24} color="#007AFF" />
-              <Text style={styles.loginMenuItemText}>Buyer Login</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { navigation.navigate('Login'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
-              <Icon name="user" size={24} color="#007AFF" />
-              <Text style={styles.loginMenuItemText}>Seller Login</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { navigation.navigate('DeliveryManagerLogin'); setIsLoginMenuVisible(false); }} style={styles.loginMenuItem}>
-              <Icon name="truck" size={24} color="#007AFF" />
-              <Text style={styles.loginMenuItemText}>Delivery Login</Text>
-            </TouchableOpacity>
-          </View>
-        )}
 
         {/* Customer Images Modal */}
         <Modal
