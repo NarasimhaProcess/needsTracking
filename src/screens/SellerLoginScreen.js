@@ -11,6 +11,8 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../services/supabase';
+import Icon from 'react-native-vector-icons/Ionicons';
+import Constants from 'expo-constants';
 
 
 export default function SellerLoginScreen({ navigation, route }) {
@@ -108,6 +110,12 @@ export default function SellerLoginScreen({ navigation, route }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      <TouchableOpacity 
+        style={styles.closeButton} 
+        onPress={() => navigation.goBack()}
+      >
+        <Icon name="close" size={28} color="#000" />
+      </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
           <Text style={styles.icon}>📦</Text>
@@ -161,7 +169,7 @@ export default function SellerLoginScreen({ navigation, route }) {
         </View>
       </ScrollView>
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2025 localwala's. Version 1.0</Text>
+        <Text style={styles.footerText}>© 2025 {Constants.expoConfig.extra.ORG_NAME}. Version 1.0</Text>
       </View>
     </KeyboardAvoidingView>
   );
@@ -171,6 +179,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 40,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
   },
   scrollContainer: {
     flexGrow: 1,

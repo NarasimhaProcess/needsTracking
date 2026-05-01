@@ -50,7 +50,7 @@ export default {
       "package": "com.narasimhaexpo.needstrackingmobile",
       "config": {
         "googleMaps": {
-          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+          "apiKey": process.env.GOOGLE_MAPS_API_KEY || "YOUR_GOOGLE_MAPS_API_KEY"
         }
       }
     },
@@ -92,8 +92,9 @@ export default {
     "sdkVersion": "53.0.0",
     
     "extra": {
-        SUPABASE_URL: "https://wtcxhhbigmqrmqdyhzcz.supabase.co",
-      SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0Y3hoaGJpZ21xcm1xZHloemN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjE3ODgsImV4cCI6MjA2NzczNzc4OH0.AIViaiRT2odHJM2wQXl3dDZ69YxEj7t_7UiRFqEgZjY",
+        ORG_NAME: process.env.ORG_NAME || "localwala's",
+        SUPABASE_URL: process.env.SUPABASE_URL || "https://qdljcbvesouchefzxsag.supabase.co",
+        SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkbGpjYnZlc291Y2hlZnp4c2FnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxMzgyOTYsImV4cCI6MjA5MjcxNDI5Nn0.w2OkjwkXJVa69l-Zt56o69wWiyyArGIavVIMhbOn5K8",
       "eas": {
         "projectId": "f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"
       }

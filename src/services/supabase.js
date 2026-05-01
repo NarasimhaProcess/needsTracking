@@ -75,7 +75,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
       const filePath = `product_media/${productId}/${fileName}`;
       const contentType = mediaType === 'video' ? `video/${fileExtension}` : `image/${fileExtension}`;
 
-      const edgeFunctionUrl = 'https://wtcxhhbigmqrmqdyhzcz.supabase.co/functions/v1/upload-image';
+      const edgeFunctionUrl = `${supabaseUrl}/functions/v1/upload-image`;
 
       // Step 1: Request Signed URL from Edge Function
       console.log("Requesting signed URL from Edge Function...");

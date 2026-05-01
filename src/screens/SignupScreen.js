@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../services/supabase';
+import Constants from 'expo-constants';
 
 export default function SignupScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
@@ -114,7 +115,7 @@ export default function SignupScreen({ navigation, route }) {
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
           <Text style={styles.icon}>📍</Text>
-          <Text style={styles.title}>NeedsTracking</Text>
+          <Text style={styles.title}>{Constants.expoConfig.extra.ORG_NAME}</Text>
           <Text style={styles.subtitle}>Create your tracking account</Text>
         </View>
 

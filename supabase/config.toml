@@ -1,0 +1,16 @@
+project_id = "qdljcbvesouchefzxsag"
+
+[api]
+port = 54321
+external_url = "http://localhost:54321"
+
+[db]
+port = 54322
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["user-tracking-mobile://"]

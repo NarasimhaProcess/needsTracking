@@ -46,7 +46,7 @@ npm start
 
 ### Supabase Integration
 The app uses the same Supabase project as your web application:
-- **URL**: https://wtcxhhbigmqrmqdyhzcz.supabase.co
+- **URL**: https://qdljcbvesouchefzxsag.supabase.co
 - **Tables**: users, location_history
 - **Authentication**: Supabase Auth
 

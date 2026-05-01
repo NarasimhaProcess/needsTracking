@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../services/supabase';
+import Icon from 'react-native-vector-icons/Ionicons';
 
 export default function DeliveryManagerSignupScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -83,6 +84,12 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      <TouchableOpacity 
+        style={styles.closeButton} 
+        onPress={() => navigation.goBack()}
+      >
+        <Icon name="close" size={28} color="#000" />
+      </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
           <Text style={styles.icon}>🚚</Text>
@@ -165,6 +172,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 40,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
   },
   scrollContainer: {
     flexGrow: 1,

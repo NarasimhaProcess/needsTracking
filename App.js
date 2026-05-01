@@ -29,6 +29,7 @@ import TopProductsScreen from './src/screens/TopProductsScreen';
 import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import OrderEditScreen from './src/screens/OrderEditScreen';
 import LoginScreen from './src/screens/LoginScreen';
+import SignupScreen from './src/screens/SignupScreen';
 import SellerLoginScreen from './src/screens/SellerLoginScreen';
 import ProductMapScreen from './src/screens/ProductMapScreen';
 import DeliveryManagerLoginScreen from './src/screens/DeliveryManagerLoginScreen';
