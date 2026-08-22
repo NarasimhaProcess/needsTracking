@@ -1,1 +1,48 @@
 
+name: Build Android APK - Gradle
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+      - run: |
+          cat > .env << EOF
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
+          ORG_NAME=${{ secrets.ORG_NAME }}
+          EOF
+      - run: mkdir -p android && cat > android/local.properties << EOF
+          sdk.dir=$ANDROID_SDK_ROOT
+          ndk.dir=$ANDROID_NDK_ROOT
+          org.gradle.jvmargs=-Xmx4096m
+          org.gradle.parallel=true
+          EOF
+      - run: npx expo export --platform android
+      - uses: android-actions/setup-android@v2
+        with:
+          api-level: 33
+      - run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew clean assembleDebug
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk needsTracking-development-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: needsTracking-development-apk
+          path: needsTracking-development-debug.apk
+          retention-days: 30
