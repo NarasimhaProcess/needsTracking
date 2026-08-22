@@ -36,6 +36,10 @@ jobs:
           echo "GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
           echo "ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
 
+      - name: Generate Android project
+        run: |
+          npx expo prebuild --platform android --non-interactive
+
       - name: Create Android local.properties
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
