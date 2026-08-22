@@ -7,7 +7,7 @@ import { printReceipt } from '../services/printerService';
 import { WebView } from 'react-native-webview';
 
 const OrderDetailScreen = ({ navigation, route }) => {
-  const { orderId } = route.params;
+  const { orderId } = route?.params || {};
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState(null);

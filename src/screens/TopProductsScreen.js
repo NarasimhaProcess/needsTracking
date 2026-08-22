@@ -21,7 +21,7 @@ import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCa
 import { useCart } from '../context/CartContext';
 
 const TopProductsScreen = ({ navigation, route }) => {
-  const { customerId: routeCustomerId } = route.params;
+  const { customerId: routeCustomerId } = route?.params || {};
   const [customerId, setCustomerId] = useState(routeCustomerId);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,32 +77,39 @@ const TopProductsScreen = ({ navigation, route }) => {
 
   const getVariantCombination = () => {
     if (!selectedProduct) return null;
+    const combos = selectedProduct.product_variant_combinations || [];
+    if (combos.length === 0) {
+      return { id: selectedProduct.id, combination_string: 'Default', price: selectedProduct.amount || 0, quantity: 100 };
+    }
+    if (combos.length === 1) {
+      return combos[0];
+    }
     const combinationString = Object.entries(selectedVariants)
       .map(([key, value]) => `${key}:${value}`)
       .join(',');
-    return selectedProduct.product_variant_combinations.find(
+    const found = combos.find(
       (c) => c.combination_string === combinationString
     );
+    return found || combos[0];
   };
 
   const handleAddToCart = async () => {
     const combination = getVariantCombination();
     if (!combination) {
-      Alert.alert('Please select all variant options.');
+      Alert.alert('Error', 'Product information is incomplete.');
       return;
     }
 
-    console.log('handleAddToCart: Before getUser, user state:', user); // Log existing user state
-    // Re-check user session directly from Supabase to ensure up-to-date status
+    console.log('handleAddToCart: Before getUser, user state:', user);
     const { data: { user: currentUser } } = await supabase.auth.getUser();
-    console.log('handleAddToCart: After getUser, currentUser:', currentUser); // Log fetched user
+    console.log('handleAddToCart: After getUser, currentUser:', currentUser);
 
     if (!currentUser) {
       // Redirect to BuyerAuthScreen for mobile number authentication
-      navigation.navigate('BuyerAuthScreen', {
-        redirectScreen: 'TopProductsScreen',
+      navigation.navigate('BuyerAuth', {
+        redirectScreen: 'TopProducts',
         productId: selectedProduct.id,
-        customerId: customerId, // Pass the customerId from TopProductsScreen's props
+        customerId: customerId,
       });
       return;
     }
@@ -112,6 +119,7 @@ const TopProductsScreen = ({ navigation, route }) => {
       const cartData = await getCart(currentUser.id);
       setCart(cartData);
       setIsProductDetailModalVisible(false);
+      Alert.alert('Success', 'Item added to cart!');
       if (role === 'buyer') {
         navigation.goBack();
       } else {
@@ -135,25 +143,36 @@ const TopProductsScreen = ({ navigation, route }) => {
     setQuantity(1); // Reset quantity to 1
     setIsProductDetailModalVisible(true);
 
-    // Automatically select the first variant if only one exists
-    if (product.product_variants.length === 1 && product.product_variants[0].variant_options.length === 1) {
-      const variantName = product.product_variants[0].name;
-      const optionValue = product.product_variants[0].variant_options[0].value;
-      setSelectedVariants({ [variantName]: optionValue });
+    const variants = product.product_variants || [];
+    if (variants.length > 0) {
+      const defaultVars = {};
+      variants.forEach((v) => {
+        if (v.variant_options && v.variant_options.length > 0) {
+          defaultVars[v.name] = v.variant_options[0].value;
+        }
+      });
+      setSelectedVariants(defaultVars);
     } else {
-      setSelectedVariants({}); // Reset selected variants if multiple or none
+      setSelectedVariants({});
     }
   };
 
   const renderProduct = ({ item }) => (
     <View style={styles.productContainer}>
-      <TouchableOpacity onPress={() => openProductDetailModal(item)}>
+      <TouchableOpacity onPress={() => openProductDetailModal(item)} activeOpacity={0.8}>
         <Image
           style={styles.productImage}
-          source={{ uri: item.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
+          source={{ uri: item.product_media?.[0]?.media_url || 'https://placehold.co/600x400' }}
         />
-        <Text style={styles.productName}>{item.product_name}</Text>
+        <Text style={styles.productName} numberOfLines={2}>{item.product_name}</Text>
         <Text style={styles.productPrice}>₹{item.amount}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity 
+        style={styles.cardAddButton} 
+        onPress={() => openProductDetailModal(item)}
+      >
+        <Icon name="plus" size={12} color="#2E7D32" style={{ marginRight: 6 }} />
+        <Text style={styles.cardAddButtonText}>ADD</Text>
       </TouchableOpacity>
     </View>
   );
@@ -295,19 +314,28 @@ const TopProductsScreen = ({ navigation, route }) => {
                   ))}
 
                   {/* Quantity selector for adding to cart */}
-                  {getVariantCombination() && (
-                    <View style={styles.quantitySelector}>
-                      <TouchableOpacity onPress={() => setQuantity(Math.max(1, quantity - 1))}>
-                        <Icon name="minus-circle" size={24} color="#555" />
-                      </TouchableOpacity>
-                      <Text style={styles.quantityText}>{quantity}</Text>
-                      <TouchableOpacity onPress={() => setQuantity(quantity + 1)}>
-                        <Icon name="plus-circle" size={24} color="#555" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                  <View style={styles.quantitySelector}>
+                    <Text style={styles.quantityLabel}>Quantity:</Text>
+                    <TouchableOpacity 
+                      onPress={() => setQuantity(Math.max(1, quantity - 1))}
+                      disabled={quantity <= 1}
+                      style={{ padding: 4 }}
+                    >
+                      <Icon name="minus-circle" size={30} color={quantity <= 1 ? '#ccc' : '#E53935'} />
+                    </TouchableOpacity>
+                    <Text style={styles.quantityText}>{quantity}</Text>
+                    <TouchableOpacity 
+                      onPress={() => setQuantity(quantity + 1)}
+                      style={{ padding: 4 }}
+                    >
+                      <Icon name="plus-circle" size={30} color="#43A047" />
+                    </TouchableOpacity>
+                  </View>
                   
-                  <Button title="Add to Cart" onPress={handleAddToCart} />
+                  <TouchableOpacity style={styles.modalAddToCartButton} onPress={handleAddToCart}>
+                    <Icon name="shopping-cart" size={18} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.modalAddToCartButtonText}>Add to Cart</Text>
+                  </TouchableOpacity>
                 </View>
               </ScrollView>
             </View>
@@ -510,6 +538,45 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  cardAddButton: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 8,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 5,
+    marginHorizontal: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+  },
+  cardAddButtonText: {
+    color: '#2E7D32',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  quantityLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginRight: 15,
+    color: '#333',
+  },
+  modalAddToCartButton: {
+    backgroundColor: '#43A047',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: 10,
+    marginTop: 15,
+    elevation: 2,
+  },
+  modalAddToCartButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   zoomIcon: {
     position: 'absolute',

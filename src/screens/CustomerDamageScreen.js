@@ -9,18 +9,57 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Video } from 'expo-av';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from '../components/UniversalWebView';
 import * as Clipboard from 'expo-clipboard'; // Added for clipboard functionality
 
 const { width, height } = Dimensions.get('window');
 
-const mapHtml = require('../../assets/map.html');
-
 const MAX_VIDEO_SIZE_MB = 50; // 50 MB
 
-const CustomerDamageScreen = ({ navigation, route }) => {
-  const { customerId } = route.params;
+const generateMapHtml = (coords) => {
+  const lat = coords?.latitude ? Number(coords.latitude) : 20.5937;
+  const lon = coords?.longitude ? Number(coords.longitude) : 78.9629;
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Damage Location</title>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      <style>
+        html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #f0f0f0; }
+        .leaflet-popup-content { font-family: sans-serif; font-size: 13px; line-height: 1.4; }
+      </style>
+    </head>
+    <body>
+      <div id="map"></div>
+      <script>
+        try {
+          var map = L.map('map').setView([${lat}, ${lon}], 15);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+          }).addTo(map);
 
+          var marker = L.marker([${lat}, ${lon}]).addTo(map);
+          marker.bindPopup('<b>Damage Location</b><br/>Lat: ${lat.toFixed(5)}<br/>Lon: ${lon.toFixed(5)}').openPopup();
+
+          setTimeout(function() {
+            map.invalidateSize();
+          }, 300);
+        } catch (e) {
+          console.error("Leaflet error:", e);
+        }
+      </script>
+    </body>
+    </html>
+  `;
+};
+
+const CustomerDamageScreen = ({ navigation, route }) => {
+  const { customerId, areaId } = route?.params || {};
   const [description, setDescription] = useState('');
   const [files, setFiles] = useState([]);
   const [location, setLocation] = useState(null);
@@ -36,24 +75,40 @@ const CustomerDamageScreen = ({ navigation, route }) => {
   const [mapReady, setMapReady] = useState(false);
   const webViewRef = useRef(null);
 
-  useEffect(() => {
-    const fetchDamageReports = async () => {
+  const fetchDamageReports = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
       let query = supabase.from('damage_reports').select(`
         *,
         damage_report_files (*)
-      `)
-      .eq('customer_id', customerId);
+      `);
+
+      if (user) {
+        query = query.or(`manager_id.eq.${user.id},user_id.eq.${user.id}`);
+      }
 
       const { data, error } = await query.order('reported_at', { ascending: false });
 
       if (error) {
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('damage_reports')
+          .select(`*, damage_report_files (*)`)
+          .order('reported_at', { ascending: false });
+        if (!fallbackError) {
+          setDamageReports(fallbackData || []);
+          return;
+        }
         console.error('Error fetching damage reports:', error);
         return;
       }
 
-      setDamageReports(data);
-    };
+      setDamageReports(data || []);
+    } catch (err) {
+      console.error('Error fetching damage reports:', err);
+    }
+  };
 
+  useEffect(() => {
     fetchDamageReports();
 
     (async () => {
@@ -63,11 +118,11 @@ const CustomerDamageScreen = ({ navigation, route }) => {
         return;
       }
 
-      let location = await Location.getCurrentPositionAsync({});
-      setLocation(location);
+      let currentLocation = await Location.getCurrentPositionAsync({});
+      setLocation(currentLocation);
     })();
 
-  }, [customerId]);
+  }, []);
 
   const pickFiles = async () => {
     let result = await DocumentPicker.getDocumentAsync({
@@ -147,8 +202,8 @@ const CustomerDamageScreen = ({ navigation, route }) => {
   };
 
   const handleSubmit = async () => {
-    if (!description || !location || !customerId) {
-      Alert.alert('Missing Information', `Please fill all fields, and ensure location and customer info is available. customerId: ${customerId}`);
+    if (!description) {
+      Alert.alert('Missing Information', 'Please provide a description of the damage.');
       return;
     }
 
@@ -162,13 +217,33 @@ const CustomerDamageScreen = ({ navigation, route }) => {
         return;
       }
 
-      const { data: reportData, error: reportError } = await supabase.from('damage_reports').insert({
+      let currentLoc = location;
+      if (!currentLoc) {
+        try {
+          currentLoc = await Location.getCurrentPositionAsync({});
+          if (currentLoc) setLocation(currentLoc);
+        } catch (locErr) {
+          console.warn('Could not fetch location:', locErr);
+        }
+      }
+
+      const locCoords = currentLoc?.coords || { latitude: 0, longitude: 0 };
+
+      const insertPayload = {
         manager_id: user.id,
-        customer_id: customerId,
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
+        latitude: locCoords.latitude,
+        longitude: locCoords.longitude,
         description: description,
-      }).select();
+      };
+
+      if (areaId) {
+        insertPayload.area_id = areaId;
+      }
+      if (customerId) {
+        insertPayload.customer_id = customerId;
+      }
+
+      const { data: reportData, error: reportError } = await supabase.from('damage_reports').insert(insertPayload).select();
 
       if (reportError) {
         throw reportError;
@@ -193,20 +268,7 @@ const CustomerDamageScreen = ({ navigation, route }) => {
       setDescription('');
       setFiles([]);
       setModalVisible(false);
-      const { data, error: fetchError } = await supabase
-        .from('damage_reports')
-        .select(`
-          *,
-          damage_report_files (*)
-        `)
-        .eq('customer_id', customerId)
-        .order('reported_at', { ascending: false });
-
-      if (fetchError) {
-        console.error('Error fetching damage reports:', fetchError);
-      } else {
-        setDamageReports(data);
-      }
+      await fetchDamageReports();
     } catch (error) {
       console.error('Error submitting report:', error.message);
       Alert.alert('Submission Error', `Failed to submit report: ${error.message}`);
@@ -329,41 +391,15 @@ const CustomerDamageScreen = ({ navigation, route }) => {
   };
 
   const handleShowMap = (latitude, longitude) => {
-    if (!latitude || !longitude) {
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+    if (isNaN(lat) || isNaN(lon)) {
       Alert.alert('Location Error', 'Invalid coordinates for this report');
       return;
     }
     
-    setSelectedMapCoords({ latitude, longitude });
-    setMapReady(false);
+    setSelectedMapCoords({ latitude: lat, longitude: lon });
     setShowMapModal(true);
-  };
-
-  const onMapMessage = (event) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      
-      if (data.type === 'webviewLoaded') {
-        setMapReady(true);
-        
-        if (webViewRef.current && selectedMapCoords) {
-          setTimeout(() => {
-            const message = {
-              type: 'initialLoad',
-              initialRegion: {
-                latitude: selectedMapCoords.latitude,
-                longitude: selectedMapCoords.longitude,
-                latitudeDelta: 0.0922,
-                longitudeDelta: 0.0421,
-              },
-            };
-            webViewRef.current.postMessage(JSON.stringify(message));
-          }, 500);
-        }
-      }
-    } catch (error) {
-      console.error("Error parsing WebView message:", error);
-    }
   };
 
   const renderFilePreview = ({ item }) => {
@@ -413,31 +449,44 @@ const CustomerDamageScreen = ({ navigation, route }) => {
       <FlatList
         data={damageReports}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => openPhotoViewer(item)}>
-            <View style={styles.reportItem}>
-              <Text>Description: {item.description}</Text>
-              <Text>Reported At: {new Date(item.reported_at).toLocaleString()}</Text>
-              {item.latitude && item.longitude && (
-                <TouchableOpacity 
-                  onPress={() => handleShowMap(item.latitude, item.longitude)} 
-                  style={styles.mapIconContainer}
-                  accessibilityLabel="View location on map"
-                >
-                  <Icon name="map-marker" size={24} color="#007AFF" />
-                  <Text>View Location</Text>
-                </TouchableOpacity>
-              )}
-              <FlatList
-                data={item.damage_report_files}
-                keyExtractor={(file) => file.id.toString()}
-                renderItem={renderReportFile}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-              />
-            </View>
-          </TouchableOpacity>
-        )}
+        renderItem={({ item }) => {
+          const lat = Number(item.latitude);
+          const lon = Number(item.longitude);
+          const hasLocation = item.latitude != null && item.longitude != null && !isNaN(lat) && !isNaN(lon) && (lat !== 0 || lon !== 0);
+
+          return (
+            <TouchableOpacity onPress={() => openPhotoViewer(item)}>
+              <View style={styles.reportItem}>
+                <View style={styles.reportHeader}>
+                  <Text style={styles.reportDescription}>Description: {item.description}</Text>
+                  {hasLocation ? (
+                    <TouchableOpacity 
+                      onPress={() => handleShowMap(item.latitude, item.longitude)} 
+                      style={styles.mapIconContainer}
+                      accessibilityLabel="View location on map"
+                    >
+                      <Icon name="map-marker" size={18} color="#007AFF" />
+                      <Text style={styles.mapIconText}>View on Map</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.noLocationContainer}>
+                      <Icon name="map-marker" size={14} color="#999" />
+                      <Text style={styles.noLocationText}>No Location</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.reportDateText}>Reported At: {new Date(item.reported_at).toLocaleString()}</Text>
+                <FlatList
+                  data={item.damage_report_files}
+                  keyExtractor={(file) => file.id.toString()}
+                  renderItem={renderReportFile}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                />
+              </View>
+            </TouchableOpacity>
+          );
+        }}
       />
       
       <TouchableOpacity
@@ -585,47 +634,24 @@ const CustomerDamageScreen = ({ navigation, route }) => {
         transparent={false}
         visible={showMapModal}
         onRequestClose={() => {
-          setShowMapModal(!showMapModal);
+          setShowMapModal(false);
         }}
       >
-        <View style={styles.modalView}>
-          {!mapReady && (
-            <View style={styles.mapLoadingOverlay}>
-              <Text>Loading Map...</Text>
-            </View>
+        <View style={styles.mapModalContainer}>
+          {selectedMapCoords && (
+            <UniversalWebView
+              ref={webViewRef}
+              style={styles.map}
+              source={{ html: generateMapHtml(selectedMapCoords) }}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              originWhitelist={['*']}
+            />
           )}
-          <WebView
-            ref={webViewRef}
-            style={[styles.map, !mapReady && { opacity: 0 }]}
-            source={{ uri: `${mapHtml}?cachebust=${Date.now()}` }}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            allowFileAccessFromFileURLs={true}
-            allowUniversalAccessFromFileURLs={true}
-            mixedContentMode="compatibility"
-            onMessage={onMapMessage}
-            onLoadEnd={() => console.log("WebView finished loading")}
-            onError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.warn('WebView error: ', nativeEvent);
-              Alert.alert('Map Error', 'Failed to load map. Please check your internet connection or map configuration.');
-            }}
-            onHttpError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.warn('WebView HTTP error: ', nativeEvent);
-            }}
-            originWhitelist={['*']}
-            startInLoadingState={true}
-            renderLoading={() => (
-              <View style={styles.mapLoadingOverlay}>
-                <Text>Loading Map...</Text>
-              </View>
-            )}
-          />
           {selectedMapCoords && (
             <View style={styles.coordsContainer}>
               <Text style={styles.coordsText}>
-                Lat: {selectedMapCoords.latitude.toFixed(6)}, Lon: {selectedMapCoords.longitude.toFixed(6)}
+                Lat: {Number(selectedMapCoords.latitude).toFixed(5)}, Lon: {Number(selectedMapCoords.longitude).toFixed(5)}
               </Text>
               <TouchableOpacity
                 style={styles.copyButton}
@@ -635,7 +661,7 @@ const CustomerDamageScreen = ({ navigation, route }) => {
                   Alert.alert('Copied!', 'Coordinates copied to clipboard.');
                 }}
               >
-                <Icon name="copy" size={20} color="white" />
+                <Icon name="copy" size={16} color="white" />
                 <Text style={styles.copyButtonText}>Copy</Text>
               </TouchableOpacity>
             </View>
@@ -669,18 +695,66 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
     backgroundColor: '#fff',
-    marginBottom: 5,
+    marginBottom: 10,
     borderRadius: 8,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  reportHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 5,
+  },
+  reportDescription: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    flex: 1,
+    marginRight: 10,
+  },
+  reportDateText: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 8,
   },
   mapIconContainer: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    padding: 8,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 5,
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#E8F1FF',
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#B8D5FF',
+  },
+  mapIconText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  noLocationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 5,
+  },
+  noLocationText: {
+    color: '#999',
+    fontSize: 11,
+    marginLeft: 3,
+  },
+  mapModalContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#fff',
   },
   imagePreview: {
     width: 100,

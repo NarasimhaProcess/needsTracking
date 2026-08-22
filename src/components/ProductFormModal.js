@@ -25,7 +25,7 @@ const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
 const generateVariantCombinations = (variants, basePrice) => {
   if (!variants || variants.length === 0) {
-    return [{ combination_string: '', sku: '', price: basePrice, quantity: 0 }];
+    return [{ combination_string: 'Default', sku: '', price: basePrice, quantity: 100 }];
   }
 
   let combinations = [];
@@ -36,7 +36,7 @@ const generateVariantCombinations = (variants, basePrice) => {
         combination_string: currentCombination.join(', '),
         sku: currentSku,
         price: basePrice, // Default to base price
-        quantity: 0, // Default to 0
+        quantity: 100, // Default stock to 100
       });
       return;
     }
@@ -134,8 +134,13 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 
       setVariantCombinations(updatedCombinations);
     } else {
-      // If there are no variants, clear the combinations
-      setVariantCombinations([]);
+      // If there are no variants, maintain a default combination with stock
+      setVariantCombinations([{
+        combination_string: 'Default',
+        sku: '',
+        price: parseFloat(amount) || 0,
+        quantity: 100,
+      }]);
     }
   }, [productVariants, amount]);
 
@@ -244,13 +249,17 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         }
 
         // Generate and save product variant combinations
-        for (const combo of variantCombinations) {
+        const combosToSave = (variantCombinations && variantCombinations.length > 0)
+          ? variantCombinations
+          : [{ combination_string: 'Default', sku: '', price: parseFloat(amount) || 0, quantity: 100 }];
+
+        for (const combo of combosToSave) {
           await createProductVariantCombination({
             product_id: productResult.id,
-            combination_string: combo.combination_string,
-            price: combo.price,
-            quantity: combo.quantity,
-            sku: combo.sku, // SKU will be generated or can be added later
+            combination_string: combo.combination_string || 'Default',
+            price: combo.price !== undefined ? combo.price : (parseFloat(amount) || 0),
+            quantity: combo.quantity !== undefined ? combo.quantity : 100,
+            sku: combo.sku || '', // SKU will be generated or can be added later
           });
         }
 

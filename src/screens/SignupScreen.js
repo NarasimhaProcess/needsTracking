@@ -45,6 +45,7 @@ export default function SignupScreen({ navigation, route }) {
         password,
         options: {
           data: {
+            full_name: name,
             name: name,
           }
         }
@@ -53,49 +54,21 @@ export default function SignupScreen({ navigation, route }) {
       if (error) {
         Alert.alert('Signup Error', error.message);
       } else {
-        // After successful auth signup, create a profile entry
-        const userId = data.user.id;
-        const { error: insertProfileError } = await supabase
-          .from('profiles')
-          .insert({ id: userId });
+        // After successful auth signup, create/upsert a profile entry
+        if (data.user) {
+          const userId = data.user.id;
+          const { error: insertProfileError } = await supabase
+            .from('profiles')
+            .upsert({ id: userId, full_name: name });
 
-        if (insertProfileError) {
-          console.error('Error creating profile during signup:', insertProfileError.message);
-          Alert.alert('Error', 'Account created, but failed to create user profile.');
-          setLoading(false);
-          return;
-        }
-
-        // Create a customer entry
-        const { data: customerData, error: customerError } = await supabase
-          .from('customers')
-          .insert({ user_id: userId, name: name, email: email })
-          .select();
-
-        if (customerError) {
-          console.error('Error creating customer during signup:', customerError.message);
-          Alert.alert('Error', 'Account created, but failed to create customer record.');
-          setLoading(false);
-          return;
-        }
-
-        const customerId = customerData[0].id;
-
-        // Update user metadata with customerId
-        const { error: updateError } = await supabase.auth.updateUser({
-          data: { customerId: customerId },
-        });
-
-        if (updateError) {
-          console.error("Error updating user metadata:", updateError.message);
-          Alert.alert("Error", "Failed to update user profile with customer ID.");
-          setLoading(false);
-          return;
+          if (insertProfileError) {
+            console.error('Error creating profile during signup:', insertProfileError.message);
+          }
         }
 
         Alert.alert(
           'Success',
-          'Account created successfully! Please check your email for verification.',
+          'Account created successfully! Please check your email for verification or log in.',
           [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
         );
       }

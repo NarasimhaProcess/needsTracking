@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useEffect } from 'react';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import Icon from 'react-native-vector-icons/FontAwesome';
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   ScrollView,
   Image,
   TouchableOpacity,
-  Button,
   Alert,
   Modal,
 } from 'react-native';
@@ -17,16 +16,17 @@ import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { addToCart, supabase } from '../services/supabase';
 
-const ProductDetailScreen = ({ route }) => {
-  const { product } = route.params;
+const ProductDetailScreen = ({ navigation, route }) => {
+  const { product } = route?.params || {};
   const [selectedVariants, setSelectedVariants] = useState({});
+  const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [images, setImages] = useState([]);
 
   useEffect(() => {
     const defaultVariants = {};
-    if (product.product_variants) {
+    if (product?.product_variants) {
       product.product_variants.forEach(variant => {
         if (variant.variant_options && variant.variant_options.length > 0) {
           defaultVariants[variant.name] = variant.variant_options[0].value;
@@ -44,6 +44,14 @@ const ProductDetailScreen = ({ route }) => {
   };
 
   const getVariantCombination = () => {
+    if (!product) return null;
+    const combos = product.product_variant_combinations || [];
+    if (combos.length === 0) {
+      return { id: product.id, combination_string: 'Default', price: product.amount || 0, quantity: 100 };
+    }
+    if (combos.length === 1) {
+      return combos[0];
+    }
     const sortedKeys = Object.keys(selectedVariants).sort();
     const combinationString = sortedKeys
       .map((key) => `${key}:${selectedVariants[key]}`)
@@ -51,7 +59,7 @@ const ProductDetailScreen = ({ route }) => {
 
     const normalizedCombinationString = combinationString.replace(/\s/g, '');
 
-    return product.product_variant_combinations.find(
+    const found = combos.find(
       (c) => {
         if (c.combination_string) {
           const normalizedDbString = c.combination_string.replace(/\s/g, '');
@@ -60,32 +68,29 @@ const ProductDetailScreen = ({ route }) => {
         return false;
       }
     );
+    return found || combos[0];
   };
 
   const handleAddToCart = async () => {
     const combination = getVariantCombination();
     if (!combination) {
-      Alert.alert('Please select all variant options.');
+      Alert.alert('Error', 'Product information is incomplete.');
       return;
     }
 
-    console.log('handleAddToCart: Before getUser, user state:', user); // Log existing user state
-    // Re-check user session directly from Supabase to ensure up-to-date status
     const { data: { user: currentUser } } = await supabase.auth.getUser();
-    console.log('handleAddToCart: After getUser, currentUser:', currentUser); // Log fetched user
 
     if (!currentUser) {
-      // Redirect to BuyerAuthScreen for mobile number authentication
-      navigation.navigate('BuyerAuthScreen', {
+      navigation.navigate('BuyerAuth', {
         redirectScreen: 'ProductDetailScreen',
         productId: product.id,
       });
       return;
     }
 
-    const result = await addToCart(currentUser.id, combination.id, 1);
+    const result = await addToCart(currentUser.id, combination.id, quantity);
     if (result) {
-      Alert.alert('Success', 'Item added to cart.');
+      Alert.alert('Success', `${quantity} item(s) added to cart.`);
     } else {
       Alert.alert('Error', 'Failed to add item to cart.');
     }
@@ -156,7 +161,31 @@ const ProductDetailScreen = ({ route }) => {
           </View>
         ))}
 
-        <Button title="Add to Cart" onPress={handleAddToCart} />
+        {/* Quantity selector */}
+        <View style={styles.quantitySelector}>
+          <Text style={styles.quantityLabel}>Quantity:</Text>
+          <View style={styles.quantityControls}>
+            <TouchableOpacity 
+              onPress={() => setQuantity(Math.max(1, quantity - 1))}
+              disabled={quantity <= 1}
+              style={{ padding: 4 }}
+            >
+              <Icon name="minus-circle" size={30} color={quantity <= 1 ? '#ccc' : '#E53935'} />
+            </TouchableOpacity>
+            <Text style={styles.quantityText}>{quantity}</Text>
+            <TouchableOpacity 
+              onPress={() => setQuantity(quantity + 1)}
+              style={{ padding: 4 }}
+            >
+              <Icon name="plus-circle" size={30} color="#43A047" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.addToCartButton} onPress={handleAddToCart}>
+          <Icon name="shopping-cart" size={20} color="#fff" style={{ marginRight: 10 }} />
+          <Text style={styles.addToCartButtonText}>Add to Cart</Text>
+        </TouchableOpacity>
       </View>
 
       <Modal visible={isModalVisible} transparent={true}>
@@ -236,6 +265,46 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     borderRadius: 20,
     padding: 5,
+  },
+  quantitySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginVertical: 15,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+  },
+  quantityLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  quantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  quantityText: {
+    marginHorizontal: 15,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  addToCartButton: {
+    backgroundColor: '#43A047',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 15,
+    borderRadius: 10,
+    marginTop: 10,
+    elevation: 3,
+  },
+  addToCartButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });
 

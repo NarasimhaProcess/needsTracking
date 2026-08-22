@@ -57,34 +57,21 @@ export default function App() {
   useEffect(() => {
     const fetchAndSetSession = async () => {
       setLoading(true);
-      let { data: { session } } = await supabase.auth.getSession();
-      
-      if (session) {
-        // Fetch customer ID from the customers table
-        const { data: customer } = await supabase
-          .from('customers')
-          .select('id')
-          .eq('user_id', session.user.id)
-          .single();
-
-        // Manually attach customerId to the session object for the app to use
-        if (customer) {
-          session.user.user_metadata = {
-            ...session.user.user_metadata,
-            customerId: customer.id
-          };
-        }
+      try {
+        let { data: { session } } = await supabase.auth.getSession();
+        setSession(session);
+      } catch (err) {
+        console.error('Error fetching session:', err);
+      } finally {
+        setLoading(false);
       }
-
-      setSession(session);
-      console.log('App.js session with customerId:', session?.user?.user_metadata?.customerId);
-      setLoading(false);
     };
 
     fetchAndSetSession(); // Initial fetch
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      fetchAndSetSession(); // Re-fetch the session to ensure user_metadata is up-to-date
+      setSession(session);
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();

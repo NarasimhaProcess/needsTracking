@@ -4,7 +4,7 @@ import UniversalWebView from '../components/UniversalWebView';
 import { supabase } from '../services/supabase';
 
 export default function ProductMapScreen({ route }) {
-  const { customerId } = route.params;
+  const { customerId } = route?.params || {};
   const [productLocations, setProductLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -14,7 +14,7 @@ export default function ProductMapScreen({ route }) {
     async function fetchProductLocations() {
       try {
         setLoading(true);
-        const { data, error } = await supabase
+        let query = supabase
           .from('products')
           .select(
             `
@@ -22,8 +22,13 @@ export default function ProductMapScreen({ route }) {
             product_name,
             customers ( id, latitude, longitude )
           `
-          )
-          .eq('customer_id', customerId);
+          );
+
+        if (customerId) {
+          query = query.eq('customer_id', customerId);
+        }
+
+        const { data, error } = await query;
 
         if (error) throw error;
 

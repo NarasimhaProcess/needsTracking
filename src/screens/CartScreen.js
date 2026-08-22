@@ -51,6 +51,10 @@ const CartScreen = ({ navigation }) => {
   }, []);
 
   const handleUpdateQuantity = async (cartItemId, quantity) => {
+    if (quantity < 1) {
+      handleRemoveItem(cartItemId);
+      return;
+    }
     if (user) {
       const updatedItem = await updateCartItem(cartItemId, quantity);
       if (updatedItem) {
@@ -120,17 +124,17 @@ const CartScreen = ({ navigation }) => {
         <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
         <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
         <View style={styles.quantityContainer}>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
-            <Icon name="minus-circle" size={20} color="#555" />
+          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} style={{ padding: 4 }}>
+            <Icon name="minus-circle" size={24} color="#E53935" />
           </TouchableOpacity>
           <Text style={styles.quantityText}>{item.quantity}</Text>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}>
-            <Icon name="plus-circle" size={20} color="#555" />
+          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)} style={{ padding: 4 }}>
+            <Icon name="plus-circle" size={24} color="#43A047" />
           </TouchableOpacity>
         </View>
       </View>
-      <TouchableOpacity onPress={() => handleRemoveItem(item.id)}>
-        <Icon name="trash" size={24} color="red" />
+      <TouchableOpacity onPress={() => handleRemoveItem(item.id)} style={{ padding: 10 }}>
+        <Icon name="trash" size={22} color="#E53935" />
       </TouchableOpacity>
     </View>
   );
@@ -169,11 +173,11 @@ const CartScreen = ({ navigation }) => {
       />
       <TouchableOpacity style={styles.checkoutButton} onPress={() => {
         let customerIdToPass = null;
-        if (user && user.user_metadata && user.user_metadata.customerId) {
+        if (user?.user_metadata?.customerId) {
           customerIdToPass = user.user_metadata.customerId;
-        } else if (cart && cart.cart_items.length > 0) {
+        } else if (cart?.cart_items?.length > 0) {
           // Assuming all products in cart belong to the same customer (catalog provider)
-          customerIdToPass = cart.cart_items[0].product_variant_combinations.products.customer_id;
+          customerIdToPass = cart.cart_items[0]?.product_variant_combinations?.products?.customer_id || null;
         }
         navigation.navigate('Checkout', { cart: cart, customerId: customerIdToPass });
         console.log('CartScreen: customerIdToPass', customerIdToPass);

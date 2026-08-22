@@ -171,7 +171,7 @@ import { useNavigation } from '@react-navigation/native'; // Add this import
 export default function CustomerMapScreen({ route }) { // Remove navigation from props
   const navigation = useNavigation(); // Get navigation from hook
   const { user, role } = useCart();
-  const { customerId } = route.params; // Get customerId from route params
+  const { customerId } = route?.params || {}; // Get customerId from route params
   const [customerLocations, setCustomerLocations] = useState([]);
   const [allAreas, setAllAreas] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
@@ -208,8 +208,10 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
             setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
           }
         }
-        // Fetch only the specific customer's location
-        await fetchCustomerLocation(customerId);
+        // Fetch only if customerId is provided
+        if (customerId) {
+          await fetchCustomerLocation(customerId);
+        }
       } catch (err) {
         setError(err.message);
       } finally {
@@ -221,6 +223,7 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
   }, [customerId]);
 
   async function fetchCustomerLocation(id) {
+      if (!id) return;
       try {
         const { data, error: fetchError } = await supabase
           .from('profiles') // Assuming customer location is in profiles table

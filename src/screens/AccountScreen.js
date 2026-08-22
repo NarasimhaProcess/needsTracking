@@ -3,7 +3,7 @@ import { View, Text, Button, StyleSheet, FlatList, Alert, ActivityIndicator } fr
 import { supabase, getTransactionsByCustomerId } from '../services/supabase';
 
 const AccountScreen = ({ route }) => {
-  const { session, customerId } = route.params;
+  const { session, customerId } = route?.params || {};
   {console.log('AccountScreen - customerId:', customerId)}
   const [customerTransactions, setCustomerTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(true);

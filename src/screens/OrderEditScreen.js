@@ -5,7 +5,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import { getOrderById, updateOrderStatus } from '../services/supabase';
 
 const OrderEditScreen = ({ route, navigation }) => {
-  const { orderId } = route.params;
+  const { orderId } = route?.params || {};
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');

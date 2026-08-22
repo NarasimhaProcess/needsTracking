@@ -11,7 +11,7 @@ import {
 import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
 
 const UpiQrScreen = ({ navigation, route }) => {
-  const { cart, totalAmount, shippingAddress, order } = route.params; // Receive order object
+  const { cart, totalAmount, shippingAddress, order } = route?.params || {}; // Receive order object
   const [activeQrImageUrl, setActiveQrImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
 

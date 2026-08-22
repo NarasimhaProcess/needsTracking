@@ -10,7 +10,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import { printReceipt } from '../services/printerService';
 
 const OrderConfirmationScreen = ({ navigation, route }) => {
-  const { order, customerId } = route.params;
+  const { order, customerId } = route?.params || {};
 
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>

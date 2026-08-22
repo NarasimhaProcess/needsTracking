@@ -71,95 +71,132 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
     return mediaData;
   } else {
     try {
-      const fileExtension = mediaData.split('.').pop();
+      const cleanUri = mediaData.split('?')[0];
+      const fileExtension = cleanUri.split('.').pop() || (mediaType === 'video' ? 'mp4' : 'jpg');
       const fileName = `${Date.now()}.${fileExtension}`;
       const filePath = `product_media/${productId}/${fileName}`;
       const contentType = mediaType === 'video' ? `video/${fileExtension}` : `image/${fileExtension}`;
 
-      const edgeFunctionUrl = `${supabaseUrl}/functions/v1/upload-image`;
+      let publicUrl = null;
 
-      // Step 1: Request Signed URL from Edge Function
-      console.log("Requesting signed URL from Edge Function...");
-      const signedUrlResponse = await fetch(edgeFunctionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          action: 'generateSignedUrl',
-          file_name: fileName,
-          file_path: filePath,
-          content_type: contentType,
-          user_id: userId,
-        }),
-      });
+      // Primary Attempt: Direct upload to Supabase Storage
+      try {
+        console.log("Attempting direct Supabase storage upload...");
+        let fileData;
+        if (Platform.OS === 'web') {
+          const fileResponse = await fetch(mediaData);
+          fileData = await fileResponse.blob();
+        } else {
+          const base64 = await FileSystem.readAsStringAsync(mediaData, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          fileData = new Uint8Array(
+            atob(base64).split("").map((c) => c.charCodeAt(0))
+          );
+        }
 
-      if (!signedUrlResponse.ok) {
-        const errorText = await signedUrlResponse.text();
-        throw new Error(`Failed to get signed URL: ${signedUrlResponse.status} - ${errorText}`);
+        const { data: storageUploadData, error: storageUploadError } = await supabase.storage
+          .from('productsmedia')
+          .upload(filePath, fileData, {
+            contentType: contentType,
+            upsert: true,
+          });
+
+        if (!storageUploadError) {
+          const { data: publicUrlData } = supabase.storage
+            .from('productsmedia')
+            .getPublicUrl(filePath);
+          publicUrl = publicUrlData.publicUrl;
+          console.log("Direct storage upload successful. Public URL:", publicUrl);
+        } else {
+          console.warn("Direct storage upload failed, trying Edge Function fallback:", storageUploadError.message);
+        }
+      } catch (directErr) {
+        console.warn("Direct storage upload error, trying Edge Function fallback:", directErr.message);
       }
-      const { signedUrl, path: signedPath } = await signedUrlResponse.json();
-      console.log("Received signed URL:", signedUrl);
 
-      // Step 2: Direct Upload to Signed URL
-      console.log("Directly uploading file to signed URL...");
-      const fileResponse = await fetch(mediaData);
-      const blob = await fileResponse.blob();
+      // Fallback Attempt: Signed URL workflow via Edge Function
+      if (!publicUrl) {
+        let token = accessToken;
+        if (!token) {
+          const { data: { session } } = await supabase.auth.getSession();
+          token = session?.access_token || supabaseAnonKey;
+        }
 
-      const uploadDirectResponse = await fetch(signedUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-          'x-upsert': 'true', // Overwrite if file exists
-        },
-        body: blob,
-      });
+        const { data: functionData, error: funcError } = await supabase.functions.invoke('upload-image', {
+          body: {
+            action: 'generateSignedUrl',
+            file_name: fileName,
+            file_path: filePath,
+            content_type: contentType,
+            user_id: userId,
+          },
+        });
 
-      if (!uploadDirectResponse.ok) {
-        const errorText = await uploadDirectResponse.text();
-        throw new Error(`Direct upload failed: ${uploadDirectResponse.status} - ${errorText}`);
+        let signedUrl = functionData?.signedUrl;
+
+        if (funcError || !signedUrl) {
+          const edgeFunctionUrl = `${supabaseUrl}/functions/v1/upload-image`;
+          const signedUrlResponse = await fetch(edgeFunctionUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              action: 'generateSignedUrl',
+              file_name: fileName,
+              file_path: filePath,
+              content_type: contentType,
+              user_id: userId,
+            }),
+          });
+
+          if (!signedUrlResponse.ok) {
+            const errorText = await signedUrlResponse.text();
+            throw new Error(`Failed to get signed URL: ${signedUrlResponse.status} - ${errorText}`);
+          }
+          const resJson = await signedUrlResponse.json();
+          signedUrl = resJson.signedUrl;
+        }
+
+        const fileResponse = await fetch(mediaData);
+        const blob = await fileResponse.blob();
+
+        const uploadDirectResponse = await fetch(signedUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': contentType,
+            'x-upsert': 'true',
+          },
+          body: blob,
+        });
+
+        if (!uploadDirectResponse.ok) {
+          const errorText = await uploadDirectResponse.text();
+          throw new Error(`Direct upload to signed URL failed: ${uploadDirectResponse.status} - ${errorText}`);
+        }
+
+        const { data: pubData } = supabase.storage
+          .from('productsmedia')
+          .getPublicUrl(filePath);
+        publicUrl = pubData.publicUrl;
       }
-      console.log("Direct upload successful.");
-
-      // Step 3: Confirm Upload and Get Public URL from Edge Function
-      console.log("Confirming upload and getting public URL from Edge Function...");
-      const confirmUploadResponse = await fetch(edgeFunctionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          action: 'confirmUpload',
-          file_path: filePath, // Use the original filePath to get the public URL
-          user_id: userId,
-        }),
-      });
-
-      if (!confirmUploadResponse.ok) {
-        const errorText = await confirmUploadResponse.text();
-        throw new Error(`Failed to confirm upload and get public URL: ${confirmUploadResponse.status} - ${errorText}`);
-      }
-      const { publicUrl } = await confirmUploadResponse.json();
-      console.log("Received public URL:", publicUrl);
 
       if (!publicUrl) {
-        throw new Error("Edge function did not return a public URL after confirmation.");
+        throw new Error("Failed to obtain public URL for uploaded media.");
       }
 
-      // Step 4: Save Public URL to Database
+      // Save Public URL to Database
       const { error: insertError } = await supabase
         .from('product_media')
         .insert([
           {
             product_id: productId,
             media_url: publicUrl,
-            media_type: mediaType,
+            media_type: mediaType || 'image',
           },
         ]);
-
-      console.log("Supabase product_media insert result - error:", insertError);
 
       if (insertError) {
         console.error('Error inserting media URL into database:', insertError.message);
@@ -168,7 +205,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
 
       return publicUrl;
     } catch (error) {
-      console.error('Error in saveProductMedia (signed URL workflow):', error.message);
+      console.error('Error in saveProductMedia:', error.message);
       return null;
     }
   }
@@ -213,20 +250,52 @@ export async function getProductsWithDetails(userId) {
 }
 
 export async function getActiveProductsWithDetails(userId) {
-  if (!userId) {
+  try {
+    if (userId) {
+      const { data, error } = await supabase.rpc('get_active_products_with_details', {
+        p_user_id: userId,
+      });
+
+      if (!error && data && data.length > 0) {
+        console.log('Fetched active products via RPC:', data);
+        return data;
+      }
+    }
+  } catch (rpcErr) {
+    console.warn('RPC get_active_products_with_details failed:', rpcErr);
+  }
+
+  // Fallback: direct query on products table with relations
+  try {
+    let query = supabase
+      .from('products')
+      .select(`
+        *,
+        product_media (id, media_url, media_type),
+        product_variants (
+          id,
+          name,
+          variant_options (id, value)
+        ),
+        product_variant_combinations (id, combination_string, price, quantity, sku)
+      `)
+      .eq('is_active', true);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query.order('display_order', { ascending: true });
+    if (error) {
+      console.error('Error in getActiveProductsWithDetails direct query:', error.message);
+      return [];
+    }
+    console.log('Fetched active products via direct query:', data);
+    return data || [];
+  } catch (err) {
+    console.error('Error fetching active products:', err);
     return [];
   }
-  
-  const { data, error } = await supabase.rpc('get_active_products_with_details', {
-    p_user_id: userId,
-  });
-
-  if (error) {
-    console.error('Error fetching active products with details:', error);
-    return null;
-  }
-  console.log('Fetched active products data:', data);
-  return data;
 }
 
 export async function getTopProductsWithDetails() {
@@ -362,46 +431,138 @@ export async function getCart(userId) {
   return data;
 }
 
-export async function addToCart(userId, productVariantCombinationId, quantity) {
-  let { data: cart, error: cartError } = await supabase
-    .from('carts')
-    .select('id')
-    .eq('user_id', userId)
-    .single();
-
-  if (cartError && cartError.code !== 'PGRST116') { // Ignore error when no cart is found
-    console.error('Error fetching cart:', cartError.message);
-    return null;
-  }
-
-  if (!cart) {
-    const { data: newCart, error: newCartError } = await supabase
-      .from('carts')
-      .insert({ user_id: userId })
-      .select('id')
-      .single();
-
-    if (newCartError) {
-      console.error('Error creating cart:', newCartError.message);
+export async function addToCart(userId, productVariantCombinationId, quantity = 1) {
+  try {
+    if (!userId) {
+      console.error('addToCart: userId is required');
       return null;
     }
-    cart = newCart;
-  }
 
-  const { data, error } = await supabase
-    .from('cart_items')
-    .insert({
-      cart_id: cart.id,
-      product_variant_combination_id: productVariantCombinationId,
-      quantity: quantity,
-    })
-    .select();
+    // 1. Get or create cart for user
+    let { data: cart, error: cartError } = await supabase
+      .from('carts')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-  if (error) {
-    console.error('Error adding to cart:', error.message);
+    if (cartError) {
+      console.error('Error fetching cart in addToCart:', cartError.message);
+    }
+
+    if (!cart) {
+      const { data: newCart, error: newCartError } = await supabase
+        .from('carts')
+        .insert({ user_id: userId })
+        .select('id')
+        .single();
+
+      if (newCartError) {
+        console.error('Error creating cart:', newCartError.message);
+        return null;
+      }
+      cart = newCart;
+    }
+
+    // 2. Resolve valid product_variant_combination_id
+    let validCombinationId = productVariantCombinationId;
+
+    // Check if ID exists in product_variant_combinations
+    const { data: existingPvc } = await supabase
+      .from('product_variant_combinations')
+      .select('id, product_id, price')
+      .eq('id', productVariantCombinationId)
+      .maybeSingle();
+
+    if (existingPvc) {
+      validCombinationId = existingPvc.id;
+    } else {
+      // productVariantCombinationId might be a product_id
+      // Check if a combination exists for this product_id
+      const { data: comboForProduct } = await supabase
+        .from('product_variant_combinations')
+        .select('id, product_id, price')
+        .eq('product_id', productVariantCombinationId)
+        .limit(1)
+        .maybeSingle();
+
+      if (comboForProduct) {
+        validCombinationId = comboForProduct.id;
+      } else {
+        // Find product to create default combination so foreign key is valid
+        const { data: prod } = await supabase
+          .from('products')
+          .select('id, amount, product_name')
+          .eq('id', productVariantCombinationId)
+          .maybeSingle();
+
+        if (prod) {
+          const { data: createdCombo, error: createComboError } = await supabase
+            .from('product_variant_combinations')
+            .insert({
+              product_id: prod.id,
+              combination_string: 'Default',
+              price: prod.amount || 0,
+              quantity: 100,
+              sku: '',
+            })
+            .select('id')
+            .single();
+
+          if (createdCombo) {
+            validCombinationId = createdCombo.id;
+          } else {
+            console.error('Failed to create default combination:', createComboError?.message);
+          }
+        }
+      }
+    }
+
+    if (!validCombinationId) {
+      console.error('addToCart: Unable to resolve valid combination ID for:', productVariantCombinationId);
+      return null;
+    }
+
+    // 3. Check if cart item already exists
+    const { data: existingItem } = await supabase
+      .from('cart_items')
+      .select('id, quantity')
+      .eq('cart_id', cart.id)
+      .eq('product_variant_combination_id', validCombinationId)
+      .maybeSingle();
+
+    if (existingItem) {
+      const { data, error } = await supabase
+        .from('cart_items')
+        .update({ quantity: existingItem.quantity + quantity })
+        .eq('id', existingItem.id)
+        .select();
+
+      if (error) {
+        console.error('Error updating existing cart item:', error.message);
+        return null;
+      }
+      return data ? data[0] : null;
+    }
+
+    // 4. Insert new cart item
+    const { data, error } = await supabase
+      .from('cart_items')
+      .insert({
+        cart_id: cart.id,
+        product_variant_combination_id: validCombinationId,
+        quantity: quantity,
+      })
+      .select();
+
+    if (error) {
+      console.error('Error adding to cart:', error.message);
+      return null;
+    }
+    return data ? data[0] : null;
+  } catch (err) {
+    console.error('Unexpected error in addToCart:', err);
     return null;
   }
-  return data ? data[0] : null;
 }
 
 export async function updateCartItem(cartItemId, quantity) {

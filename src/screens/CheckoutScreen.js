@@ -15,7 +15,7 @@ import { supabase } from '../services/supabase';
 import { schedulePushNotification } from '../services/notificationService';
 
 const CheckoutScreen = ({ navigation, route }) => {
-  const { cart, customerId } = route.params; // Expect customerId for agent orders
+  const { cart, customerId } = route?.params || {}; // Expect customerId for agent orders
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');

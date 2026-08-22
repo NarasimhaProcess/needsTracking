@@ -17,9 +17,14 @@ const Tab = createBottomTabNavigator();
 function ProductTabNavigator({ route }) {
   console.log('ProductTabNavigator: route.params', route.params);
   const { session } = route.params || {};
-  const userId = session?.id;
+  const user = session?.user || session;
+  const userId = user?.id;
+  const userMetadata = user?.user_metadata || session?.user_metadata;
+  const role = userMetadata?.role;
+  const customerId = userMetadata?.customerId || route.params?.customerId;
   console.log('ProductTabNavigator: session', session);
   console.log('ProductTabNavigator: userId', userId);
+  console.log('ProductTabNavigator: customerId', customerId);
 
   return (
     <Tab.Navigator
@@ -53,19 +58,19 @@ function ProductTabNavigator({ route }) {
         headerShown: false, // Hide header for tab screens, stack navigator will handle it
       })}
     >
-      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+      {role === 'seller' || role === 'admin' ? (
         <>
           <Tab.Screen
             name="CatalogTab"
             component={CatalogScreen}
             options={{ title: 'Catalog' }}
-            initialParams={{ session, userId }}
+            initialParams={{ session, userId, customerId }}
           />
           <Tab.Screen
             name="CartTab"
             component={CartScreen}
             options={{ title: 'Cart' }}
-            initialParams={{ session, userId }}
+            initialParams={{ session, userId, customerId }}
           />
         </>
       ) : null}
@@ -74,33 +79,33 @@ function ProductTabNavigator({ route }) {
         name="OrdersTab"
         component={OrderListScreen}
         options={{ title: 'Orders' }}
-        initialParams={{ session, userId }}
+        initialParams={{ session, userId, customerId }}
       />
 
-      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+      {role === 'seller' || role === 'admin' ? (
         <Tab.Screen
           name="ProductsTab"
           component={ProductScreen}
           options={{ title: 'Products' }}
-          initialParams={{ session, userId }}
+          initialParams={{ session, userId, customerId }}
         />
       ) : null}
 
-      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+      {role === 'seller' || role === 'admin' ? (
         <Tab.Screen
           name="InventoryTab"
           component={InventoryScreen}
           options={{ title: 'Inventory' }}
-          initialParams={{ session, userId }}
+          initialParams={{ session, userId, customerId }}
         />
       ) : null}
 
-      {session?.user_metadata?.role === 'seller' || session?.user_metadata?.role === 'admin' ? (
+      {role === 'seller' || role === 'admin' ? (
         <Tab.Screen
           name="DamageTab"
           component={CustomerDamageScreen}
           options={{ title: 'Damage' }}
-          initialParams={{ session, userId }}
+          initialParams={{ session, userId, customerId }}
         />
       ) : null}
 
@@ -108,14 +113,14 @@ function ProductTabNavigator({ route }) {
         name="MapTab"
         component={CustomerMapScreen}
         options={{ title: 'Map' }}
-        initialParams={{ session, userId }}
+        initialParams={{ session, userId, customerId }}
       />
 
       <Tab.Screen
         name="ProfileTab"
         component={ProfileScreen}
         options={{ title: 'Profile' }}
-        initialParams={{ session, userId }}
+        initialParams={{ session, userId, customerId }}
       />
     </Tab.Navigator>
   );

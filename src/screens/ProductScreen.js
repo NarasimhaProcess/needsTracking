@@ -17,26 +17,38 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import ProductFormModal from '../components/ProductFormModal';
 
 const ProductScreen = ({ route, navigation }) => {
-  const { session } = route.params;
+  const { session: initialSession } = route?.params || {};
+  const [session, setSession] = useState(initialSession || null);
   const [userId, setUserId] = useState(null);
 
   useEffect(() => {
-    console.log('ProductScreen: useEffect triggered. Current session prop:', session);
-    
-    const user = session?.user ? session.user : session;
+    const initSession = async () => {
+      let currentSession = initialSession;
+      if (!currentSession) {
+        const { data: { session: activeSession } } = await supabase.auth.getSession();
+        currentSession = activeSession;
+        setSession(activeSession);
+      } else {
+        setSession(initialSession);
+      }
 
-    if (!user) {
-      console.log('ProductScreen: User is missing.');
-      setUserId(null);
-      setProducts([]);
-      return;
-    }
+      const user = currentSession?.user ? currentSession.user : currentSession;
 
-    const id = user.id;
-    setUserId(id);
-    console.log('ProductScreen: User ID set:', id);
-    fetchProducts(id); // Call fetchProducts immediately after userId is set
-  }, [session]);
+      if (!user) {
+        console.log('ProductScreen: User is missing.');
+        setUserId(null);
+        setProducts([]);
+        return;
+      }
+
+      const id = user.id;
+      setUserId(id);
+      console.log('ProductScreen: User ID set:', id);
+      fetchProducts(id);
+    };
+
+    initSession();
+  }, [initialSession]);
   
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState([]); // Stores fetched products

@@ -30,7 +30,6 @@ export default function LoginScreen({ navigation, route }) {
 
     setLoading(true);
     try {
-      // First, check if user exists in customers table
       // Authenticate with Supabase auth
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -42,45 +41,11 @@ export default function LoginScreen({ navigation, route }) {
       } else {
         console.log('Login successful:', data.user);
 
-        // After successful login, update the user's role to 'seller' in the profiles table
-        const { error: profileUpdateError } = await supabase
-          .from('profiles')
-          .update({ role: 'seller' })
-          .eq('id', data.user.id);
-
-        if (profileUpdateError) {
-          console.error("Error updating profile role:", profileUpdateError.message);
-          Alert.alert("Error", "Failed to update user role to seller.");
-          setLoading(false);
-          return;
-        }
-
-        // Update user metadata in Supabase Auth
-        const { error: userUpdateError } = await supabase.auth.updateUser({
-          data: { role: 'seller' }
-        });
-
-        if (userUpdateError) {
-          console.error("Error updating user metadata:", userUpdateError.message);
-          Alert.alert("Error", "Failed to update user metadata.");
-          setLoading(false);
-          return;
-        }
-
-        // Refresh the session to ensure user_metadata (including role) is updated immediately
-        const { error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError) {
-          console.error("Error refreshing session:", refreshError.message);
-          Alert.alert("Error", "Failed to refresh session after updating profile.");
-          setLoading(false);
-          return;
-        }
-
         if (onAuthSuccess) {
           onAuthSuccess(data.user);
         }
 
-        navigation.dispatch(StackActions.replace('ProductTabs', { user: data.user }));
+        navigation.dispatch(StackActions.replace('ProductTabs', { session: data.session, user: data.user }));
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
