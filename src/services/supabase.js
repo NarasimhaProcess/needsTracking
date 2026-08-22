@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
+
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem
 let Storage;
