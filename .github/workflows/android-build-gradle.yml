@@ -2,9 +2,7 @@
 name: Build Android APK - Gradle
 
 on:
-  push:
-    branches:
-      - develop
+   workflow_dispatch:
 
 jobs:
   build:
