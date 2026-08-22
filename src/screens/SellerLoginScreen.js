@@ -11,9 +11,9 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../services/supabase';
+import { StackActions } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Constants from 'expo-constants';
-
 
 export default function SellerLoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
@@ -30,7 +30,7 @@ export default function SellerLoginScreen({ navigation, route }) {
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -39,48 +39,38 @@ export default function SellerLoginScreen({ navigation, route }) {
       } else {
         console.log('Login successful:', data.user);
 
-        let { data: sellerData, error: sellerError } = await supabase
-          .from('sellers')
-          .select('id, email, name')
-          .eq('user_id', data.user.id)
+        let { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, role, full_name, mobile')
+          .eq('id', data.user.id)
           .maybeSingle();
 
-        if (sellerError) {
-          console.error("Error checking seller existence:", sellerError.message);
-          Alert.alert("Error", "An error occurred while checking seller data.");
-          setLoading(false);
-          return;
+        if (profileError) {
+          console.error("Error checking seller profile:", profileError.message);
         }
 
-        if (!sellerData) {
-          Alert.alert('Login Error', 'User not found in seller records. Please contact admin.');
-          setLoading(false);
-          return;
+        if (!profileData) {
+          try {
+            const { data: newProfile } = await supabase
+              .from('profiles')
+              .upsert({
+                id: data.user.id,
+                full_name: data.user.user_metadata?.full_name || 'Seller',
+                role: 'seller'
+              })
+              .select()
+              .maybeSingle();
+            profileData = newProfile;
+          } catch (upsertErr) {
+            console.error("Error upserting profile:", upsertErr);
+          }
         }
 
-        const authenticatedUser = {
-          id: sellerData.id,
-          email: sellerData.email,
-          name: sellerData.name,
-          sellerId: sellerData.id,
-        };
-
-        const { error: updateError } = await supabase.auth.updateUser({
-          data: { sellerId: sellerData.id },
-        });
-
-        if (updateError) {
-          console.error("Error updating user metadata:", updateError.message);
-          Alert.alert("Error", "Failed to update user profile with seller ID.");
-          setLoading(false);
-          return;
-        }
-        
         if (onAuthSuccess) {
-          onAuthSuccess(authenticatedUser);
+          onAuthSuccess(data.user);
         }
 
-        navigation.navigate('Inventory');
+        navigation.dispatch(StackActions.replace('ProductTabs', { session: data.session, user: data.user }));
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
@@ -96,7 +86,7 @@ export default function SellerLoginScreen({ navigation, route }) {
       return;
     }
 
-    supabase.auth.resetPasswordForEmail(email, {
+    supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: 'user-tracking-mobile://reset-password',
     }).then(() => {
       Alert.alert('Success', 'Password reset email sent');
@@ -165,6 +155,13 @@ export default function SellerLoginScreen({ navigation, route }) {
           >
             <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
           </TouchableOpacity>
+
+          <View style={styles.signupContainer}>
+            <Text style={styles.signupText}>Don't have a seller account? </Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Signup', { role: 'seller' })}>
+              <Text style={styles.signupLink}>Sign Up</Text>
+            </TouchableOpacity>
+          </View>
 
         </View>
       </ScrollView>

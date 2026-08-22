@@ -11,19 +11,23 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../services/supabase';
+import { StackActions } from '@react-navigation/native';
+import Icon from 'react-native-vector-icons/Ionicons';
 import Constants from 'expo-constants';
 
 export default function SignupScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
+  const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
+  const userRole = route.params?.role || 'seller';
 
   const handleSignup = async () => {
     if (!email || !password || !confirmPassword || !name) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
 
@@ -41,12 +45,14 @@ export default function SignupScreen({ navigation, route }) {
     try {
       // Create auth account
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim(),
         password,
         options: {
           data: {
-            full_name: name,
-            name: name,
+            full_name: name.trim(),
+            name: name.trim(),
+            mobile: mobile.trim(),
+            role: userRole,
           }
         }
       });
@@ -57,20 +63,42 @@ export default function SignupScreen({ navigation, route }) {
         // After successful auth signup, create/upsert a profile entry
         if (data.user) {
           const userId = data.user.id;
-          const { error: insertProfileError } = await supabase
-            .from('profiles')
-            .upsert({ id: userId, full_name: name });
+          const profileData = {
+            id: userId,
+            full_name: name.trim(),
+            role: userRole,
+          };
+          if (mobile.trim()) {
+            profileData.mobile = mobile.trim();
+          }
 
-          if (insertProfileError) {
-            console.error('Error creating profile during signup:', insertProfileError.message);
+          try {
+            await supabase.from('profiles').upsert(profileData);
+          } catch (profileErr) {
+            console.error('Error creating profile during signup:', profileErr);
           }
         }
 
-        Alert.alert(
-          'Success',
-          'Account created successfully! Please check your email for verification or log in.',
-          [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
-        );
+        // If session was immediately created (no email confirmation needed)
+        if (data.session) {
+          if (onAuthSuccess) {
+            onAuthSuccess(data.user);
+          }
+          Alert.alert(
+            'Success',
+            'Account created successfully!',
+            [{
+              text: 'Continue',
+              onPress: () => navigation.dispatch(StackActions.replace('ProductTabs', { session: data.session, user: data.user }))
+            }]
+          );
+        } else {
+          Alert.alert(
+            'Success',
+            'Account created successfully! Please log in or check your email for confirmation.',
+            [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
+          );
+        }
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
@@ -85,19 +113,25 @@ export default function SignupScreen({ navigation, route }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      <TouchableOpacity 
+        style={styles.closeButton} 
+        onPress={() => navigation.goBack()}
+      >
+        <Icon name="close" size={28} color="#000" />
+      </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
-          <Text style={styles.icon}>📍</Text>
-          <Text style={styles.title}>{Constants.expoConfig.extra.ORG_NAME}</Text>
-          <Text style={styles.subtitle}>Create your tracking account</Text>
+          <Text style={styles.icon}>📦</Text>
+          <Text style={styles.title}>Seller Signup</Text>
+          <Text style={styles.subtitle}>Create your seller account to manage products</Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Full Name</Text>
+            <Text style={styles.label}>Full Name *</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter your full name"
+              placeholder="Enter your full name or business name"
               value={name}
               onChangeText={setName}
               autoCapitalize="words"
@@ -105,7 +139,7 @@ export default function SignupScreen({ navigation, route }) {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>Email *</Text>
             <TextInput
               style={styles.input}
               placeholder="Enter your email"
@@ -118,10 +152,21 @@ export default function SignupScreen({ navigation, route }) {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
+            <Text style={styles.label}>Mobile Number</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter your password"
+              placeholder="Enter your 10-digit mobile number"
+              value={mobile}
+              onChangeText={setMobile}
+              keyboardType="phone-pad"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Password *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your password (min 6 characters)"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -130,7 +175,7 @@ export default function SignupScreen({ navigation, route }) {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password</Text>
+            <Text style={styles.label}>Confirm Password *</Text>
             <TextInput
               style={styles.input}
               placeholder="Confirm your password"
@@ -147,7 +192,7 @@ export default function SignupScreen({ navigation, route }) {
             disabled={loading}
           >
             <Text style={styles.buttonText}>
-              {loading ? 'Creating Account...' : 'Create Account'}
+              {loading ? 'Creating Account...' : 'Create Seller Account'}
             </Text>
           </TouchableOpacity>
 
@@ -167,6 +212,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 40,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
   },
   scrollContainer: {
     flexGrow: 1,

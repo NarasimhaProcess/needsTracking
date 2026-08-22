@@ -28,10 +28,10 @@ ALTER TABLE IF EXISTS public.damage_reports ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own damage reports" ON public.damage_reports;
 CREATE POLICY "Users can manage own damage reports" ON public.damage_reports
 FOR ALL USING (
-  auth.uid() = manager_id OR auth.uid() = user_id OR auth.uid() IS NOT NULL
+  auth.uid() = manager_id OR auth.uid() = user_id
 )
 WITH CHECK (
-  auth.uid() = manager_id OR auth.uid() = user_id OR auth.uid() IS NOT NULL
+  auth.uid() = manager_id OR auth.uid() = user_id
 );
 
 NOTIFY pgrst, 'reload schema';

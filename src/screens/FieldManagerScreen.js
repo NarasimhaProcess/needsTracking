@@ -88,26 +88,23 @@ const FieldManagerScreen = ({ navigation, route }) => {
         query = query.eq('area_id', areaId);
       } else if (user) {
         query = query.or(`manager_id.eq.${user.id},user_id.eq.${user.id}`);
+      } else {
+        setDamageReports([]);
+        return;
       }
 
       const { data, error } = await query.order('reported_at', { ascending: false });
 
       if (error) {
-        const { data: fallbackData, error: fallbackError } = await supabase
-          .from('damage_reports')
-          .select(`*, damage_report_files (*)`)
-          .order('reported_at', { ascending: false });
-        if (!fallbackError) {
-          setDamageReports(fallbackData || []);
-          return;
-        }
-        console.error('Error fetching damage reports:', error);
+        console.error('Error fetching damage reports:', error.message);
+        setDamageReports([]);
         return;
       }
 
       setDamageReports(data || []);
     } catch (err) {
       console.error('Error fetching damage reports:', err);
+      setDamageReports([]);
     }
   };
 
@@ -246,6 +243,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       const locCoords = currentLoc?.coords || { latitude: 0, longitude: 0 };
 
       const insertPayload = {
+        user_id: user.id,
         manager_id: user.id,
         latitude: locCoords.latitude,
         longitude: locCoords.longitude,

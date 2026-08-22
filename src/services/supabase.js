@@ -741,48 +741,126 @@ export async function deleteOrder(orderId) {
 
 export async function uploadQrImage(userId, imageUri) {
   try {
-    const fileExtension = imageUri.split('.').pop();
+    const cleanUri = (imageUri || '').split('?')[0];
+    const rawExt = cleanUri.split('.').pop() || 'jpg';
+    const fileExtension = rawExt.length > 5 ? 'jpg' : rawExt.toLowerCase();
     const fileName = `${Date.now()}-${userId}.${fileExtension}`;
     const filePath = `qr_codes/${userId}/${fileName}`;
-    const contentType = `image/${fileExtension}`;
+    const contentType = fileExtension === 'png' ? 'image/png' : 'image/jpeg';
 
-    const response = await fetch(imageUri);
-    const blob = await response.blob();
-
-    const { data, error } = await supabase.storage
-      .from('qr_codes')
-      .upload(filePath, blob, {
-        contentType: contentType,
-        upsert: false,
+    let fileData;
+    if (Platform.OS === 'web') {
+      const fileResponse = await fetch(imageUri);
+      fileData = await fileResponse.blob();
+    } else {
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
       });
-
-    if (error) {
-      console.error('Error uploading QR image:', error.message);
-      return null;
+      fileData = new Uint8Array(
+        atob(base64).split("").map((c) => c.charCodeAt(0))
+      );
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from('qr_codes')
-      .getPublicUrl(filePath);
+    let publicUrl = null;
 
-    return publicUrlData.publicUrl;
+    // Try storage buckets: qr_codes, productsmedia, locationtracker
+    const bucketsToTry = ['qr_codes', 'productsmedia', 'locationtracker'];
+    for (const bucketName of bucketsToTry) {
+      try {
+        const { error } = await supabase.storage
+          .from(bucketName)
+          .upload(filePath, fileData, {
+            contentType: contentType,
+            upsert: true,
+          });
+
+        if (!error) {
+          const { data: publicUrlData } = supabase.storage
+            .from(bucketName)
+            .getPublicUrl(filePath);
+          publicUrl = publicUrlData?.publicUrl;
+          if (publicUrl) {
+            console.log(`QR image uploaded successfully to bucket "${bucketName}":`, publicUrl);
+            break;
+          }
+        } else {
+          console.warn(`Storage upload to "${bucketName}" failed:`, error.message);
+        }
+      } catch (bucketErr) {
+        console.warn(`Error trying storage bucket "${bucketName}":`, bucketErr.message);
+      }
+    }
+
+    // Fallback: Edge function signed upload if needed
+    if (!publicUrl) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || supabaseAnonKey;
+        const { data: functionData, error: funcError } = await supabase.functions.invoke('upload-image', {
+          body: {
+            action: 'generateSignedUrl',
+            file_name: fileName,
+            file_path: filePath,
+            content_type: contentType,
+            user_id: userId,
+          },
+        });
+
+        if (!funcError && functionData?.signedUrl) {
+          const fileResponse = await fetch(imageUri);
+          const blob = await fileResponse.blob();
+          const uploadDirectResponse = await fetch(functionData.signedUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': contentType,
+              'x-upsert': 'true',
+            },
+            body: blob,
+          });
+
+          if (uploadDirectResponse.ok) {
+            const { data: pubData } = supabase.storage
+              .from('productsmedia')
+              .getPublicUrl(filePath);
+            publicUrl = pubData.publicUrl;
+          }
+        }
+      } catch (edgeErr) {
+        console.warn('Edge function fallback error:', edgeErr.message);
+      }
+    }
+
+    return publicUrl;
   } catch (error) {
     console.error('Error in uploadQrImage:', error.message);
     return null;
   }
 }
 
-export async function addQrCode(userId, qrImageUrl, name, isActive) {
-  const { data, error } = await supabase
-    .from('user_qr_codes')
-    .insert([{ user_id: userId, qr_image_url: qrImageUrl, name: name, is_active: isActive }])
-    .select();
+export async function addQrCode(userId, qrImageUrl, name = 'My UPI QR', isActive = true) {
+  try {
+    if (isActive) {
+      // Deactivate previous active QR codes for this user
+      await supabase
+        .from('user_qr_codes')
+        .update({ is_active: false })
+        .eq('user_id', userId);
+    }
 
-  if (error) {
-    console.error('Error adding QR code:', error.message);
+    const { data, error } = await supabase
+      .from('user_qr_codes')
+      .insert([{ user_id: userId, qr_image_url: qrImageUrl, name: name, is_active: isActive }])
+      .select();
+
+    if (error) {
+      console.error('Error adding QR code:', error.message);
+      return null;
+    }
+    return data ? data[0] : null;
+  } catch (err) {
+    console.error('Exception in addQrCode:', err);
     return null;
   }
-  return data ? data[0] : null;
 }
 
 export async function updateQrCode(qrCodeId, name, isActive) {
@@ -801,17 +879,16 @@ export async function updateQrCode(qrCodeId, name, isActive) {
 
 export async function deleteQrCode(qrCodeId, imageUrl) {
   try {
-    const bucketName = 'qr_codes';
-    const pathSegments = imageUrl.split('/');
-    const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
-
-    const { error: storageError } = await supabase.storage
-      .from(bucketName)
-      .remove([filePathInBucket]);
-
-    if (storageError) {
-      console.error('Error deleting QR image from storage:', storageError.message);
-      throw storageError;
+    const bucketsToTry = ['qr_codes', 'productsmedia', 'locationtracker'];
+    if (imageUrl) {
+      for (const bucketName of bucketsToTry) {
+        if (imageUrl.includes(bucketName)) {
+          const pathSegments = imageUrl.split('/');
+          const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+          await supabase.storage.from(bucketName).remove([filePathInBucket]);
+          break;
+        }
+      }
     }
 
     const { error: dbError } = await supabase
@@ -821,7 +898,7 @@ export async function deleteQrCode(qrCodeId, imageUrl) {
 
     if (dbError) {
       console.error('Error deleting QR code from database:', dbError.message);
-      throw dbError;
+      return false;
     }
     return true;
   } catch (error) {
@@ -831,18 +908,25 @@ export async function deleteQrCode(qrCodeId, imageUrl) {
 }
 
 export async function getActiveQrCode(userId) {
-  const { data, error } = await supabase
-    .from('user_qr_codes')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('is_active', true)
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('user_qr_codes')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  if (error && error.code !== 'PGRST116') {
-    console.error('Error fetching active QR code:', error.message);
+    if (error) {
+      console.error('Error fetching active QR code:', error.message);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.error('Exception in getActiveQrCode:', err);
     return null;
   }
-  return data;
 }
 
 export async function getAllQrCodes(userId) {

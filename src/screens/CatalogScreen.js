@@ -162,14 +162,21 @@ const CatalogScreen = ({ navigation, route }) => {
         const { data: { user: currentUser } } = await supabase.auth.getUser();
         setUser(currentUser);
 
-        const targetSellerId = sellerId || customerId;
-        let data = await getActiveProductsWithDetails(targetSellerId);
-        if (!data || data.length === 0) {
-          data = await getActiveProductsWithDetails(); // Fetch all active products
+        // Determine target seller:
+        // 1. Explicit sellerId or customerId passed via navigation
+        // 2. Logged-in user's own products
+        const targetSellerId = sellerId || customerId || (currentUser ? currentUser.id : null);
+
+        let data = [];
+        if (targetSellerId) {
+          // Strictly fetch ONLY this seller's products (do not fallback to all products if 0 items)
+          data = await getActiveProductsWithDetails(targetSellerId);
+        } else {
+          // Only for unauthenticated general browse
+          data = await getActiveProductsWithDetails();
         }
-        if (data) {
-          setProducts(data);
-        }
+
+        setProducts(data || []);
 
         if (currentUser) {
           const cartData = await getCart(currentUser.id);

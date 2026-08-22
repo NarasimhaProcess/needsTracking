@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState, useCallback } from 'react';
 import UniversalWebView from './UniversalWebView';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Platform } from 'react-native';
 
 const SimpleLeafletMap = forwardRef(({ 
   initialRegion, 
@@ -14,31 +14,42 @@ const SimpleLeafletMap = forwardRef(({
   
   // Store initial data only - don't update after map is loaded
   const [initialMapData] = useState({
-    initialRegion,
-    markerCoordinate,
+    initialRegion: initialRegion || { latitude: 28.6139, longitude: 77.2090 },
+    markerCoordinate: markerCoordinate || initialRegion || { latitude: 28.6139, longitude: 77.2090 },
     userLocations
   });
 
   // Send commands to existing map instead of reloading
   const sendMessageToWebView = useCallback((message) => {
-    if (webViewRef.current && isMapReady) {
-      const script = `
+    if (webViewRef.current) {
+      if (Platform.OS === 'web') {
         try {
-          ${message}
+          if (webViewRef.current.contentWindow) {
+            webViewRef.current.contentWindow.eval(message);
+          }
         } catch (error) {
-          console.error('Error executing command:', error);
+          console.error('Error executing command on web iframe:', error);
         }
-        true; // Return true to avoid console warnings
-      `;
-      webViewRef.current.injectJavaScript(script);
+      } else {
+        const script = `
+          try {
+            ${message}
+          } catch (error) {
+            console.error('Error executing command:', error);
+          }
+          true;
+        `;
+        if (webViewRef.current.injectJavaScript) {
+          webViewRef.current.injectJavaScript(script);
+        }
+      }
     }
-  }, [isMapReady]);
+  }, []);
 
-  // Update map when props change, but without reloading WebView
+  // Update route if userLocations changed
   useEffect(() => {
     if (!isMapReady) return;
 
-    // Update route if userLocations changed
     sendMessageToWebView(`
       if (window.mapFunctions && window.mapFunctions.updateRoute) {
         window.mapFunctions.updateRoute(${JSON.stringify(userLocations)});
@@ -46,10 +57,10 @@ const SimpleLeafletMap = forwardRef(({
     `);
   }, [userLocations, sendMessageToWebView, isMapReady]);
 
+  // Update marker position if markerCoordinate changed
   useEffect(() => {
     if (!isMapReady || !markerCoordinate) return;
 
-    // Update marker position if markerCoordinate changed
     sendMessageToWebView(`
       if (window.mapFunctions && window.mapFunctions.updateMarker) {
         window.mapFunctions.updateMarker(${markerCoordinate.latitude}, ${markerCoordinate.longitude});
@@ -57,7 +68,7 @@ const SimpleLeafletMap = forwardRef(({
     `);
   }, [markerCoordinate, sendMessageToWebView, isMapReady]);
 
-  // Create dynamic HTML with embedded data (only used once on initialization)
+  // Create dynamic HTML with embedded data
   const createMapHtml = (data) => {
     return `
 <!DOCTYPE html>
@@ -66,24 +77,30 @@ const SimpleLeafletMap = forwardRef(({
   <title>Leaflet Map</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <style>
     html, body, #map {
       height: 100%;
       width: 100%;
       margin: 0;
       padding: 0;
+      background-color: #f2f2f2;
     }
     .leaflet-control-attribution {
       font-size: 10px;
+    }
+    .custom-location-pin {
+      background-color: #007AFF;
+      border: 2px solid #FFFFFF;
+      border-radius: 50%;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <script>
-    // Embedded data from React Native
     const mapData = ${JSON.stringify(data)};
     
     let map;
@@ -91,8 +108,49 @@ const SimpleLeafletMap = forwardRef(({
     let routePolyline;
     let locationMarkers = [];
 
+    // Helper to send messages back to React Native or Web parent
+    function postToNative(data) {
+      const json = JSON.stringify(data);
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(json);
+      }
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(json, '*');
+      }
+    }
+
+    // Configure default leaflet marker icons to CDN to prevent 404s
+    delete L.Icon.Default.prototype._getIconUrl;
+    L.Icon.Default.mergeOptions({
+      iconRetinaUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+      iconUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon.png',
+      shadowUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-shadow.png',
+    });
+
+    function setupMarker(lat, lng) {
+      if (marker) {
+        marker.setLatLng([lat, lng]);
+      } else {
+        marker = L.marker([lat, lng], { 
+          draggable: true,
+          title: 'Selected Location'
+        }).addTo(map);
+        
+        marker.on('dragend', function(e) {
+          const latLng = e.target.getLatLng();
+          postToNative({
+            type: 'markerDragEnd',
+            latitude: latLng.lat,
+            longitude: latLng.lng
+          });
+        });
+      }
+    }
+
     function initializeMap() {
       try {
+        if (map) return;
+
         map = L.map('map', {
           zoomControl: true,
           attributionControl: true
@@ -103,194 +161,102 @@ const SimpleLeafletMap = forwardRef(({
           attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // Initialize with data
-        if (mapData.initialRegion) {
+        if (mapData.initialRegion && mapData.initialRegion.latitude && mapData.initialRegion.longitude) {
           const { latitude, longitude } = mapData.initialRegion;
-          map.setView([latitude, longitude], 13);
+          map.setView([latitude, longitude], 14);
           
-          // Add marker
-          if (mapData.markerCoordinate) {
-            const { latitude: markerLat, longitude: markerLng } = mapData.markerCoordinate;
-            marker = L.marker([markerLat, markerLng], { 
-              draggable: true,
-              title: 'Current Location'
-            }).addTo(map);
-            
-            marker.on('dragend', function(e) {
-              const message = JSON.stringify({
-                type: 'markerDragEnd',
-                latitude: e.target.getLatLng().lat,
-                longitude: e.target.getLatLng().lng
-              });
-              
-              if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(message);
-              }
-            });
+          if (mapData.markerCoordinate && mapData.markerCoordinate.latitude && mapData.markerCoordinate.longitude) {
+            setupMarker(mapData.markerCoordinate.latitude, mapData.markerCoordinate.longitude);
+          } else {
+            setupMarker(latitude, longitude);
           }
         } else {
-          map.setView([0, 0], 2);
+          map.setView([28.6139, 77.2090], 12);
         }
 
-        // Add route if locations exist
         if (mapData.userLocations && mapData.userLocations.length > 0) {
           updateRoute(mapData.userLocations);
         }
 
-        // Handle map clicks
+        // Tap/click on map immediately places marker and notifies parent
         map.on('click', function(e) {
-          const message = JSON.stringify({
+          const lat = e.latlng.lat;
+          const lng = e.latlng.lng;
+          setupMarker(lat, lng);
+          postToNative({
             type: 'mapClick',
-            latitude: e.latlng.lat,
-            longitude: e.latlng.lng
+            latitude: lat,
+            longitude: lng
           });
-          
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(message);
-          }
         });
 
-        // Notify React Native that map is ready
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'mapReady'
-          }));
-        }
-
+        // Notify parent that map is ready
+        postToNative({ type: 'mapReady' });
         console.log('Map initialized successfully');
       } catch (error) {
         console.error('Error initializing map:', error);
       }
     }
 
-    // Function to center map on location without full reload
     function centerOnLocation(latitude, longitude, zoom = 15) {
       if (!map) return; 
-      
       map.setView([latitude, longitude], zoom, {
         animate: true,
-        duration: 1
+        duration: 0.5
       });
-      
-      // Update marker position
-      if (marker) {
-        marker.setLatLng([latitude, longitude]);
-      } else {
-        marker = L.marker([latitude, longitude], { 
-          draggable: true,
-          title: 'Current Location'
-        }).addTo(map);
-        
-        marker.on('dragend', function(e) {
-          const message = JSON.stringify({
-            type: 'markerDragEnd',
-            latitude: e.target.getLatLng().lat,
-            longitude: e.target.getLatLng().lng
-          });
-          
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(message);
-          }
-        });
-      }
+      setupMarker(latitude, longitude);
     }
 
-    // Function to update marker position only
     function updateMarker(latitude, longitude) {
       if (!map) return; 
-      
-      if (marker) {
-        marker.setLatLng([latitude, longitude]);
-      } else {
-        marker = L.marker([latitude, longitude], { 
-          draggable: true,
-          title: 'Current Location'
-        }).addTo(map);
-        
-        marker.on('dragend', function(e) {
-          const message = JSON.stringify({
-            type: 'markerDragEnd',
-            latitude: e.target.getLatLng().lat,
-            longitude: e.target.getLatLng().lng
-          });
-          
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(message);
-          }
-        });
-      }
+      setupMarker(latitude, longitude);
     }
 
-    // Function to clear all user locations
     function clearUserLocations() {
       if (!map) return; 
-      
-      // Remove existing route
       if (routePolyline) {
         map.removeLayer(routePolyline);
         routePolyline = null;
       }
-      
-      // Remove existing location markers
-      locationMarkers.forEach(marker => {
-        map.removeLayer(marker);
-      });
+      locationMarkers.forEach(m => map.removeLayer(m));
       locationMarkers = [];
     }
 
-    // Function to update route
     function updateRoute(locations) {
       if (!map || !locations || locations.length === 0) {
         clearUserLocations();
         return;
       }
-      
-      // Clear existing route first
       clearUserLocations();
-      
-      // Create route polyline
       const routeCoords = locations.map(loc => [loc.latitude, loc.longitude]);
       routePolyline = L.polyline(routeCoords, {
-        color: 'blue',
-        weight: 3,
-        opacity: 0.7
+        color: '#007AFF',
+        weight: 4,
+        opacity: 0.8
       }).addTo(map);
       
-      // Add small markers for each location
       locations.forEach((location, index) => {
         const locationMarker = L.circleMarker([location.latitude, location.longitude], {
-          radius: 4,
-          fillColor: index === 0 ? 'green' : (index === locations.length - 1 ? 'red' : 'blue'),
-          color: 'white',
-          weight: 1,
+          radius: 5,
+          fillColor: index === 0 ? '#34C759' : (index === locations.length - 1 ? '#FF3B30' : '#007AFF'),
+          color: '#ffffff',
+          weight: 2,
           opacity: 1,
-          fillOpacity: 0.8
+          fillOpacity: 0.9
         }).addTo(map);
-        
-        // Add popup with timestamp if available
-        if (location.timestamp) {
-        
-        }
-        
         locationMarkers.push(locationMarker);
       });
-      
-      // Don't auto-fit bounds - preserve user's current zoom/pan
-      console.log('Route updated with', locations.length, 'points');
     }
 
-    // Function to fit map to route
     function fitToRoute() {
       if (!map || !routePolyline) return; 
-      
       const bounds = routePolyline.getBounds();
       map.fitBounds(bounds.pad(0.1), {
         animate: true,
-        duration: 1
+        duration: 0.5
       });
     }
 
-    // Make functions available globally for injection
     window.mapFunctions = {
       centerOnLocation,
       updateMarker,
@@ -299,19 +265,15 @@ const SimpleLeafletMap = forwardRef(({
       fitToRoute
     };
 
-    // Initialize map when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-      console.log('DOM loaded, initializing map');
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeMap);
+    } else {
       initializeMap();
-    });
+    }
 
-    // Fallback initialization
     setTimeout(() => {
-      if (!map) {
-        console.log('Fallback initialization');
-        initializeMap();
-      }
-    }, 1000);
+      if (!map) initializeMap();
+    }, 500);
   </script>
 </body>
 </html>`;
@@ -319,34 +281,44 @@ const SimpleLeafletMap = forwardRef(({
 
   const handleWebViewMessage = (event) => {
     try {
-      const data = JSON.parse(event.nativeEvent.data);
-      console.log('Received message from WebView:', data);
-      
-      switch (data.type) {
+      let rawData = event.nativeEvent?.data || event.data;
+      if (typeof rawData === 'string') {
+        try {
+          rawData = JSON.parse(rawData);
+        } catch (e) {
+          return;
+        }
+      }
+      if (!rawData || typeof rawData !== 'object') return;
+
+      switch (rawData.type) {
         case 'mapReady':
           setIsMapReady(true);
           break;
           
         case 'mapClick':
-          onMapPress && onMapPress({
-            latitude: data.latitude,
-            longitude: data.longitude
-          });
+          if (onMapPress) {
+            onMapPress({
+              latitude: rawData.latitude,
+              longitude: rawData.longitude
+            });
+          }
           break;
           
         case 'markerDragEnd':
-          onMarkerDragEnd && onMarkerDragEnd({
-            latitude: data.latitude,
-            longitude: data.longitude
-          });
+          if (onMarkerDragEnd) {
+            onMarkerDragEnd({
+              latitude: rawData.latitude,
+              longitude: rawData.longitude
+            });
+          }
           break;
       }
     } catch (error) {
-      console.error('Error parsing WebView message:', error);
+      console.error('Error parsing LeafletMap WebView message:', error);
     }
   };
 
-  // Expose methods to parent component
   useImperativeHandle(ref, () => ({
     centerOnLocation: (location, zoom = 15) => {
       sendMessageToWebView(`
@@ -403,18 +375,7 @@ const SimpleLeafletMap = forwardRef(({
         bounces={false}
         scrollEnabled={false}
         mixedContentMode="compatibility"
-        onError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.error('WebView error: ', nativeEvent);
-        }}
-        onHttpError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-        }}
-        onLoadStart={() => {
-          console.log('WebView load started');
-          setIsMapReady(false);
-        }}
-        onLoadEnd={() => console.log('WebView load ended')}
+        onLoadEnd={() => setIsMapReady(true)}
       />
     </View>
   );

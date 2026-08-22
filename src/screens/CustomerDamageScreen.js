@@ -78,33 +78,30 @@ const CustomerDamageScreen = ({ navigation, route }) => {
   const fetchDamageReports = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      let query = supabase.from('damage_reports').select(`
-        *,
-        damage_report_files (*)
-      `);
-
-      if (user) {
-        query = query.or(`manager_id.eq.${user.id},user_id.eq.${user.id}`);
+      if (!user) {
+        setDamageReports([]);
+        return;
       }
 
-      const { data, error } = await query.order('reported_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('damage_reports')
+        .select(`
+          *,
+          damage_report_files (*)
+        `)
+        .or(`manager_id.eq.${user.id},user_id.eq.${user.id}`)
+        .order('reported_at', { ascending: false });
 
       if (error) {
-        const { data: fallbackData, error: fallbackError } = await supabase
-          .from('damage_reports')
-          .select(`*, damage_report_files (*)`)
-          .order('reported_at', { ascending: false });
-        if (!fallbackError) {
-          setDamageReports(fallbackData || []);
-          return;
-        }
-        console.error('Error fetching damage reports:', error);
+        console.error('Error fetching damage reports:', error.message);
+        setDamageReports([]);
         return;
       }
 
       setDamageReports(data || []);
     } catch (err) {
       console.error('Error fetching damage reports:', err);
+      setDamageReports([]);
     }
   };
 
@@ -230,6 +227,7 @@ const CustomerDamageScreen = ({ navigation, route }) => {
       const locCoords = currentLoc?.coords || { latitude: 0, longitude: 0 };
 
       const insertPayload = {
+        user_id: user.id,
         manager_id: user.id,
         latitude: locCoords.latitude,
         longitude: locCoords.longitude,
