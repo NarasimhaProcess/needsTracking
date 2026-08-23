@@ -6,9 +6,6 @@ export default {
     "slug": "needstracking",
     "scheme": "needstracking",
     "version": "1.0.0",
-    "android": {
-      "googleServicesFile": "./google-services.json"
-     },
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -43,15 +40,14 @@ export default {
         "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.WAKE_LOCK",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.RECORD_AUDIO",
         "android.permission.INTERNET"
       ],
       "package": "com.narasimhaexpo.needstrackingmobile",
       "config": {
         "googleMaps": {
-          "apiKey": process.env.GOOGLE_MAPS_API_KEY
+          // CHANGE 1: Use the new prefixed variable
+          "apiKey": process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
         }
       }
     },
@@ -94,9 +90,10 @@ export default {
     "sdkVersion": "53.0.0",
     
     "extra": {
-      "ORG_NAME": process.env.ORG_NAME || "localwala's",
-      "SUPABASE_URL": process.env.SUPABASE_URL,
-      "SUPABASE_ANON_KEY": process.env.SUPABASE_ANON_KEY,
+      // CHANGE 2: Update these references to match your .env and GitHub workflow
+      "ORG_NAME": process.env.EXPO_PUBLIC_ORG_NAME || "localwala's",
+      "SUPABASE_URL": process.env.EXPO_PUBLIC_SUPABASE_URL,
+      "SUPABASE_ANON_KEY": process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
       "eas": {
         "projectId": "f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"
       }
