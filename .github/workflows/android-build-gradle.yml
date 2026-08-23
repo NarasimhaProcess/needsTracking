@@ -31,10 +31,11 @@ jobs:
 
       - name: Create .env
         run: |
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
-          echo "GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
-          echo "ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
+          # FIX 1: Expo requires the EXPO_PUBLIC_ prefix to bundle variables inside a built app
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
+          echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
 
       - name: Generate Android project
         run: |
@@ -50,16 +51,18 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew clean assembleDebug
+          # FIX 2: Switched to assembleRelease or forced bundling so the JS engine doesn't try to link to Metro
+          ./gradlew clean assembleRelease
 
       - name: Copy APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk \
-             needsTracking-development-debug.apk
+          # FIX 3: Point path to the production release output binary instead of debug wrapper
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             needsTracking-development-release.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: needsTracking-development-apk
-          path: needsTracking-development-debug.apk
+          path: needsTracking-development-release.apk
           retention-days: 30
