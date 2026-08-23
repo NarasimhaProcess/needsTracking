@@ -16,6 +16,17 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 
 import ProductFormModal from '../components/ProductFormModal';
 
+const isImageMedia = (media) => {
+  if (!media) return false;
+  const type = (media.media_type || media.type || '').toLowerCase();
+  const url = media.media_url || media.uri || '';
+  if (type === 'video') return false;
+  if (type === 'image' || type === 'url' || !type) return true;
+  if (type.startsWith('image/')) return true;
+  if (typeof url === 'string' && /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url)) return true;
+  return true;
+};
+
 const ProductScreen = ({ route, navigation }) => {
   const { session: initialSession } = route?.params || {};
   const [session, setSession] = useState(initialSession || null);
@@ -181,28 +192,34 @@ const ProductScreen = ({ route, navigation }) => {
                   <Text style={styles.productCell}>{new Date(item.start_date).toLocaleDateString()}</Text>
                   <Text style={styles.productCell}>{new Date(item.end_date).toLocaleDateString()}</Text>
                   <View style={styles.productCellMedia}>
-                    <FlatList
-                      data={item.product_media}
-                      horizontal
-                      showsHorizontalScrollIndicator={true}
-                      keyExtractor={(media) => media.id.toString()}
-                      renderItem={({ item: media, index: mediaIndex }) => (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setAllMediaForViewer(item.product_media);
-                            setCurrentMediaIndex(mediaIndex);
-                            setShowMediaViewer(true);
-                          }}
-                          style={styles.mediaContainer}
-                        >
-                          {media.media_type === 'image' ? (
-                            <Image source={{ uri: media.media_url }} style={styles.productImage} />
-                          ) : (
-                            <Text style={styles.videoPlaceholder}>Video</Text>
-                          )}
-                        </TouchableOpacity>
-                      )}
-                    />
+                    {item.product_media && item.product_media.length > 0 ? (
+                      <FlatList
+                        data={item.product_media}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        keyExtractor={(media, idx) => (media?.id ? media.id.toString() : `media-${idx}`)}
+                        renderItem={({ item: media, index: mediaIndex }) => (
+                          <TouchableOpacity
+                            onPress={() => {
+                              setAllMediaForViewer(item.product_media);
+                              setCurrentMediaIndex(mediaIndex);
+                              setShowMediaViewer(true);
+                            }}
+                            style={styles.mediaContainer}
+                          >
+                            {isImageMedia(media) && media.media_url ? (
+                              <Image source={{ uri: media.media_url }} style={styles.productImage} />
+                            ) : (
+                              <Text style={styles.videoPlaceholder}>Video</Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      />
+                    ) : (
+                      <View style={styles.noMediaPlaceholder}>
+                        <Icon name="image" size={16} color="#bbb" />
+                      </View>
+                    )}
                   </View>
                 </View>
               );
@@ -262,13 +279,13 @@ const ProductScreen = ({ route, navigation }) => {
                 <Icon name="chevron-right" size={30} color="white" />
               </TouchableOpacity>
 
-              {allMediaForViewer[currentMediaIndex].media_type === 'image' ? (
+              {isImageMedia(allMediaForViewer[currentMediaIndex]) && allMediaForViewer[currentMediaIndex]?.media_url ? (
                 <Image
                   source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
                   style={styles.fullScreenMedia}
                   resizeMode="contain"
                 />
-              ) : allMediaForViewer[currentMediaIndex].media_type === 'video' ? (
+              ) : allMediaForViewer[currentMediaIndex]?.media_type === 'video' ? (
                 <Text style={styles.noMediaText}>Video playback temporarily disabled</Text> // Placeholder
               ) : (
                 <Text style={styles.noMediaText}>No media to display</Text>
@@ -361,6 +378,18 @@ const styles = StyleSheet.create({
     lineHeight: 40,
     fontSize: 8,
     backgroundColor: '#f0f0f0',
+  },
+  noMediaPlaceholder: {
+    width: 40,
+    height: 40,
+    margin: 2,
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
   },
   mediaContainer: {
     position: 'relative',

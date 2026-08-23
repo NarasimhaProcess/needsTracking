@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase, addToCart } from '../services/supabase';
+import { supabase, addToCart, signInWithGoogle } from '../services/supabase';
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 
 const mergeGuestCart = async (userId) => {
@@ -30,7 +30,33 @@ export default function BuyerAuthScreen({ navigation, route }) {
   const [mobileNumber, setMobileNumber] = useState('');
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      const res = await signInWithGoogle('customer');
+      if (res.success && res.user) {
+        await mergeGuestCart(res.user.id);
+        Alert.alert('Welcome!', `Logged in successfully as ${res.user.user_metadata?.full_name || res.user.email}`);
+        if (route.params?.onAuthSuccess) {
+          route.params.onAuthSuccess(res.user);
+        }
+        if (route.params?.redirectTo) {
+          navigation.navigate(route.params.redirectTo, route.params.redirectParams || {});
+        } else {
+          navigation.navigate('Catalog');
+        }
+      } else if (res.error) {
+        Alert.alert('Google Sign-In Failed', res.error);
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Failed to sign in with Google');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleSendOtp = async () => {
     if (!mobileNumber) {
@@ -141,7 +167,14 @@ export default function BuyerAuthScreen({ navigation, route }) {
             .from('profiles')
             .insert({ id: userId, role: userRole, mobile: mobileNumber });
         }
-        navigation.goBack();
+        if (route.params?.onAuthSuccess) {
+          route.params.onAuthSuccess(data.user);
+        }
+        if (route.params?.redirectTo) {
+          navigation.navigate(route.params.redirectTo, route.params.redirectParams || {});
+        } else {
+          navigation.navigate('Catalog');
+        }
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred.');
@@ -164,6 +197,27 @@ export default function BuyerAuthScreen({ navigation, route }) {
           <ScrollView contentContainerStyle={styles.scrollContainer}>
             <Text style={styles.title}>Buyer Login / Signup</Text>
 
+            <TouchableOpacity 
+              style={[styles.googleButton, googleLoading && styles.buttonDisabled]} 
+              onPress={handleGoogleSignIn}
+              disabled={googleLoading || loading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator size="small" color="#4285F4" />
+              ) : (
+                <View style={styles.googleButtonContent}>
+                  <Icon name="google" size={20} color="#EA4335" style={styles.googleIcon} />
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.dividerContainer}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>OR WITH MOBILE</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Mobile Number</Text>
               <TextInput
@@ -178,7 +232,7 @@ export default function BuyerAuthScreen({ navigation, route }) {
             </View>
 
             {!otpSent ? (
-              <TouchableOpacity style={styles.button} onPress={handleSendOtp} disabled={loading}>
+              <TouchableOpacity style={[styles.button, loading && styles.buttonDisabled]} onPress={handleSendOtp} disabled={loading || googleLoading}>
                 <Text style={styles.buttonText}>{loading ? 'Sending OTP...' : 'Send OTP'}</Text>
               </TouchableOpacity>
             ) : (
@@ -194,13 +248,13 @@ export default function BuyerAuthScreen({ navigation, route }) {
                     secureTextEntry
                   />
                 </View>
-                <TouchableOpacity style={styles.button} onPress={handleVerifyOtp} disabled={loading}>
+                <TouchableOpacity style={[styles.button, loading && styles.buttonDisabled]} onPress={handleVerifyOtp} disabled={loading || googleLoading}>
                   <Text style={styles.buttonText}>{loading ? 'Verifying...' : 'Verify OTP'}</Text>
                 </TouchableOpacity>
               </>
             )}
 
-            {loading && <ActivityIndicator size="large" color="#0000ff" style={styles.activityIndicator} />}
+            {loading && <ActivityIndicator size="large" color="#007AFF" style={styles.activityIndicator} />}
           </ScrollView>
         </KeyboardAvoidingView>
       </View>
@@ -216,62 +270,117 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
-    width: '90%',
+    width: '92%',
+    maxHeight: '85%',
     backgroundColor: 'white',
-    borderRadius: 10,
+    borderRadius: 16,
     padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
   },
   closeButton: {
     alignSelf: 'flex-end',
+    padding: 6,
   },
   container: {
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f8f8f8',
+    paddingHorizontal: 10,
   },
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
+    paddingVertical: 10,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 30,
-    textAlign: 'center',
-    color: '#333',
-  },
-  inputGroup: {
     marginBottom: 20,
+    textAlign: 'center',
+    color: '#1e293b',
   },
-  label: {
+  googleButton: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleIcon: {
+    marginRight: 10,
+  },
+  googleButtonText: {
+    color: '#334155',
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 8,
-    color: '#555',
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e2e8f0',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94a3b8',
+    letterSpacing: 0.5,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 6,
+    color: '#475569',
   },
   input: {
-    backgroundColor: '#fff',
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#cbd5e1',
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
+    color: '#1e293b',
   },
   button: {
     backgroundColor: '#007AFF',
-    padding: 15,
+    padding: 14,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 8,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   activityIndicator: {
-    marginTop: 20,
+    marginTop: 15,
   },
 });

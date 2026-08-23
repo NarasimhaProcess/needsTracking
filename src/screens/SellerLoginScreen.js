@@ -10,16 +10,49 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase } from '../services/supabase';
+import { supabase, signInWithGoogle } from '../services/supabase';
 import { StackActions } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
+import { ActivityIndicator } from 'react-native';
 
 export default function SellerLoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    try {
+      const res = await signInWithGoogle('seller');
+      if (res.success && res.user) {
+        await supabase
+          .from('profiles')
+          .upsert({
+            id: res.user.id,
+            role: 'seller',
+            full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Seller',
+            email: res.user.email,
+            updated_at: new Date().toISOString(),
+          });
+
+        if (onAuthSuccess) {
+          onAuthSuccess(res.user);
+        }
+
+        navigation.dispatch(StackActions.replace('ProductTabs', { session: res.session, user: res.user }));
+      } else if (res.error) {
+        Alert.alert('Google Sign-In Failed', res.error);
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Google sign-in failed');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -142,11 +175,32 @@ export default function SellerLoginScreen({ navigation, route }) {
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || googleLoading}
           >
             <Text style={styles.buttonText}>
               {loading ? 'Signing In...' : 'Sign In'}
             </Text>
+          </TouchableOpacity>
+
+          <View style={styles.dividerContainer}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.googleButton, googleLoading && styles.buttonDisabled]}
+            onPress={handleGoogleLogin}
+            disabled={loading || googleLoading}
+          >
+            {googleLoading ? (
+              <ActivityIndicator size="small" color="#4285F4" />
+            ) : (
+              <View style={styles.googleButtonContent}>
+                <FontAwesome name="google" size={20} color="#EA4335" style={{ marginRight: 10 }} />
+                <Text style={styles.googleButtonText}>Sign in with Google</Text>
+              </View>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -244,16 +298,56 @@ const styles = StyleSheet.create({
   },
   forgotPassword: {
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 16,
   },
   forgotPasswordText: {
     color: '#007AFF',
     fontSize: 16,
   },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 18,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E5EA',
+  },
+  dividerText: {
+    marginHorizontal: 12,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  googleButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    borderRadius: 12,
+    padding: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleButtonText: {
+    color: '#1C1C1E',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 40,
+    marginTop: 30,
   },
   signupText: {
     fontSize: 16,

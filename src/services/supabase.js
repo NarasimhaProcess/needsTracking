@@ -1,9 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
+import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
 
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem
 import { Buffer } from 'buffer';
+
+WebBrowser.maybeCompleteAuthSession();
+
 let Storage;
 if (Platform.OS === 'web') {
   Storage = {
@@ -23,7 +28,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     storage: Storage,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,
+    detectSessionInUrl: Platform.OS === 'web',
   },
 });
 
@@ -54,14 +59,16 @@ export async function createProduct(productData) {
 }
 
 export async function saveProductMedia(productId, mediaData, mediaType, userId, accessToken) {
-  if (mediaType === 'url') {
+  const normalizedMediaType = mediaType === 'video' ? 'video' : 'image';
+  
+  if (mediaType === 'url' || (typeof mediaData === 'string' && (mediaData.startsWith('http://') || mediaData.startsWith('https://')))) {
     const { error: insertError } = await supabase
       .from('product_media')
       .insert([
         {
           product_id: productId,
           media_url: mediaData,
-          media_type: 'url',
+          media_type: normalizedMediaType,
         },
       ]);
 
@@ -76,6 +83,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
       const fileExtension = cleanUri.split('.').pop() || (mediaType === 'video' ? 'mp4' : 'jpg');
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExtension}`;
       const filePath = `product_media/${productId}/${fileName}`;
+      const finalEdgePath = userId ? `${userId}/${filePath}` : filePath;
       const contentType = mediaType === 'video' ? `video/${fileExtension}` : `image/${fileExtension}`;
 
       let publicUrl = null;
@@ -202,7 +210,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
             if (uploadDirectResponse.ok) {
               const { data: pubData } = supabase.storage
                 .from('productsmedia')
-                .getPublicUrl(filePath);
+                .getPublicUrl(finalEdgePath);
               publicUrl = pubData.publicUrl;
             }
           }
@@ -223,7 +231,7 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
           {
             product_id: productId,
             media_url: publicUrl,
-            media_type: mediaType || 'image',
+            media_type: normalizedMediaType,
           },
         ]);
 
@@ -1099,7 +1107,8 @@ export async function getAssignedOrders(deliveryManagerId) {
           products (
             id,
             product_name,
-            customer_id
+            customer_id,
+            product_media (media_url, media_type)
           )
         )
       )
@@ -1107,7 +1116,60 @@ export async function getAssignedOrders(deliveryManagerId) {
     .eq('delivery_manager_id', deliveryManagerId)
     .order('created_at', { ascending: false });
 
-  return data;
+  if (error) {
+    console.error('Error fetching assigned orders:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function getAvailableDeliveryOrders() {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      order_items (
+        id,
+        quantity,
+        price,
+        product_variant_combinations (
+          id,
+          combination_string,
+          products (
+            id,
+            product_name,
+            customer_id,
+            product_media (media_url, media_type)
+          )
+        )
+      )
+    `)
+    .is('delivery_manager_id', null)
+    .neq('order_type', 'shop-order')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching available delivery orders:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function acceptDeliveryOrder(orderId, deliveryManagerId) {
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      delivery_manager_id: deliveryManagerId,
+      status: 'Processing',
+    })
+    .eq('id', orderId)
+    .select();
+
+  if (error) {
+    console.error('Error accepting delivery order:', error.message);
+    return null;
+  }
+  return data ? data[0] : null;
 }
 
 export async function updateDeliveryManagerLocation(managerId, location) {
@@ -1168,4 +1230,185 @@ export async function getProductsInRange(latitude, longitude, radius) {
   }
   console.log('Products in range data:', data);
   return data;
-} 
+}
+
+/**
+ * Sign in / Sign up with Google OAuth via Supabase
+ * @param {string} defaultRole - Role to assign if new profile ('customer' / 'buyer')
+ */
+export async function signInWithGoogle(defaultRole = 'customer') {
+  try {
+    if (Platform.OS === 'web') {
+      const redirectUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+      if (error) throw error;
+      return { success: true };
+    }
+
+    // Native Mobile (Expo Go / Standalone / Dev Build)
+    const redirectUrl = AuthSession.makeRedirectUri({
+      scheme: 'needstracking',
+      path: 'auth/callback',
+    });
+    console.log('[Google Auth] Using redirect URL:', redirectUrl);
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: redirectUrl,
+        skipBrowserRedirect: true,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    });
+
+    if (error) throw error;
+
+    const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+    console.log('[Google Auth] Browser result:', res);
+
+    if (res.type === 'success' && res.url) {
+      let accessToken = null;
+      let refreshToken = null;
+
+      if (res.url.includes('#')) {
+        const hashParams = new URLSearchParams(res.url.split('#')[1]);
+        accessToken = hashParams.get('access_token');
+        refreshToken = hashParams.get('refresh_token');
+      }
+
+      if (!accessToken && res.url.includes('?')) {
+        const queryParams = new URLSearchParams(res.url.split('?')[1]);
+        accessToken = queryParams.get('access_token');
+        refreshToken = queryParams.get('refresh_token');
+      }
+
+      if (accessToken && refreshToken) {
+        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (sessionError) throw sessionError;
+
+        if (sessionData?.user) {
+          const user = sessionData.user;
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id, role')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          if (!existingProfile) {
+            await supabase.from('profiles').upsert({
+              id: user.id,
+              full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Buyer',
+              email: user.email,
+              role: defaultRole,
+              created_at: new Date().toISOString(),
+            });
+          }
+        }
+
+        return { user: sessionData.user, session: sessionData.session, success: true };
+      }
+    }
+    return { success: false, cancelled: true };
+  } catch (error) {
+    console.error('Google Sign-In Error:', error.message || error);
+    return { success: false, error: error.message || 'Google sign-in failed' };
+  }
+}
+
+/**
+ * Update real-time GPS location of Delivery Partner
+ */
+export async function updateDeliveryPartnerLocation(partnerId, orderId, coords) {
+  try {
+    const { latitude, longitude, heading = 0, speed = 0 } = coords;
+
+    // 1. Broadcast via Realtime channel (Instant sub-second delivery)
+    if (orderId) {
+      const broadcastChannel = supabase.channel(`order-tracking:${orderId}`);
+      broadcastChannel.send({
+        type: 'broadcast',
+        event: 'partner_location',
+        payload: {
+          partnerId,
+          orderId,
+          latitude,
+          longitude,
+          heading,
+          speed,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    // 2. Persist in delivery_partner_locations
+    await supabase.from('delivery_partner_locations').upsert({
+      partner_id: partnerId,
+      order_id: orderId || null,
+      latitude,
+      longitude,
+      heading,
+      speed,
+      updated_at: new Date().toISOString(),
+    });
+
+    // 3. Keep legacy delivery_manager_locations compatible
+    await supabase.from('delivery_manager_locations').insert({
+      manager_id: partnerId,
+      location: `POINT(${longitude} ${latitude})`,
+    });
+
+    return true;
+  } catch (err) {
+    console.error('Error updating live delivery location:', err);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to live tracking of a delivery partner for a given order
+ */
+export function subscribeToLiveDelivery(orderId, partnerId, onLocationUpdate) {
+  const channel = supabase
+    .channel(`order-tracking:${orderId}`)
+    .on('broadcast', { event: 'partner_location' }, (payload) => {
+      if (payload?.payload && onLocationUpdate) {
+        onLocationUpdate(payload.payload);
+      }
+    })
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'delivery_partner_locations',
+        filter: partnerId ? `partner_id=eq.${partnerId}` : undefined,
+      },
+      (payload) => {
+        if (payload?.new && onLocationUpdate) {
+          onLocationUpdate(payload.new);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+ 

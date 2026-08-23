@@ -17,6 +17,28 @@ const CartScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
 
+  const normalizeGuestCart = (guestCartData) => ({
+    cart_items: (guestCartData || []).map(item => {
+      const existingMedia = item.product_variant_combinations?.products?.product_media;
+      const mediaUrl = item.image_url || (Array.isArray(existingMedia) && existingMedia[0]?.media_url) || null;
+      return {
+        id: item.product_variant_combination_id || item.id,
+        quantity: item.quantity,
+        product_variant_combinations: {
+          id: item.product_variant_combination_id || item.id,
+          combination_string: item.combination_string || 'Default',
+          price: item.price || 0,
+          products: {
+            product_name: item.product_name || item.product_variant_combinations?.products?.product_name || 'Product',
+            product_media: existingMedia && existingMedia.length > 0
+              ? existingMedia
+              : (mediaUrl ? [{ media_url: mediaUrl, media_type: 'image' }] : [])
+          }
+        }
+      };
+    })
+  });
+
   useEffect(() => {
     const fetchUserAndCart = async () => {
       setLoading(true);
@@ -27,22 +49,7 @@ const CartScreen = ({ navigation }) => {
         setCart(cartData);
       } else {
         const guestCartData = await getGuestCart();
-        const normalizedCart = {
-          cart_items: guestCartData.map(item => ({
-            id: item.product_variant_combination_id,
-            quantity: item.quantity,
-            product_variant_combinations: {
-              id: item.product_variant_combination_id,
-              combination_string: item.combination_string,
-              price: item.price,
-              products: {
-                product_name: item.product_name,
-                product_media: [{ media_url: item.image_url }]
-              }
-            }
-          }))
-        };
-        setCart(normalizedCart);
+        setCart(normalizeGuestCart(guestCartData));
       }
       setLoading(false);
     };
@@ -66,22 +73,7 @@ const CartScreen = ({ navigation }) => {
     } else {
       await updateGuestCartItemQuantity(cartItemId, quantity);
       const guestCartData = await getGuestCart();
-      const normalizedCart = {
-        cart_items: guestCartData.map(item => ({
-          id: item.product_variant_combination_id,
-          quantity: item.quantity,
-          product_variant_combinations: {
-            id: item.product_variant_combination_id,
-            combination_string: item.combination_string,
-            price: item.price,
-            products: {
-              product_name: item.product_name,
-              product_media: [{ media_url: item.image_url }]
-            }
-          }
-        }))
-      };
-      setCart(normalizedCart);
+      setCart(normalizeGuestCart(guestCartData));
     }
   };
 
@@ -94,50 +86,55 @@ const CartScreen = ({ navigation }) => {
     } else {
       await removeGuestCartItem(cartItemId);
       const guestCartData = await getGuestCart();
-      const normalizedCart = {
-        cart_items: guestCartData.map(item => ({
-          id: item.product_variant_combination_id,
-          quantity: item.quantity,
-          product_variant_combinations: {
-            id: item.product_variant_combination_id,
-            combination_string: item.combination_string,
-            price: item.price,
-            products: {
-              product_name: item.product_name,
-              product_media: [{ media_url: item.image_url }]
-            }
-          }
-        }))
-      };
-      setCart(normalizedCart);
+      setCart(normalizeGuestCart(guestCartData));
     }
   };
 
-  const renderCartItem = ({ item }) => (
-    <View style={styles.itemContainer}>
-      <Image
-        style={styles.itemImage}
-        source={{ uri: item.product_variant_combinations.products.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
-      />
-      <View style={styles.itemDetails}>
-        <Text style={styles.itemName}>{item.product_variant_combinations.products.product_name}</Text>
-        <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
-        <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
-        <View style={styles.quantityContainer}>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} style={{ padding: 4 }}>
-            <Icon name="minus-circle" size={24} color="#E53935" />
-          </TouchableOpacity>
-          <Text style={styles.quantityText}>{item.quantity}</Text>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)} style={{ padding: 4 }}>
-            <Icon name="plus-circle" size={24} color="#43A047" />
-          </TouchableOpacity>
+  const getItemImageUrl = (item) => {
+    const prod = item?.product_variant_combinations?.products;
+    if (prod?.product_media && Array.isArray(prod.product_media) && prod.product_media.length > 0) {
+      const found = prod.product_media.find(m => m?.media_url);
+      if (found?.media_url) return found.media_url;
+    }
+    if (item?.image_url) return item.image_url;
+    return null;
+  };
+
+  const renderCartItem = ({ item }) => {
+    const imageUrl = getItemImageUrl(item);
+    return (
+      <View style={styles.itemContainer}>
+        {imageUrl ? (
+          <Image
+            style={styles.itemImage}
+            source={{ uri: imageUrl }}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.itemImage, styles.placeholderImage]}>
+            <Icon name="shopping-bag" size={24} color="#94a3b8" />
+          </View>
+        )}
+        <View style={styles.itemDetails}>
+          <Text style={styles.itemName}>{item?.product_variant_combinations?.products?.product_name || 'Product'}</Text>
+          <Text style={styles.itemVariant}>{item?.product_variant_combinations?.combination_string || ''}</Text>
+          <Text style={styles.itemPrice}>₹{item?.product_variant_combinations?.price || 0}</Text>
+          <View style={styles.quantityContainer}>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} style={{ padding: 4 }}>
+              <Icon name="minus-circle" size={24} color="#E53935" />
+            </TouchableOpacity>
+            <Text style={styles.quantityText}>{item.quantity}</Text>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)} style={{ padding: 4 }}>
+              <Icon name="plus-circle" size={24} color="#43A047" />
+            </TouchableOpacity>
+          </View>
         </View>
+        <TouchableOpacity onPress={() => handleRemoveItem(item.id)} style={{ padding: 10 }}>
+          <Icon name="trash" size={22} color="#E53935" />
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity onPress={() => handleRemoveItem(item.id)} style={{ padding: 10 }}>
-        <Icon name="trash" size={22} color="#E53935" />
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   if (loading) {
     return <View style={styles.center}><ActivityIndicator size="large" color="#0000ff" /></View>;
@@ -226,6 +223,14 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 5,
+    backgroundColor: '#f1f5f9',
+  },
+  placeholderImage: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   itemDetails: {
     flex: 1,

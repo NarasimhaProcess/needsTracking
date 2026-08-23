@@ -16,13 +16,58 @@ import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { addToCart, supabase } from '../services/supabase';
 
+const isImageMedia = (media) => {
+  if (!media) return false;
+  const type = (media.media_type || media.type || '').toLowerCase();
+  const url = media.media_url || media.uri || '';
+  if (type === 'video') return false;
+  if (type === 'image' || type === 'url' || !type) return true;
+  if (type.startsWith('image/')) return true;
+  if (typeof url === 'string' && /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url)) return true;
+  return true;
+};
+
 const ProductDetailScreen = ({ navigation, route }) => {
-  const { product } = route?.params || {};
+  const { product: initialProduct, productId } = route?.params || {};
+  const [product, setProduct] = useState(initialProduct || null);
+  const [loadingProduct, setLoadingProduct] = useState(!initialProduct && !!productId);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [images, setImages] = useState([]);
+
+  useEffect(() => {
+    if (!product && productId) {
+      const fetchProduct = async () => {
+        setLoadingProduct(true);
+        try {
+          const { data, error } = await supabase
+            .from('products')
+            .select(`
+              *,
+              product_media (id, media_url, media_type),
+              product_variants (
+                id,
+                name,
+                variant_options (id, value)
+              ),
+              product_variant_combinations (id, combination_string, price, quantity, sku)
+            `)
+            .eq('id', productId)
+            .single();
+          if (data) {
+            setProduct(data);
+          }
+        } catch (err) {
+          console.error('Error fetching product by ID:', err);
+        } finally {
+          setLoadingProduct(false);
+        }
+      };
+      fetchProduct();
+    }
+  }, [productId, product]);
 
   useEffect(() => {
     const defaultVariants = {};
@@ -81,9 +126,9 @@ const ProductDetailScreen = ({ navigation, route }) => {
     const { data: { user: currentUser } } = await supabase.auth.getUser();
 
     if (!currentUser) {
-      navigation.navigate('BuyerAuth', {
-        redirectScreen: 'ProductDetailScreen',
-        productId: product.id,
+      navigation.navigate('BuyerLogin', {
+        redirectTo: 'ProductDetailScreen',
+        redirectParams: { productId: product.id },
       });
       return;
     }
@@ -96,56 +141,97 @@ const ProductDetailScreen = ({ navigation, route }) => {
     }
   };
 
+  if (loadingProduct) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
+
+  if (!product) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}>
+        <Text style={{ fontSize: 16, color: '#666' }}>Product not found.</Text>
+      </View>
+    );
+  }
+
+  const mediaList = (product.product_media || []).filter(m => m && (m.media_url || m.uri));
+
   return (
     <ScrollView style={styles.container}>
-      <Swiper style={styles.swiper} showsButtons={true}>
-        {product.product_media.map((media) => (
-          <View key={media.id} style={styles.slide}>
-            <TouchableOpacity onPress={() => {
-              const imageUrls = product.product_media
-                .filter(m => m.media_type === 'image')
-                .map(m => ({ url: m.media_url }));
-              setImages(imageUrls);
-              setIsModalVisible(true);
-            }} style={styles.mediaContainer}>
-              {media.media_type === 'image' ? (
-                <Image source={{ uri: (typeof media.media_url === 'string' && media.media_url.length > 0) ? media.media_url : 'https://placehold.co/600x400' }} style={styles.media} />
-              ) : (
-                <Video
-                  source={{ uri: media.media_url }}
-                  style={styles.media}
-                  useNativeControls
-                  resizeMode="contain"
-                />
-              )}
-              {media.media_type === 'image' && (
+      {mediaList.length > 0 ? (
+        <Swiper style={styles.swiper} showsButtons={mediaList.length > 1} loop={mediaList.length > 1}>
+          {mediaList.map((media, index) => {
+            const mediaUrl = media.media_url || media.uri;
+            const isImage = isImageMedia(media);
+            return (
+              <View key={media.id || `media-${index}`} style={styles.slide}>
                 <TouchableOpacity
-                  style={styles.zoomIcon}
                   onPress={() => {
-                    const imageUrls = product.product_media
-                      .filter(m => m.media_type === 'image')
-                      .map(m => ({ url: m.media_url }));
-                    setImages(imageUrls);
-                    setIsModalVisible(true);
+                    const imageUrls = mediaList
+                      .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+                      .map(m => ({ url: m.media_url || m.uri }));
+                    if (imageUrls.length > 0) {
+                      setImages(imageUrls);
+                      setIsModalVisible(true);
+                    }
                   }}
+                  style={styles.mediaContainer}
+                  activeOpacity={0.9}
                 >
-                  <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                  {isImage ? (
+                    <Image
+                      source={{ uri: mediaUrl }}
+                      style={styles.media}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <Video
+                      source={{ uri: mediaUrl }}
+                      style={styles.media}
+                      useNativeControls
+                      resizeMode="contain"
+                    />
+                  )}
+                  {isImage && (
+                    <TouchableOpacity
+                      style={styles.zoomIcon}
+                      onPress={() => {
+                        const imageUrls = mediaList
+                          .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+                          .map(m => ({ url: m.media_url || m.uri }));
+                        if (imageUrls.length > 0) {
+                          setImages(imageUrls);
+                          setIsModalVisible(true);
+                        }
+                      }}
+                    >
+                      <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                    </TouchableOpacity>
+                  )}
                 </TouchableOpacity>
-              )}
-            </TouchableOpacity>
-          </View>
-        ))}
-      </Swiper>
+              </View>
+            );
+          })}
+        </Swiper>
+      ) : (
+        <View style={styles.placeholderBanner}>
+          <Icon name="shopping-bag" size={64} color="#94a3b8" />
+          <Text style={styles.placeholderText}>{product.product_name}</Text>
+        </View>
+      )}
 
       <View style={styles.detailsContainer}>
         <Text style={styles.productName}>{product.product_name}</Text>
         <Text style={styles.productPrice}>₹{product.amount}</Text>
 
-        {product.product_variants.map((variant) => (
+        {(product.product_variants || []).map((variant) => (
           <View key={variant.id} style={styles.variantContainer}>
             <Text style={styles.variantName}>{variant.name}</Text>
             <View style={styles.optionsContainer}>
-              {variant.variant_options.map((option) => (
+              {(variant.variant_options || []).map((option) => (
                 <TouchableOpacity
                   key={option.id}
                   style={[
@@ -206,6 +292,20 @@ const styles = StyleSheet.create({
   },
   swiper: {
     height: 300,
+  },
+  placeholderBanner: {
+    height: 250,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  placeholderText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#64748b',
+    fontWeight: '600',
   },
   slide: {
     flex: 1,

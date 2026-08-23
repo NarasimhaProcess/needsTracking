@@ -9,49 +9,55 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
-import { supabase, signInWithGoogle } from '../services/supabase';
+import { supabase, signInWithGoogle, addToCart } from '../services/supabase';
+import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
-import { ActivityIndicator } from 'react-native';
+import Constants from 'expo-constants';
 
-export default function DeliveryManagerSignupScreen({ navigation }) {
+const mergeGuestCart = async (userId) => {
+  try {
+    const guestCart = await getGuestCart();
+    if (guestCart && guestCart.length > 0) {
+      for (const item of guestCart) {
+        await addToCart(userId, item.product_variant_combination_id, item.quantity);
+      }
+      await clearGuestCart();
+      Alert.alert('Cart Merged', 'Items from your guest cart have been added to your account.');
+    }
+  } catch (e) {
+    console.warn('Error merging guest cart:', e);
+  }
+};
+
+export default function BuyerSignupScreen({ navigation, route }) {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const onAuthSuccess = route.params?.onAuthSuccess;
+  const redirectTo = route.params?.redirectTo || route.params?.redirectScreen;
+  const redirectParams = route.params?.redirectParams || (route.params?.productId ? { productId: route.params.productId, customerId: route.params.customerId } : undefined);
 
-  const handleGoogleSignup = async () => {
-    setGoogleLoading(true);
-    try {
-      const res = await signInWithGoogle('delivery_manager');
-      if (res.success && res.user) {
-        await supabase
-          .from('profiles')
-          .upsert({
-            id: res.user.id,
-            role: 'delivery_manager',
-            full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Delivery Partner',
-            email: res.user.email,
-            updated_at: new Date().toISOString(),
-          });
-
-        navigation.navigate('DeliveryManagerDashboard');
-      } else if (res.error) {
-        Alert.alert('Google Sign-In Failed', res.error);
-      }
-    } catch (err) {
-      Alert.alert('Error', err.message || 'Google sign-up failed');
-    } finally {
-      setGoogleLoading(false);
+  const navigateAfterAuth = (user) => {
+    if (onAuthSuccess) {
+      onAuthSuccess(user);
+    }
+    if (redirectTo) {
+      navigation.navigate(redirectTo, redirectParams || {});
+    } else {
+      navigation.navigate('Catalog');
     }
   };
 
   const handleSignup = async () => {
     if (!name.trim() || !email.trim() || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
 
@@ -67,18 +73,21 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
 
     setLoading(true);
     try {
-      // Create auth account
+      const signupOptions = {
+        data: {
+          full_name: name.trim(),
+          name: name.trim(),
+          role: 'customer',
+        }
+      };
+      if (mobile && mobile.trim()) {
+        signupOptions.data.mobile = mobile.trim();
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: {
-          data: {
-            full_name: name.trim(),
-            name: name.trim(),
-            role: 'delivery_manager',
-            user_type: 'delivery_manager',
-          }
-        }
+        options: signupOptions,
       });
 
       if (error) {
@@ -89,28 +98,35 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
             id: data.user.id,
             full_name: name.trim(),
             email: email.trim(),
-            role: 'delivery_manager',
+            role: 'customer',
             updated_at: new Date().toISOString(),
           };
+          if (mobile && mobile.trim()) {
+            profileData.mobile = mobile.trim();
+          }
 
           try {
             await supabase.from('profiles').upsert(profileData);
           } catch (pErr) {
-            console.error('Error creating profile during delivery signup:', pErr);
+            console.error('Error creating profile on buyer signup:', pErr);
           }
+          await mergeGuestCart(data.user.id);
         }
 
         if (data?.session) {
+          if (onAuthSuccess) {
+            onAuthSuccess(data.user);
+          }
           Alert.alert(
             'Success',
             'Account created successfully!',
-            [{ text: 'Continue', onPress: () => navigation.navigate('DeliveryManagerDashboard') }]
+            [{ text: 'Start Shopping', onPress: () => navigateAfterAuth(data.user) }]
           );
         } else {
           Alert.alert(
-            'Success',
-            'Account created successfully! Please check your email for verification.',
-            [{ text: 'OK', onPress: () => navigation.navigate('DeliveryManagerLogin') }]
+            'Account Created',
+            'Your account has been created! Please log in to continue.',
+            [{ text: 'OK', onPress: () => navigation.navigate('BuyerLogin', { redirectTo, redirectParams }) }]
           );
         }
       }
@@ -119,6 +135,23 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
       console.error('Signup error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignup = async () => {
+    setGoogleLoading(true);
+    try {
+      const res = await signInWithGoogle('customer');
+      if (res.success && res.user) {
+        await mergeGuestCart(res.user.id);
+        navigateAfterAuth(res.user);
+      } else if (res.error) {
+        Alert.alert('Google Sign-In Failed', res.error);
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Google sign-up failed');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -133,16 +166,17 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
       >
         <Icon name="close" size={28} color="#000" />
       </TouchableOpacity>
+
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
-          <Text style={styles.icon}>🚚</Text>
-          <Text style={styles.title}>Delivery Manager Signup</Text>
-          <Text style={styles.subtitle}>Create your delivery account</Text>
+          <Text style={styles.icon}>🛍️</Text>
+          <Text style={styles.title}>Buyer Sign Up</Text>
+          <Text style={styles.subtitle}>Create an account to order from local shops</Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Full Name</Text>
+            <Text style={styles.label}>Full Name *</Text>
             <TextInput
               style={styles.input}
               placeholder="Enter your full name"
@@ -153,7 +187,7 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>Email Address *</Text>
             <TextInput
               style={styles.input}
               placeholder="Enter your email"
@@ -166,10 +200,21 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
+            <Text style={styles.label}>Mobile Number (Optional)</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter your password"
+              placeholder="e.g. +91 9876543210"
+              value={mobile}
+              onChangeText={setMobile}
+              keyboardType="phone-pad"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Password *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="At least 6 characters"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -178,10 +223,10 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password</Text>
+            <Text style={styles.label}>Confirm Password *</Text>
             <TextInput
               style={styles.input}
-              placeholder="Confirm your password"
+              placeholder="Re-enter password"
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               secureTextEntry
@@ -222,12 +267,16 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
 
           <View style={styles.loginContainer}>
             <Text style={styles.loginText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('DeliveryManagerLogin')}>
+            <TouchableOpacity onPress={() => navigation.navigate('BuyerLogin', { redirectTo, redirectParams })}>
               <Text style={styles.loginLink}>Sign In</Text>
             </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
+
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>© 2025 {Constants.expoConfig.extra.ORG_NAME || 'NeedsTracking'}. Version 1.0</Text>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -247,60 +296,62 @@ const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
+    padding: 24,
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 28,
   },
   icon: {
     fontSize: 48,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#007AFF',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
+    fontSize: 15,
+    color: '#64748b',
+    textAlign: 'center',
   },
   form: {
     width: '100%',
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   label: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#1C1C1E',
-    marginBottom: 8,
+    color: '#1e293b',
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 12,
-    padding: 16,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    padding: 14,
     fontSize: 16,
-    backgroundColor: '#F2F2F7',
+    backgroundColor: '#f8fafc',
+    color: '#1e293b',
   },
   button: {
     backgroundColor: '#007AFF',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 16,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 10,
   },
   buttonDisabled: {
-    backgroundColor: '#C7C7CC',
+    opacity: 0.6,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: 'bold',
   },
   dividerContainer: {
     flexDirection: 'row',
@@ -310,20 +361,20 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E5E5EA',
+    backgroundColor: '#e2e8f0',
   },
   dividerText: {
     marginHorizontal: 12,
     fontSize: 13,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: '#94a3b8',
   },
   googleButton: {
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 12,
-    padding: 15,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 14,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -338,22 +389,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   googleButtonText: {
-    color: '#1C1C1E',
+    color: '#334155',
     fontSize: 16,
     fontWeight: '600',
   },
   loginContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 30,
+    marginTop: 26,
   },
   loginText: {
-    fontSize: 16,
-    color: '#8E8E93',
+    fontSize: 15,
+    color: '#64748b',
   },
   loginLink: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#007AFF',
-    fontWeight: '600',
+    fontWeight: 'bold',
+  },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+    backgroundColor: '#F2F2F7',
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#8E8E93',
   },
 });

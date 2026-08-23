@@ -111,6 +111,17 @@ const syncVariantCombinations = (variants, currentCombos = [], baseAmount = 0) =
   });
 };
 
+const isImageMedia = (media) => {
+  if (!media) return false;
+  const type = (media.type || media.media_type || '').toLowerCase();
+  const url = media.uri || media.media_url || '';
+  if (type === 'video') return false;
+  if (type === 'image' || type === 'url' || !type) return true;
+  if (type.startsWith('image/')) return true;
+  if (typeof url === 'string' && /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url)) return true;
+  return true;
+};
+
 const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
   const userId = session?.user?.id || session?.id; // Get userId from session
   const accessToken = session?.access_token; // Get access token for media upload
@@ -159,7 +170,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       setDisplayOrder(productToEdit.display_order ? productToEdit.display_order.toString() : '0');
       setSelectedMedia(productToEdit.product_media ? productToEdit.product_media.map(media => ({
         uri: media.media_url,
-        type: media.media_type,
+        type: media.media_type || 'image',
         id: media.id
       })) : []);
       
@@ -701,7 +712,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
                     }}
                     style={styles.thumbnailContainer}
                   >
-                    {media.type === 'image' ? (
+                    {isImageMedia(media) ? (
                       <Image source={{ uri: media.uri }} style={styles.thumbnail} />
                     ) : (
                       <Text style={styles.thumbnailText}>Video</Text>
@@ -767,7 +778,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
                   <Icon name="chevron-right" size={30} color="white" />
                 </TouchableOpacity>
 
-                {allModalMediaForViewer[currentModalMediaIndex].type === 'image' ? (
+                {isImageMedia(allModalMediaForViewer[currentModalMediaIndex]) ? (
                   <Image
                     source={{ uri: allModalMediaForViewer[currentModalMediaIndex].uri }}
                     style={styles.modalFullScreenMedia}

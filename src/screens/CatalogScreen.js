@@ -26,6 +26,17 @@ import { getGuestCart } from '../services/localStorageService';
 
 const { width } = Dimensions.get('window');
 
+const isImageMedia = (media) => {
+  if (!media) return false;
+  const type = (media.media_type || media.type || '').toLowerCase();
+  const url = media.media_url || media.uri || '';
+  if (type === 'video') return false;
+  if (type === 'image' || type === 'url' || !type) return true;
+  if (type.startsWith('image/')) return true;
+  if (typeof url === 'string' && /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url)) return true;
+  return true;
+};
+
 const CatalogScreen = ({ navigation, route }) => {
   const { userId: sellerId, customerId } = route?.params || {};
   const [products, setProducts] = useState([]);
@@ -522,8 +533,8 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const openImageViewer = (product) => {
     const imageUrls = (product?.product_media || [])
-      .filter(m => m.media_type === 'image' || !m.media_type)
-      .map(m => ({ url: m.media_url }));
+      .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+      .map(m => ({ url: m.media_url || m.uri }));
     
     if (imageUrls.length > 0) {
       setViewerImages(imageUrls);
@@ -558,14 +569,16 @@ const CatalogScreen = ({ navigation, route }) => {
     const singleComboQty = quantityMap[singleComboId] || 0;
     const totalQuantity = productTotalQuantityInCart[item.id] || singleComboQty || 0;
     const totalStock = combos.reduce((sum, combo) => sum + (combo?.quantity || 0), 0);
+    const firstMedia = (item.product_media || []).find(m => isImageMedia(m) && (m.media_url || m.uri));
+    const imageUrl = firstMedia ? (firstMedia.media_url || firstMedia.uri) : (item.image_url || null);
 
     return (
       <View style={styles.productContainer}>
         <TouchableOpacity onPress={() => openProductModal(item)} activeOpacity={0.8}>
-          {item.product_media && item.product_media.length > 0 && item.product_media[0]?.media_url ? (
+          {imageUrl ? (
             <Image 
               style={styles.productImage} 
-              source={{ uri: item.product_media[0].media_url }} 
+              source={{ uri: imageUrl }} 
               resizeMode="cover"
             />
           ) : (
@@ -630,13 +643,24 @@ const CatalogScreen = ({ navigation, route }) => {
     const cartItemId = user ? item.id : item.product_variant_combination_id;
     const combo = item.product_variant_combinations;
     const prod = combo?.products;
-    const mediaUrl = prod?.product_media?.[0]?.media_url || 'https://placehold.co/600x400';
+    const prodMedia = prod?.product_media;
+    const mediaUrl = (Array.isArray(prodMedia) && prodMedia.length > 0)
+      ? (prodMedia.find(m => m?.media_url)?.media_url || prodMedia[0]?.media_url)
+      : (item.image_url || null);
+
     return (
         <View style={styles.itemContainer}>
-        <Image
-            style={styles.itemImage}
-            source={{ uri: mediaUrl }}
-        />
+        {mediaUrl ? (
+          <Image
+              style={styles.itemImage}
+              source={{ uri: mediaUrl }}
+              resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.itemImage, { backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' }]}>
+            <Icon name="shopping-bag" size={20} color="#94a3b8" />
+          </View>
+        )}
         <View style={styles.itemDetails}>
             <Text style={styles.itemName}>{prod?.product_name || 'Product'}</Text>
             <Text style={styles.itemVariant}>{combo?.combination_string || ''}</Text>
@@ -718,13 +742,13 @@ const CatalogScreen = ({ navigation, route }) => {
               </TouchableOpacity>
               
               <View style={styles.swiperContainer}>
-                {selectedProduct?.product_media && selectedProduct.product_media.length > 0 && selectedProduct.product_media.some(m => m?.media_url) ? (
+                {selectedProduct?.product_media && selectedProduct.product_media.length > 0 && selectedProduct.product_media.some(m => isImageMedia(m) && (m?.media_url || m?.uri)) ? (
                   <Swiper showsButtons={false} loop={false}>
                     {selectedProduct.product_media
-                      .filter(m => m?.media_url)
+                      .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
                       .map((media, index) => (
                         <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
-                          <Image source={{ uri: media.media_url }} style={styles.modalProductImage} resizeMode="contain" />
+                          <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
                         </TouchableOpacity>
                       ))}
                   </Swiper>

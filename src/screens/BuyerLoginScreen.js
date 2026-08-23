@@ -9,54 +9,52 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
-import { supabase, signInWithGoogle } from '../services/supabase';
+import { supabase, signInWithGoogle, addToCart } from '../services/supabase';
+import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
-import { ActivityIndicator } from 'react-native';
 
-export default function DeliveryManagerLoginScreen({ navigation, route }) {
+const mergeGuestCart = async (userId) => {
+  try {
+    const guestCart = await getGuestCart();
+    if (guestCart && guestCart.length > 0) {
+      for (const item of guestCart) {
+        await addToCart(userId, item.product_variant_combination_id, item.quantity);
+      }
+      await clearGuestCart();
+      Alert.alert('Cart Merged', 'Items from your guest cart have been added to your account.');
+    }
+  } catch (e) {
+    console.warn('Error merging guest cart:', e);
+  }
+};
+
+export default function BuyerLoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
+  const redirectTo = route.params?.redirectTo || route.params?.redirectScreen;
+  const redirectParams = route.params?.redirectParams || (route.params?.productId ? { productId: route.params.productId, customerId: route.params.customerId } : undefined);
 
-  const handleGoogleLogin = async () => {
-    setGoogleLoading(true);
-    try {
-      const res = await signInWithGoogle('delivery_manager');
-      if (res.success && res.user) {
-        // Ensure profile has delivery_manager role
-        await supabase
-          .from('profiles')
-          .upsert({
-            id: res.user.id,
-            role: 'delivery_manager',
-            full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Delivery Partner',
-            email: res.user.email,
-            updated_at: new Date().toISOString(),
-          });
-
-        if (onAuthSuccess) {
-          onAuthSuccess(res.user);
-        }
-
-        navigation.navigate('DeliveryManagerDashboard');
-      } else if (res.error) {
-        Alert.alert('Google Sign-In Failed', res.error);
-      }
-    } catch (err) {
-      Alert.alert('Error', err.message || 'Google sign-in failed');
-    } finally {
-      setGoogleLoading(false);
+  const navigateAfterAuth = (user) => {
+    if (onAuthSuccess) {
+      onAuthSuccess(user);
+    }
+    if (redirectTo) {
+      navigation.navigate(redirectTo, redirectParams || {});
+    } else {
+      navigation.navigate('Catalog');
     }
   };
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert('Error', 'Please fill in both email and password');
       return;
     }
 
@@ -69,44 +67,26 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
 
       if (error) {
         Alert.alert('Login Error', error.message);
-      } else {
-        console.log('Login successful:', data.user);
-
-        let { data: profileData, error: profileError } = await supabase
+      } else if (data?.user) {
+        // Ensure profile exists with customer role
+        const { data: profile } = await supabase
           .from('profiles')
-          .select('id, role, full_name')
+          .select('id, role')
           .eq('id', data.user.id)
           .maybeSingle();
 
-        if (profileError) {
-          console.error("Error checking profile existence:", profileError.message);
+        if (!profile) {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            email: data.user.email,
+            full_name: data.user.user_metadata?.full_name || 'Buyer',
+            role: 'customer',
+            updated_at: new Date().toISOString(),
+          });
         }
 
-        if (!profileData || profileData.role !== 'delivery_manager') {
-          // If metadata indicates delivery_manager role or new profile, ensure profile exists
-          try {
-            const { data: newProfile } = await supabase
-              .from('profiles')
-              .upsert({
-                id: data.user.id,
-                full_name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || 'Delivery Partner',
-                email: data.user.email,
-                role: 'delivery_manager',
-                updated_at: new Date().toISOString(),
-              })
-              .select()
-              .maybeSingle();
-            profileData = newProfile;
-          } catch (upsertErr) {
-            console.error("Error upserting delivery profile:", upsertErr);
-          }
-        }
-
-        if (onAuthSuccess) {
-          onAuthSuccess(data.user);
-        }
-
-        navigation.navigate('DeliveryManagerDashboard');
+        await mergeGuestCart(data.user.id);
+        navigateAfterAuth(data.user);
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
@@ -116,16 +96,33 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    try {
+      const res = await signInWithGoogle('customer');
+      if (res.success && res.user) {
+        await mergeGuestCart(res.user.id);
+        navigateAfterAuth(res.user);
+      } else if (res.error) {
+        Alert.alert('Google Sign-In Failed', res.error);
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Google sign-in failed');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   const handleForgotPassword = () => {
     if (!email) {
       Alert.alert('Error', 'Please enter your email first');
       return;
     }
 
-    supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'user-tracking-mobile://reset-password',
+    supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: 'needstracking://reset-password',
     }).then(() => {
-      Alert.alert('Success', 'Password reset email sent');
+      Alert.alert('Success', 'Password reset email sent. Please check your inbox.');
     }).catch((error) => {
       Alert.alert('Error', error.message);
     });
@@ -142,11 +139,12 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
       >
         <Icon name="close" size={28} color="#000" />
       </TouchableOpacity>
+      
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
-          <Text style={styles.icon}>🚚</Text>
-          <Text style={styles.title}>Delivery Manager Login</Text>
-          <Text style={styles.subtitle}>Sign in to manage your deliveries</Text>
+          <Text style={styles.icon}>🛍️</Text>
+          <Text style={styles.title}>Buyer Sign In</Text>
+          <Text style={styles.subtitle}>Sign in to browse shops, order & track items</Text>
         </View>
 
         <View style={styles.form}>
@@ -201,7 +199,7 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
             ) : (
               <View style={styles.googleButtonContent}>
                 <FontAwesome name="google" size={20} color="#EA4335" style={{ marginRight: 10 }} />
-                <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -215,15 +213,15 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
 
           <View style={styles.signupContainer}>
             <Text style={styles.signupText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('DeliveryManagerSignup')}>
+            <TouchableOpacity onPress={() => navigation.navigate('BuyerSignup', { redirectTo, redirectParams })}>
               <Text style={styles.signupLink}>Sign Up</Text>
             </TouchableOpacity>
           </View>
-
         </View>
       </ScrollView>
+
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2025 {Constants.expoConfig.extra.ORG_NAME}. Version 1.0</Text>
+        <Text style={styles.footerText}>© 2025 {Constants.expoConfig.extra.ORG_NAME || 'NeedsTracking'}. Version 1.0</Text>
       </View>
     </KeyboardAvoidingView>
   );
@@ -244,68 +242,62 @@ const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
+    padding: 24,
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 32,
   },
   icon: {
     fontSize: 48,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#007AFF',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
+    fontSize: 15,
+    color: '#64748b',
+    textAlign: 'center',
   },
   form: {
     width: '100%',
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 18,
   },
   label: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#1C1C1E',
-    marginBottom: 8,
+    color: '#1e293b',
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 12,
-    padding: 16,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    padding: 14,
     fontSize: 16,
-    backgroundColor: '#F2F2F7',
+    backgroundColor: '#f8fafc',
+    color: '#1e293b',
   },
   button: {
     backgroundColor: '#007AFF',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 16,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 10,
   },
   buttonDisabled: {
-    backgroundColor: '#C7C7CC',
+    opacity: 0.6,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  forgotPassword: {
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  forgotPasswordText: {
-    color: '#007AFF',
-    fontSize: 16,
+    fontSize: 17,
+    fontWeight: 'bold',
   },
   dividerContainer: {
     flexDirection: 'row',
@@ -315,20 +307,20 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E5E5EA',
+    backgroundColor: '#e2e8f0',
   },
   dividerText: {
     marginHorizontal: 12,
     fontSize: 13,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: '#94a3b8',
   },
   googleButton: {
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 12,
-    padding: 15,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 14,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -343,23 +335,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   googleButtonText: {
-    color: '#1C1C1E',
+    color: '#334155',
     fontSize: 16,
     fontWeight: '600',
+  },
+  forgotPassword: {
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  forgotPasswordText: {
+    color: '#007AFF',
+    fontSize: 15,
   },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 30,
+    marginTop: 28,
   },
   signupText: {
-    fontSize: 16,
-    color: '#8E8E93',
+    fontSize: 15,
+    color: '#64748b',
   },
   signupLink: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#007AFF',
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   footer: {
     alignItems: 'center',

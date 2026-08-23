@@ -6,7 +6,8 @@ import {
   View,
   StyleSheet,
   ActivityIndicator,
-  Text
+  Text,
+  Linking,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { registerRootComponent } from 'expo';
@@ -20,6 +21,8 @@ import { createStackNavigator } from '@react-navigation/stack';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import CatalogScreen from './src/screens/CatalogScreen';
 import BuyerAuthScreen from './src/screens/BuyerAuthScreen';
+import BuyerLoginScreen from './src/screens/BuyerLoginScreen';
+import BuyerSignupScreen from './src/screens/BuyerSignupScreen';
 import CartScreen from './src/screens/CartScreen';
 import CheckoutScreen from './src/screens/CheckoutScreen';
 import OrderConfirmationScreen from './src/screens/OrderConfirmationScreen';
@@ -74,7 +77,74 @@ export default function App() {
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    const handleDeepLink = async (url) => {
+      if (!url) return;
+      console.log('[App] Deep link received:', url);
+
+      let accessToken = null;
+      let refreshToken = null;
+
+      if (url.includes('#')) {
+        const hashParams = new URLSearchParams(url.split('#')[1]);
+        accessToken = hashParams.get('access_token');
+        refreshToken = hashParams.get('refresh_token');
+      }
+
+      if (!accessToken && url.includes('?')) {
+        const queryParams = new URLSearchParams(url.split('?')[1]);
+        accessToken = queryParams.get('access_token');
+        refreshToken = queryParams.get('refresh_token');
+      }
+
+      if (accessToken && refreshToken) {
+        console.log('[App] Setting session from OAuth deep link tokens');
+        try {
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) {
+            console.error('[App] Error setting session from deep link:', error.message);
+          } else if (data?.session) {
+            setSession(data.session);
+
+            // Navigate to appropriate screen based on user role
+            try {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('role')
+                .eq('id', data.session.user.id)
+                .maybeSingle();
+
+              if (profile?.role === 'delivery_manager') {
+                navigationRef.current?.navigate('DeliveryManagerDashboard');
+              } else if (profile?.role === 'seller') {
+                navigationRef.current?.navigate('ProductTabs');
+              } else {
+                navigationRef.current?.navigate('Catalog');
+              }
+            } catch (navErr) {
+              navigationRef.current?.navigate('Catalog');
+            }
+          }
+        } catch (sessionErr) {
+          console.error('[App] Failed to set session from deep link:', sessionErr);
+        }
+      }
+    };
+
+    // Check initial launch URL
+    Linking.getInitialURL().then(handleDeepLink);
+
+    // Listen to incoming deep links
+    const linkSubscription = Linking.addEventListener('url', ({ url }) => {
+      handleDeepLink(url);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      linkSubscription.remove();
+    };
   }, []);
 
   const [expoPushToken, setExpoPushToken] = useState('');
@@ -152,6 +222,8 @@ export default function App() {
           <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
           <Stack.Screen name="Catalog" component={CatalogScreen} />
           <Stack.Screen name="BuyerAuth" component={BuyerAuthScreen} />
+          <Stack.Screen name="BuyerLogin" component={BuyerLoginScreen} />
+          <Stack.Screen name="BuyerSignup" component={BuyerSignupScreen} />
           <Stack.Screen name="Cart" component={CartScreen} />
           <Stack.Screen name="Checkout" component={CheckoutScreen} />
           <Stack.Screen name="OrderConfirmation" component={OrderConfirmationScreen} />

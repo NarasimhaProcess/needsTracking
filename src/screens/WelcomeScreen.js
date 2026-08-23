@@ -537,11 +537,11 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
             </TouchableOpacity>
           ) : (
             <>
-              <TouchableOpacity onPress={() => navigation.navigate('BuyerAuth')} style={styles.iconWrapper}>
-                <Icon name="sign-in" size={30} color="#007AFF" />
+              <TouchableOpacity onPress={() => navigation.navigate('BuyerLogin')} style={styles.iconWrapper}>
+                <Icon name="shopping-cart" size={30} color="#007AFF" />
                 <Text style={styles.iconText}>Buyer</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.iconWrapper}>
+              <TouchableOpacity onPress={() => navigation.navigate('SellerLogin')} style={styles.iconWrapper}>
                 <Icon name="user" size={30} color="#007AFF" />
                 <Text style={styles.iconText}>Seller</Text>
               </TouchableOpacity>

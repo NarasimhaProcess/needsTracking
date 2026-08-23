@@ -89,8 +89,21 @@ const CheckoutScreen = ({ navigation, route }) => {
     const orderUserId = user?.id;
 
     if (!orderUserId) {
-      Alert.alert('Error', 'User not authenticated or customer not selected.');
       setLoading(false);
+      Alert.alert(
+        'Sign In Required',
+        'Please sign in or create an account to place your order.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign In / Sign Up',
+            onPress: () => navigation.navigate('BuyerLogin', {
+              redirectTo: 'Checkout',
+              redirectParams: { cart, customerId },
+            }),
+          },
+        ]
+      );
       return;
     }
 
@@ -145,22 +158,31 @@ const CheckoutScreen = ({ navigation, route }) => {
 
     setLoading(false);
 
-    // --- Send Local Notification for Shop Orders ---
-    if (isShopOrder) {
-        try {
-            const notificationTitle = orderType === 'Dine-in' 
-                ? `Order Placed for Table #${tableNo}` 
-                : 'Parcel Order Placed';
-            const notificationBody = `Total: ₹${totalAmount.toFixed(2)}. The order is now in the system.`;
-            
-            await schedulePushNotification(
-                notificationTitle,
-                notificationBody,
-                { orderId: order.id }
-            );
-        } catch(e) {
-            console.error("Failed to schedule local notification:", e);
-        }
+    // --- Trigger Delivery Manager Assignment for Online Delivery Orders ---
+    if (!isShopOrder) {
+      try {
+        await supabase.functions.invoke('assign-delivery-manager', {
+          body: { order: { id: order.id } }
+        });
+      } catch (assignErr) {
+        console.warn('Assign delivery manager invocation notice:', assignErr);
+      }
+    }
+
+    // --- Send Confirmation Notification ---
+    try {
+      const notificationTitle = isShopOrder
+        ? (orderType === 'Dine-in' ? `Order Placed for Table #${tableNo}` : 'Parcel Order Placed')
+        : '🎉 Order Placed Successfully!';
+      const notificationBody = `Total: ₹${totalAmount.toFixed(2)}. Your order #${order.order_number || order.id.substring(0, 8)} is confirmed.`;
+      
+      await schedulePushNotification(
+        notificationTitle,
+        notificationBody,
+        { orderId: order.id }
+      );
+    } catch(e) {
+      console.error("Failed to schedule notification:", e);
     }
     // --- End Notification ---
 

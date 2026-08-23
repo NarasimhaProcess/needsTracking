@@ -1,31 +1,29 @@
-# User Tracking Mobile App
+# Multi-Role Commerce & Real-Time Delivery Tracking App
 
-A React Native mobile application for real-time location tracking with Supabase backend integration.
+A full-stack React Native mobile application supporting **Buyers**, **Sellers**, and **Delivery Partners** with real-time location tracking, instant order dispatch, and Supabase backend integration.
 
-## 🚀 Features
+> 📖 **Comprehensive Documentation**: For the detailed end-to-end architecture, role-based workflows, and database setup, please see [**`LATEST_PROCESS_AND_SYSTEM_FLOW.md`**](file:///workspaces/needsTracking/LATEST_PROCESS_AND_SYSTEM_FLOW.md).
 
-### Core Features
-- **Real-time Location Tracking** - Track user location with high accuracy
-- **Background Location Updates** - Continue tracking when app is in background
-- **Offline Support** - Store location data locally when offline
-- **Interactive Map** - View location history on interactive map
-- **User Authentication** - Secure login/signup with Supabase Auth
-- **Push Notifications** - Real-time notifications for location events
+---
 
-### Advanced Features
-- **Geofencing** - Get notified when entering/leaving specific areas
-- **Route Visualization** - View travel routes on map
-- **Location Statistics** - Track distance, speed, and accuracy
-- **Data Synchronization** - Sync offline data when connection restored
-- **Battery Optimization** - Smart location updates to save battery
+## 🚀 Key Roles & Capabilities
 
-## 📱 Screens
+### 🛒 1. Buyers (Customers)
+- **Authentication**: Email/Password & Google One-Tap sign-in with automatic profile creation and guest cart migration.
+- **Product Catalog**: Multi-variant browsing with dynamic price updates and high-res media.
+- **Cart & Checkout**: Real-time stock checks, Cash on Delivery (COD) & online payment selection.
+- **Live Order Tracking**: Interactive Leaflet map with animated vehicle marker tracking the assigned delivery partner in real time.
 
-1. **Login Screen** - User authentication
-2. **Dashboard** - Main control panel with tracking toggle
-3. **Map Screen** - Interactive map with location history
-4. **Location History** - Detailed location data and statistics
-5. **Profile Screen** - User profile and settings
+### 🏪 2. Sellers (Merchants)
+- **Product Management**: Create, edit, and organize multi-variant products with media uploads.
+- **Inventory & Orders**: Real-time stock decrement, counter/shop order processing (dine-in/parcel).
+
+### 🛵 3. Delivery Partners (Delivery Managers)
+- **Instant Order Dispatch**: Orders created by buyers or sellers immediately broadcast to active delivery partners via push notifications and Supabase Realtime.
+- **Available Deliveries Pool**: One-tap **"Accept Delivery"** action to claim unassigned delivery requests.
+- **Active Task Management**: One-tap status transitions (`Start Delivery` $\rightarrow$ `Mark as Delivered`).
+- **Turn-by-Turn Directions**: Direct integration with Google Maps and Apple Maps navigation.
+- **Live Location Broadcasting**: High-accuracy GPS streaming (`expo-location`) to keep customers informed.
 
 ## 🛠 Setup Instructions
 

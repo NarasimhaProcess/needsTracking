@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList, TouchableOpacity, Alert, Image } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
@@ -26,7 +26,28 @@ const OrderDetailScreen = ({ navigation, route }) => {
     fetchOrderDetails();
 
     const channel = supabase
-      .channel(`order-details:${orderId}`)
+      .channel(`order-tracking:${orderId}`)
+      .on('broadcast', { event: 'partner_location' }, (payload) => {
+        if (payload?.payload && webViewRef.current) {
+          const { latitude, longitude } = payload.payload;
+          webViewRef.current.injectJavaScript(`if (window.updateMarkerLocation) { window.updateMarkerLocation(${latitude}, ${longitude}); } true;`);
+        }
+      })
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'delivery_partner_locations',
+          filter: `partner_id=eq.${order?.delivery_manager_id}`,
+        },
+        (payload) => {
+          if (payload.new && webViewRef.current) {
+            const { latitude, longitude } = payload.new;
+            webViewRef.current.injectJavaScript(`if (window.updateMarkerLocation) { window.updateMarkerLocation(${latitude}, ${longitude}); } true;`);
+          }
+        }
+      )
       .on(
         'postgres_changes',
         {
@@ -39,8 +60,9 @@ const OrderDetailScreen = ({ navigation, route }) => {
           if (payload.new && webViewRef.current) {
             const point = payload.new.location.match(/POINT\(([-\d\.]+) ([-\d\.]+)\)/);
             if (point) {
-              const newCoords = { lat: parseFloat(point[2]), lon: parseFloat(point[1]) };
-              webViewRef.current.injectJavaScript(`updateMarkerLocation(${newCoords.lat}, ${newCoords.lon});`);
+              const lat = parseFloat(point[2]);
+              const lon = parseFloat(point[1]);
+              webViewRef.current.injectJavaScript(`if (window.updateMarkerLocation) { window.updateMarkerLocation(${lat}, ${lon}); } true;`);
             }
           }
         }
@@ -50,7 +72,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, order]);
+  }, [orderId, order?.delivery_manager_id]);
 
   const handleUpdateStatus = async () => {
     if (selectedStatus !== order.status) {
@@ -67,16 +89,31 @@ const OrderDetailScreen = ({ navigation, route }) => {
     }
   };
 
-  const renderOrderItem = ({ item }) => (
-    <View style={styles.orderItemDetail}>
-      <Text style={styles.itemProductName}>
-        {item.product_variant_combinations?.products?.product_name || 'N/A'}
-        {item.product_variant_combinations?.combination_string ? ` (${item.product_variant_combinations.combination_string})` : ''}
-      </Text>
-      <Text style={styles.itemQuantity}>Quantity: {item.quantity}</Text>
-      <Text style={styles.itemPrice}>Price: ₹{item.price.toFixed(2)}</Text>
-    </View>
-  );
+  const renderOrderItem = ({ item }) => {
+    const prod = item?.product_variant_combinations?.products;
+    const media = prod?.product_media;
+    const mediaUrl = Array.isArray(media) && media.length > 0 ? media[0]?.media_url : null;
+
+    return (
+      <View style={styles.orderItemDetail}>
+        {mediaUrl ? (
+          <Image source={{ uri: mediaUrl }} style={styles.orderItemImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.orderItemPlaceholder}>
+            <Icon name="shopping-bag" size={20} color="#94a3b8" />
+          </View>
+        )}
+        <View style={styles.orderItemTextContainer}>
+          <Text style={styles.itemProductName}>
+            {prod?.product_name || 'Product'}
+            {item.product_variant_combinations?.combination_string ? ` (${item.product_variant_combinations.combination_string})` : ''}
+          </Text>
+          <Text style={styles.itemQuantity}>Quantity: {item.quantity}</Text>
+          <Text style={styles.itemPrice}>Price: ₹{item.price.toFixed(2)}</Text>
+        </View>
+      </View>
+    );
+  };
 
   const getHtmlContent = () => {
     const deliveryManagerLocation = order?.profiles?.latest_delivery_manager_locations[0]?.location;
@@ -334,9 +371,32 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   orderItemDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+  },
+  orderItemImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    marginRight: 12,
+    backgroundColor: '#f1f5f9',
+  },
+  orderItemPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    marginRight: 12,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  orderItemTextContainer: {
+    flex: 1,
   },
   itemProductName: {
     fontSize: 16,

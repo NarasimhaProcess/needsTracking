@@ -4,6 +4,7 @@ export default {
   "expo": {
     "name": "NeedsTracking",
     "slug": "needstracking",
+    "scheme": "needstracking",
     "version": "1.0.0",
     "android": {
       "googleServicesFile": "./google-services.json"
@@ -81,7 +82,8 @@ export default {
           "icon": "./assets/icon.png",
           "color": "#ffffff"
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "updates": {
       "url": "https://u.expo.dev/f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"

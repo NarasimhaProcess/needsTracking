@@ -20,6 +20,17 @@ import ImageViewer from 'react-native-image-zoom-viewer';
 import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { useCart } from '../context/CartContext';
 
+const isImageMedia = (media) => {
+  if (!media) return false;
+  const type = (media.media_type || media.type || '').toLowerCase();
+  const url = media.media_url || media.uri || '';
+  if (type === 'video') return false;
+  if (type === 'image' || type === 'url' || !type) return true;
+  if (type.startsWith('image/')) return true;
+  if (typeof url === 'string' && /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(url)) return true;
+  return true;
+};
+
 const TopProductsScreen = ({ navigation, route }) => {
   const { customerId: routeCustomerId } = route?.params || {};
   const [customerId, setCustomerId] = useState(routeCustomerId);
@@ -114,11 +125,13 @@ const TopProductsScreen = ({ navigation, route }) => {
     console.log('handleAddToCart: After getUser, currentUser:', currentUser);
 
     if (!currentUser) {
-      // Redirect to BuyerAuthScreen for mobile number authentication
-      navigation.navigate('BuyerAuth', {
-        redirectScreen: 'TopProducts',
-        productId: selectedProduct.id,
-        customerId: customerId,
+      // Redirect to BuyerLogin for buyer authentication
+      navigation.navigate('BuyerLogin', {
+        redirectTo: 'TopProducts',
+        redirectParams: {
+          productId: selectedProduct.id,
+          customerId: customerId,
+        },
       });
       return;
     }
@@ -166,55 +179,78 @@ const TopProductsScreen = ({ navigation, route }) => {
     }
   };
 
-  const renderProduct = ({ item }) => (
-    <View style={styles.productContainer}>
-      <TouchableOpacity onPress={() => openProductDetailModal(item)} activeOpacity={0.8}>
-        <Image
-          style={styles.productImage}
-          source={{ uri: item.product_media?.[0]?.media_url || 'https://placehold.co/600x400' }}
-        />
-        <Text style={styles.productName} numberOfLines={2}>{item.product_name}</Text>
-        <Text style={styles.productPrice}>₹{item.amount}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity 
-        style={styles.cardAddButton} 
-        onPress={() => openProductDetailModal(item)}
-      >
-        <Icon name="plus" size={12} color="#2E7D32" style={{ marginRight: 6 }} />
-        <Text style={styles.cardAddButtonText}>ADD</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderCartItem = ({ item }) => (
-    <View style={styles.itemContainer}>
-      <Image
-        style={styles.itemImage}
-        source={{ uri: item.product_variant_combinations.products.product_media[0]?.media_url || 'https://placehold.co/600x400' }}
-      />
-      <View style={styles.itemDetails}>
-        <Text style={styles.itemName}>{item.product_variant_combinations.products.product_name}</Text>
-        <Text style={styles.itemVariant}>{item.product_variant_combinations.combination_string}</Text>
-        <Text style={styles.itemPrice}>₹{item.product_variant_combinations.price}</Text>
-        <View style={styles.quantityContainer}>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
-            <Icon name="minus-circle" size={20} color="#555" />
-          </TouchableOpacity>
-          <Text style={styles.quantityText}>{item.quantity}</Text>
-          <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}>
-            <Icon name="plus-circle" size={20} color="#555" />
-          </TouchableOpacity>
-        </View>
+  const renderProduct = ({ item }) => {
+    const imgUrl = item.product_media && item.product_media.length > 0 ? item.product_media[0]?.media_url : null;
+    return (
+      <View style={styles.productContainer}>
+        <TouchableOpacity onPress={() => openProductDetailModal(item)} activeOpacity={0.8}>
+          {imgUrl ? (
+            <Image
+              style={styles.productImage}
+              source={{ uri: imgUrl }}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.productImage, styles.placeholderImage]}>
+              <Icon name="shopping-bag" size={32} color="#94a3b8" />
+            </View>
+          )}
+          <Text style={styles.productName} numberOfLines={2}>{item.product_name}</Text>
+          <Text style={styles.productPrice}>₹{item.amount}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.cardAddButton} 
+          onPress={() => openProductDetailModal(item)}
+        >
+          <Icon name="plus" size={12} color="#2E7D32" style={{ marginRight: 6 }} />
+          <Text style={styles.cardAddButtonText}>ADD</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity onPress={() => handleRemoveItem(item.id)}>
-        <Icon name="trash" size={24} color="red" />
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
+
+  const renderCartItem = ({ item }) => {
+    const prodMedia = item?.product_variant_combinations?.products?.product_media;
+    const mediaUrl = (Array.isArray(prodMedia) && prodMedia.length > 0) ? prodMedia[0]?.media_url : item?.image_url;
+    return (
+      <View style={styles.itemContainer}>
+        {mediaUrl ? (
+          <Image
+            style={styles.itemImage}
+            source={{ uri: mediaUrl }}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.itemImage, styles.placeholderImage]}>
+            <Icon name="shopping-bag" size={20} color="#94a3b8" />
+          </View>
+        )}
+        <View style={styles.itemDetails}>
+          <Text style={styles.itemName}>{item?.product_variant_combinations?.products?.product_name || 'Product'}</Text>
+          <Text style={styles.itemVariant}>{item?.product_variant_combinations?.combination_string || ''}</Text>
+          <Text style={styles.itemPrice}>₹{item?.product_variant_combinations?.price || 0}</Text>
+          <View style={styles.quantityContainer}>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
+              <Icon name="minus-circle" size={20} color="#555" />
+            </TouchableOpacity>
+            <Text style={styles.quantityText}>{item.quantity}</Text>
+            <TouchableOpacity onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}>
+              <Icon name="plus-circle" size={20} color="#555" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        <TouchableOpacity onPress={() => handleRemoveItem(item.id)}>
+          <Icon name="trash" size={24} color="red" />
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   if (loading) {
     return <ActivityIndicator size="large" color="#0000ff" />;
   }
+
+  const modalMediaList = (selectedProduct?.product_media || []).filter(m => m && (m.media_url || m.uri));
 
   return (
     <View style={{flex: 1}}>
@@ -245,44 +281,59 @@ const TopProductsScreen = ({ navigation, route }) => {
                 <Icon name="times-circle" size={30} color="#333" />
               </TouchableOpacity>
               <ScrollView>
-                <Swiper style={styles.swiper} showsButtons={true}>
-                  {selectedProduct.product_media.map((media) => (
-                    <View key={media.id} style={styles.slide}>
-                      <TouchableOpacity onPress={() => {
-                        const imageUrls = selectedProduct.product_media
-                          .filter(m => m.media_type === 'image')
-                          .map(m => ({ url: m.media_url }));
-                        setViewerImages(imageUrls);
-                        setIsImageViewerVisible(true);
-                      }} style={styles.mediaContainer}>
-                        {media.media_type === 'image' ? (
-                          <Image source={{ uri: (typeof media.media_url === 'string' && media.media_url.length > 0) ? media.media_url : 'https://placehold.co/600x400' }} style={styles.media} />
-                        ) : (
-                          <Video
-                            source={{ uri: media.media_url }}
-                            style={styles.media}
-                            useNativeControls
-                            resizeMode="contain"
-                          />
-                        )}
-                        {media.media_type === 'image' && (
-                          <TouchableOpacity
-                            style={styles.zoomIcon}
-                            onPress={() => {
-                              const imageUrls = selectedProduct.product_media
-                                .filter(m => m.media_type === 'image')
-                                .map(m => ({ url: m.media_url }));
+                {modalMediaList.length > 0 ? (
+                  <Swiper style={styles.swiper} showsButtons={modalMediaList.length > 1} loop={modalMediaList.length > 1}>
+                    {modalMediaList.map((media, index) => {
+                      const mediaUrl = media.media_url || media.uri;
+                      const isImage = isImageMedia(media);
+                      return (
+                        <View key={media.id || `modal-media-${index}`} style={styles.slide}>
+                          <TouchableOpacity onPress={() => {
+                            const imageUrls = modalMediaList
+                              .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+                              .map(m => ({ url: m.media_url || m.uri }));
+                            if (imageUrls.length > 0) {
                               setViewerImages(imageUrls);
                               setIsImageViewerVisible(true);
-                            }}
-                          >
-                            <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                            }
+                          }} style={styles.mediaContainer}>
+                            {isImage ? (
+                              <Image source={{ uri: mediaUrl }} style={styles.media} resizeMode="contain" />
+                            ) : (
+                              <Video
+                                source={{ uri: mediaUrl }}
+                                style={styles.media}
+                                useNativeControls
+                                resizeMode="contain"
+                              />
+                            )}
+                            {isImage && (
+                              <TouchableOpacity
+                                style={styles.zoomIcon}
+                                onPress={() => {
+                                  const imageUrls = modalMediaList
+                                    .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+                                    .map(m => ({ url: m.media_url || m.uri }));
+                                  if (imageUrls.length > 0) {
+                                    setViewerImages(imageUrls);
+                                    setIsImageViewerVisible(true);
+                                  }
+                                }}
+                              >
+                                <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                              </TouchableOpacity>
+                            )}
                           </TouchableOpacity>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </Swiper>
+                        </View>
+                      );
+                    })}
+                  </Swiper>
+                ) : (
+                  <View style={styles.modalPlaceholderBanner}>
+                    <Icon name="shopping-bag" size={48} color="#94a3b8" />
+                    <Text style={styles.modalPlaceholderText}>{selectedProduct.product_name}</Text>
+                  </View>
+                )}
 
                 <View style={styles.detailsContainer}>
                   <Text style={styles.productName}>{selectedProduct.product_name}</Text>
@@ -594,6 +645,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     borderRadius: 20,
     padding: 5,
+  },
+  placeholderImage: {
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalPlaceholderBanner: {
+    height: 250,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  modalPlaceholderText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#64748b',
+    fontWeight: '600',
   },
 });
 
