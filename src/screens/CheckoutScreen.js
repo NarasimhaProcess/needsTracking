@@ -110,85 +110,138 @@ const CheckoutScreen = ({ navigation, route }) => {
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
     const isShopOrder = profile && profile.role === 'seller';
 
-    const orderPayload = {
-      user_id: orderUserId,
-      shipping_address: shippingAddress,
-      total_amount: totalAmount,
-      status: orderStatus,
-      payment_method: paymentMethod,
-    };
-
-    if (isShopOrder) {
-      orderPayload.order_type = 'shop-order';
-      orderPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
-    }
-
-    const { data: order, error: orderError } = await supabase
-      .from('orders')
-      .insert(orderPayload)
-      .select()
-      .single();
-
-    if (orderError) {
-      console.error('Error creating order:', orderError.message);
-      Alert.alert('Error', `Failed to create order: ${orderError.message}`);
-      setLoading(false);
-      return;
-    }
-
-    const orderItems = cart.cart_items.map((item) => ({
-      order_id: order.id,
-      product_variant_combination_id: item.product_variant_combinations.id,
-      quantity: item.quantity,
-      price: item.product_variant_combinations.price,
-    }));
-
-    const { error: orderItemsError } = await supabase
-      .from('order_items')
-      .insert(orderItems);
-
-    if (orderItemsError) {
-      console.error('Error creating order items:', orderItemsError.message);
-      Alert.alert('Error', 'Failed to create order items.');
-      setLoading(false);
-      return;
-    }
-
-    await supabase.from('cart_items').delete().eq('cart_id', cart.id);
-
-    setLoading(false);
-
-    // --- Trigger Delivery Manager Assignment for Online Delivery Orders ---
-    if (!isShopOrder) {
-      try {
-        await supabase.functions.invoke('assign-delivery-manager', {
-          body: { order: { id: order.id } }
-        });
-      } catch (assignErr) {
-        console.warn('Assign delivery manager invocation notice:', assignErr);
+    // Group cart items by seller (product vendor user_id)
+    const itemsBySeller = {};
+    for (const item of (cart.cart_items || [])) {
+      const prod = item.product_variant_combinations?.products;
+      const sellerId = prod?.user_id || prod?.customer_id || 'store';
+      if (!itemsBySeller[sellerId]) {
+        itemsBySeller[sellerId] = {
+          sellerId: sellerId === 'store' ? null : sellerId,
+          items: [],
+          subtotal: 0,
+        };
       }
+      const itemPrice = Number(item.product_variant_combinations?.price || 0);
+      const itemQty = Number(item.quantity || 1);
+      itemsBySeller[sellerId].items.push(item);
+      itemsBySeller[sellerId].subtotal += itemPrice * itemQty;
     }
 
-    // --- Send Confirmation Notification ---
+    const sellerKeys = Object.keys(itemsBySeller);
+    if (sellerKeys.length === 0) {
+      setLoading(false);
+      Alert.alert('Empty Cart', 'No items in cart to checkout.');
+      return;
+    }
+
+    const createdOrders = [];
+
     try {
-      const notificationTitle = isShopOrder
-        ? (orderType === 'Dine-in' ? `Order Placed for Table #${tableNo}` : 'Parcel Order Placed')
-        : '🎉 Order Placed Successfully!';
-      const notificationBody = `Total: ₹${totalAmount.toFixed(2)}. Your order #${order.order_number || order.id.substring(0, 8)} is confirmed.`;
-      
-      await schedulePushNotification(
-        notificationTitle,
-        notificationBody,
-        { orderId: order.id }
-      );
-    } catch(e) {
-      console.error("Failed to schedule notification:", e);
+      for (const sellerKey of sellerKeys) {
+        const sellerGroup = itemsBySeller[sellerKey];
+        const orderPayload = {
+          user_id: orderUserId,
+          shipping_address: shippingAddress,
+          total_amount: sellerGroup.subtotal,
+          status: orderStatus,
+          payment_method: paymentMethod,
+          order_type: isShopOrder ? 'shop-order' : 'delivery',
+        };
+
+        if (isShopOrder) {
+          orderPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
+        }
+
+        const { data: order, error: orderError } = await supabase
+          .from('orders')
+          .insert(orderPayload)
+          .select()
+          .single();
+
+        if (orderError) {
+          console.error('Error creating sub-order:', orderError.message);
+          throw orderError;
+        }
+
+        const orderItemsPayload = sellerGroup.items.map((item) => ({
+          order_id: order.id,
+          product_variant_combination_id: item.product_variant_combinations.id,
+          quantity: item.quantity,
+          price: item.product_variant_combinations.price,
+        }));
+
+        const { error: orderItemsError } = await supabase
+          .from('order_items')
+          .insert(orderItemsPayload);
+
+        if (orderItemsError) {
+          console.error('Error creating order items:', orderItemsError.message);
+          throw orderItemsError;
+        }
+
+        createdOrders.push(order);
+
+        // Trigger Delivery Manager Assignment for Delivery Orders
+        if (!isShopOrder) {
+          try {
+            await supabase.functions.invoke('assign-delivery-manager', {
+              body: { order: { id: order.id } },
+            });
+          } catch (assignErr) {
+            console.warn('Assign delivery manager notice:', assignErr);
+          }
+        }
+
+        // Send local confirmation notification
+        try {
+          const notificationTitle = isShopOrder
+            ? (orderType === 'Dine-in' ? `Order Placed for Table #${tableNo}` : 'Parcel Order Placed')
+            : '🎉 Order Placed Successfully!';
+          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${sellerGroup.subtotal.toFixed(2)} is confirmed.`;
+
+          await schedulePushNotification(
+            notificationTitle,
+            notificationBody,
+            { orderId: order.id }
+          );
+        } catch (notifErr) {
+          console.warn('Push notification notice:', notifErr);
+        }
+      }
+
+      // Clear the user's cart in database
+      await supabase.from('cart_items').delete().eq('cart_id', cart.id);
+
+      setLoading(false);
+
+      if (createdOrders.length > 1) {
+        Alert.alert(
+          '🎉 Multi-Store Orders Placed!',
+          `Your cart contained products from ${createdOrders.length} different sellers. ${createdOrders.length} separate orders have been created so each store can dispatch independently.`,
+          [
+            {
+              text: 'View My Orders',
+              onPress: () => navigation.navigate('OrderList'),
+            },
+          ]
+        );
+      } else {
+        Alert.alert(
+          '🎉 Order Placed!',
+          'Your order has been placed successfully.',
+          [
+            {
+              text: 'View Order',
+              onPress: () => navigation.navigate('OrderList'),
+            },
+          ]
+        );
+      }
+    } catch (err) {
+      setLoading(false);
+      Alert.alert('Checkout Error', err.message || 'Failed to place order. Please try again.');
     }
-    // --- End Notification ---
-
-    Alert.alert('Order Placed', 'Your order has been placed successfully.');
-    navigation.navigate('Catalog', { userId: orderUserId });
-
   };
 
   return (

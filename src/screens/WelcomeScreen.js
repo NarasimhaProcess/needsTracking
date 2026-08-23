@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,367 +11,405 @@ import {
   Linking,
   Platform,
   Modal,
-  Image,
-  ScrollView,
-  Button,
+  SafeAreaView,
+  Dimensions,
 } from 'react-native';
 import UniversalWebView from '../components/UniversalWebView';
-import { supabase, getCustomerDocuments } from '../services/supabase'; // Import getCustomerDocuments
+import { supabase } from '../services/supabase';
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import ImageViewer from 'react-native-image-zoom-viewer'; // Import ImageViewer
+import { useNavigation } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
-import OrderIconComponent from '../components/OrderIconComponent';
-import CartIconComponent from '../components/CartIconComponent';
-import ProfileIconComponent from '../components/ProfileIconComponent';
-import ProductManageIconComponent from '../components/ProductManageIconComponent';
 
+const { width } = Dimensions.get('window');
 
-function AreaSearchBar({ onAreaSelected, onClear }) {
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
-  const debounceTimeout = useRef(null);
-
-  const fetchSuggestions = async (text) => {
-    if (!text) {
-      setSuggestions([]);
-      return;
-    }
-    setLoading(true);
-    try {
-        const { data, error } = await supabase
-            .from('area_master')
-            .select('id, area_name, latitude, longitude')
-            .ilike('area_name', `%${text}%`)
-            .limit(5);
-
-        if (error) throw error;
-        setSuggestions(data);
-    } catch (e) {
-      setSuggestions([]);
-    }
-    setLoading(false);
-  };
-
-  const onChangeText = (text) => {
-    setQuery(text);
-    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
-    debounceTimeout.current = setTimeout(() => fetchSuggestions(text), 400);
-  };
-
-  const onSuggestionPress = (item) => {
-    setQuery(item.area_name);
-    setSuggestions([]);
-    onAreaSelected(item);
-  };
-
-  return (
-    <View style={styles.searchContainer}>
-      <View style={{ flexDirection: 'row' }}>
-        <TextInput
-          value={query}
-          onChangeText={onChangeText}
-          placeholder="Search Area"
-          style={styles.searchInput}
-        />
-        {loading && <ActivityIndicator size="small" style={{ marginLeft: 8 }} />}
-        <TouchableOpacity onPress={() => { setQuery(''); onClear(); }} style={{ padding: 8 }}><Text>Clear</Text></TouchableOpacity>
-      </View>
-      {suggestions.length > 0 && (
-        <FlatList
-          data={suggestions}
-          keyExtractor={(item) => item.id.toString()}
-          style={styles.suggestionList}
-          renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => onSuggestionPress(item)} style={styles.suggestionItem}>
-              <Text>{item.area_name}</Text>
-            </TouchableOpacity>
-          )}
-        />
-      )}
-    </View>
-  );
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+  const R = 6371; // Earth radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c;
+  return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
 }
 
-function CustomerSearchBar({ onCustomerSelected, areaId }) {
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
-  const debounceTimeout = useRef(null);
-
-  const fetchSuggestions = async (text) => {
-    if (!text) {
-      setSuggestions([]);
-      return;
-    }
-    setLoading(true);
-    try {
-        let queryBuilder = supabase
-            .from('customers')
-            .select('id, name, mobile, book_no, email, latitude, longitude')
-            .or(`name.ilike.%${text}%,mobile.ilike.%${text}%,book_no.ilike.%${text}%,email.ilike.%${text}%`)
-            .limit(5);
-
-        if (areaId) {
-            queryBuilder = queryBuilder.eq('area_id', areaId);
-        }
-
-        const { data, error } = await queryBuilder;
-
-        if (error) throw error;
-        setSuggestions(data);
-    } catch (e) {
-      setSuggestions([]);
-    }
-    setLoading(false);
-  };
-
-  const onChangeText = (text) => {
-    setQuery(text);
-    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
-    debounceTimeout.current = setTimeout(() => fetchSuggestions(text), 400);
-  };
-
-  const onSuggestionPress = (item) => {
-    setQuery(item.name);
-    setSuggestions([]);
-    onCustomerSelected(item);
-  };
-
-  return (
-    <View style={[styles.searchContainer, { top: 70 }]}>
-      <View style={{ flexDirection: 'row' }}>
-        <TextInput
-          value={query}
-          onChangeText={onChangeText}
-          placeholder="Search Customer (Name, Mobile, Card, Email)"
-          style={styles.searchInput}
-        />
-        {loading && <ActivityIndicator size="small" style={{ marginLeft: 8 }} />}
-      </View>
-      {suggestions.length > 0 && (
-        <FlatList
-          data={suggestions}
-          keyExtractor={(item) => item.id.toString()}
-          style={styles.suggestionList}
-          renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => onSuggestionPress(item)} style={styles.suggestionItem}>
-              <Text>{item.name} - {item.mobile}</Text>
-            </TouchableOpacity>
-          )}
-        />
-      )}
-    </View>
-  );
+function getRawDistanceKm(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 999999;
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-import { useNavigation } from '@react-navigation/native'; // Add this import
-
-export default function WelcomeScreen({ route }) { // Remove navigation from props
-  const navigation = useNavigation(); // Get navigation from hook
+export default function WelcomeScreen() {
+  const navigation = useNavigation();
   const { user, role } = useCart();
-  const [customerLocations, setCustomerLocations] = useState([]);
-  const [allAreas, setAllAreas] = useState([]);
+  const [sellers, setSellers] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedArea, setSelectedArea] = useState(null);
+  const [selectedSeller, setSelectedSeller] = useState(null);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const debounceTimeout = useRef(null);
   const webViewRef = useRef(null);
-  const [isCustomerImageModalVisible, setIsCustomerImageModalVisible] = useState(false); // New state
-  const [currentCustomerImages, setCurrentCustomerImages] = useState([]); // New state
-  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for full screen image viewer
-  const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
-  const [isLoginMenuVisible, setIsLoginMenuVisible] = useState(false);
 
   useEffect(() => {
-    // Role-based redirection
+    // Role-based redirection if delivery manager
     if (role === 'delivery_manager') {
       navigation.replace('DeliveryManagerDashboard');
     }
   }, [role, navigation]);
 
+  // Send JavaScript command safely to UniversalWebView (Mobile & Web)
+  const sendMapCommand = useCallback((command) => {
+    if (!webViewRef.current) return;
+    if (Platform.OS === 'web') {
+      try {
+        if (webViewRef.current.contentWindow) {
+          webViewRef.current.contentWindow.eval(command);
+        }
+      } catch (e) {
+        console.warn('Web map command eval warning:', e.message);
+      }
+    } else {
+      try {
+        webViewRef.current.injectJavaScript(`
+          try {
+            ${command}
+          } catch (err) {
+            console.error('Map command error:', err);
+          }
+          true;
+        `);
+      } catch (e) {
+        console.warn('Native injectJavaScript error:', e.message);
+      }
+    }
+  }, []);
+
+  // Fetch user location and sellers
   useEffect(() => {
-    async function fetchData() {
+    async function initData() {
       try {
         setLoading(true);
+        // 1. Request location
         let { status } = await Location.requestForegroundPermissionsAsync();
-        
-        if (status !== 'granted') {
-          Alert.alert('Permission denied', 'Location permission is required to show your position on the map. Using default location.');
-          // Default location (e.g., Delhi, India) if permission denied
-          setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
-        } else {
+        let userCoords = null;
+
+        if (status === 'granted') {
           try {
-            // Attempt to get high accuracy location
-            let location = await Location.getCurrentPositionAsync({
+            let loc = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
               timeout: 5000,
             });
-            setUserLocation(location.coords);
-          } catch (locationError) {
-            console.warn('Location query failed:', locationError.message);
-            
-            // Web-specific handling for "Failed to query location from network service"
-            if (Platform.OS === 'web') {
-              console.log('Falling back to IP-based or default location due to web network service failure.');
-            }
-            
-            // Try a less accurate but faster method
+            userCoords = loc.coords;
+            setUserLocation(loc.coords);
+          } catch (locErr) {
+            console.warn('Primary location lookup failed:', locErr.message);
             try {
               let lastKnown = await Location.getLastKnownPositionAsync({});
               if (lastKnown) {
+                userCoords = lastKnown.coords;
                 setUserLocation(lastKnown.coords);
-              } else {
-                throw new Error('No last known location');
               }
-            } catch (fallbackError) {
-              // Final fallback to a default location if everything fails
-              setUserLocation({ latitude: 28.6139, longitude: 77.2090 });
-              if (Platform.OS === 'web' && !window.isSecureContext) {
-                Alert.alert('Insecure Context', 'Browser location requires HTTPS. Using default location.');
-              }
+            } catch (fallbackErr) {
+              console.warn('Fallback location lookup failed:', fallbackErr.message);
             }
           }
         }
-        await Promise.all([fetchCustomerLocations(selectedArea), fetchAllAreas()]);
+
+        // 2. Fetch Sellers strictly from profiles table with latitude & longitude
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, mobile, role, address_line_1, address_line_2, city, state, zip_code, latitude, longitude, avatar_url')
+          .or('role.eq.seller,role.eq.admin')
+          .not('latitude', 'is', null)
+          .not('longitude', 'is', null);
+
+        if (profilesError) {
+          console.error('Error fetching sellers:', profilesError.message);
+          throw profilesError;
+        }
+
+        // Fetch products count per seller
+        let productsCountMap = {};
+        try {
+          const { data: prodData } = await supabase
+            .from('products')
+            .select('id, user_id');
+          if (prodData) {
+            prodData.forEach((p) => {
+              if (p.user_id) {
+                productsCountMap[p.user_id] = (productsCountMap[p.user_id] || 0) + 1;
+              }
+            });
+          }
+        } catch (prodErr) {
+          console.warn('Error fetching products count:', prodErr.message);
+        }
+
+        const formattedSellers = (profilesData || [])
+          .filter((p) => p.latitude && p.longitude)
+          .map((p) => ({
+            id: p.id,
+            full_name: p.full_name || 'Seller Store',
+            email: p.email,
+            mobile: p.mobile,
+            role: p.role,
+            city: p.city || '',
+            address: [p.address_line_1, p.address_line_2, p.city, p.state].filter(Boolean).join(', '),
+            latitude: Number(p.latitude),
+            longitude: Number(p.longitude),
+            productCount: productsCountMap[p.id] || 0,
+            avatar_url: p.avatar_url,
+          }));
+
+        setSellers(formattedSellers);
+
+        // If sellers found and user location is available, pick closest seller initially
+        if (formattedSellers.length > 0 && userCoords) {
+          const sorted = [...formattedSellers].sort((a, b) => {
+            return (
+              getRawDistanceKm(userCoords.latitude, userCoords.longitude, a.latitude, a.longitude) -
+              getRawDistanceKm(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude)
+            );
+          });
+          setSelectedSeller(sorted[0]);
+        } else if (formattedSellers.length > 0) {
+          setSelectedSeller(formattedSellers[0]);
+        }
       } catch (err) {
-        console.error('Data fetching error:', err);
+        console.error('Data initialization error:', err);
         setError(err.message);
       } finally {
         setLoading(false);
       }
     }
 
-    fetchData();
-  }, [selectedArea]);
+    initData();
+  }, []);
 
-  async function fetchAllAreas() {
-      try {
-        const { data, error } = await supabase
-          .from('area_master')
-          .select('id, area_name, latitude, longitude');
-        if (error) throw error;
-        setAllAreas(data.filter(a => a.latitude && a.longitude));
-      } catch (err) {
-        console.error('Error fetching all areas:', err);
-      }
-  }
-
-  async function fetchCustomerLocations(areaId) {
-      try {
-        let query = supabase
-          .from('customers')
-          .select('id, name, email, latitude, longitude, area_id, mobile, book_no'); // Removed photo_data
-
-        if (areaId) {
-          query = query.eq('area_id', areaId);
-        }
-
-        const { data, error: fetchError } = await query;
-
-        if (fetchError) {
-          console.error('Supabase Error fetching customers:', fetchError);
-          throw fetchError;
-        }
-
-        let filteredLocations = data.filter(customer => customer.latitude && customer.longitude);
-        setCustomerLocations(filteredLocations);
-      } catch (err) {
-        console.error('Error fetching customer locations:', err);
-        setError(err.message);
-      }
-  }
-
-  const onAreaSelected = (area) => {
-      setSelectedArea(area.id);
-      if(webViewRef.current && area.latitude && area.longitude) {
-          webViewRef.current.injectJavaScript(`
-            map.setView([${area.latitude}, ${area.longitude}], 14);
-          `);
-      }
-  }
-
-  const onCustomerSelected = (customer) => {
-    if(webViewRef.current && customer.latitude && customer.longitude) {
-        webViewRef.current.injectJavaScript(`
-          map.setView([${customer.latitude}, ${customer.longitude}], 16);
-          customerMarkers[${customer.id}].openPopup();
-        `);
+  // Search area and sellers
+  const fetchSuggestions = async (text) => {
+    if (!text || text.trim().length === 0) {
+      setSuggestions([]);
+      return;
     }
-  }
+    const cleanQuery = text.trim().toLowerCase();
+    setSearchLoading(true);
+
+    try {
+      const results = [];
+
+      // 1. Search matching local sellers
+      const matchedSellers = sellers.filter((s) => {
+        const name = (s.full_name || '').toLowerCase();
+        const city = (s.city || '').toLowerCase();
+        const address = (s.address || '').toLowerCase();
+        const mobile = (s.mobile || '').toLowerCase();
+        return (
+          name.includes(cleanQuery) ||
+          city.includes(cleanQuery) ||
+          address.includes(cleanQuery) ||
+          mobile.includes(cleanQuery)
+        );
+      });
+
+      matchedSellers.forEach((s) => {
+        results.push({
+          id: `seller-${s.id}`,
+          title: s.full_name,
+          subtitle: s.address || s.city || `Seller • ${s.productCount} products`,
+          type: 'seller',
+          latitude: s.latitude,
+          longitude: s.longitude,
+          data: s,
+        });
+      });
+
+      // 2. Search OpenStreetMap Nominatim for geographic areas / places
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+            text
+          )}&limit=5`,
+          {
+            headers: { 'User-Agent': 'NeedsTrackingApp/1.0' },
+          }
+        );
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          data.forEach((item, idx) => {
+            results.push({
+              id: `place-${idx}-${item.place_id || item.osm_id}`,
+              title: item.display_name.split(',')[0],
+              subtitle: item.display_name,
+              type: 'area',
+              latitude: parseFloat(item.lat),
+              longitude: parseFloat(item.lon),
+              data: item,
+            });
+          });
+        }
+      } catch (nomErr) {
+        console.warn('Nominatim search request failed:', nomErr);
+      }
+
+      setSuggestions(results);
+    } catch (err) {
+      console.error('Error fetching suggestions:', err);
+      setSuggestions([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleSearchChange = (text) => {
+    setSearchQuery(text);
+    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+    debounceTimeout.current = setTimeout(() => fetchSuggestions(text), 350);
+  };
+
+  const handleSelectSuggestion = (item) => {
+    setSearchQuery(item.title);
+    setSuggestions([]);
+
+    if (item.latitude && item.longitude) {
+      sendMapCommand(`
+        if (window.map) {
+          window.map.setView([${item.latitude}, ${item.longitude}], ${item.type === 'seller' ? 16 : 14}, { animate: true });
+          ${
+            item.type === 'seller' && item.data
+              ? `
+            if (window.sellerMarkers && window.sellerMarkers['${item.data.id}']) {
+              window.sellerMarkers['${item.data.id}'].openPopup();
+            }
+          `
+              : ''
+          }
+        }
+      `);
+
+      if (item.type === 'seller' && item.data) {
+        setSelectedSeller(item.data);
+      } else {
+        // Find nearest seller to this selected area
+        const sorted = [...sellers].sort((a, b) => {
+          return (
+            getRawDistanceKm(item.latitude, item.longitude, a.latitude, a.longitude) -
+            getRawDistanceKm(item.latitude, item.longitude, b.latitude, b.longitude)
+          );
+        });
+        if (sorted.length > 0) {
+          setSelectedSeller(sorted[0]);
+        }
+      }
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    setSuggestions([]);
+    if (userLocation) {
+      sendMapCommand(`
+        if (window.map) {
+          window.map.setView([${userLocation.latitude}, ${userLocation.longitude}], 13, { animate: true });
+        }
+      `);
+    } else if (sellers.length > 0) {
+      sendMapCommand(`
+        if (window.map && window.sellerBounds) {
+          window.map.fitBounds(window.sellerBounds.pad(0.2));
+        }
+      `);
+    }
+  };
 
   const handleLogout = () => {
-    Alert.alert(
-      "Logout",
-      `Are you sure you want to log out from ${user.phone}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Logout", onPress: () => supabase.auth.signOut() },
-      ]
-    );
+    Alert.alert('Logout', 'Are you sure you want to log out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        onPress: async () => {
+          setIsMenuVisible(false);
+          await supabase.auth.signOut();
+        },
+      },
+    ]);
   };
 
-  const onMapMessage = async (event) => {
-    const data = JSON.parse(event.nativeEvent.data);
-    if (data.type === 'viewProducts') {
-      navigation.navigate('ProductTabs', { customerId: data.customerId });
-    } else if (data.type === 'viewTopProducts') {
-      navigation.navigate('Catalog', { customerId: data.customerId });
-    } else if (data.type === 'getDirections') {
-      const { latitude, longitude } = data;
-      const scheme = Platform.select({
-        ios: 'maps:0,0?q=',
-        android: 'geo:0,0?q=',
-      });
-      const latLng = `${latitude},${longitude}`;
-      const label = 'Customer Location';
-      const url = Platform.select({
-        ios: `${scheme}${label}@${latLng}`,
-        android: `${scheme}${latLng}(${label})`,
-      });
+  const handleOpenDirections = (lat, lng, label) => {
+    const latLng = `${lat},${lng}`;
+    const scheme = Platform.select({
+      ios: 'maps:0,0?q=',
+      android: 'geo:0,0?q=',
+      default: 'https://www.google.com/maps/search/?api=1&query=',
+    });
+    const url = Platform.select({
+      ios: `${scheme}${encodeURIComponent(label || 'Seller Location')}@${latLng}`,
+      android: `${scheme}${latLng}(${encodeURIComponent(label || 'Seller Location')})`,
+      default: `${scheme}${latLng}`,
+    });
+    Linking.openURL(url);
+  };
 
-      Linking.openURL(url);
-    } else if (data.type === 'viewCustomerImages') { // New message type
-      const { customerId } = data;
-      const documents = await getCustomerDocuments(customerId); // Fetch documents (renamed from images for clarity)
-      
-      // Filter documents to only include images (file_type is 'image' or null)
-      const images = documents ? documents.filter(doc => doc.file_type === 'image' || doc.file_type === null) : [];
-
-      if (images && images.length > 0) {
-        setCurrentCustomerImages(images.map(img => ({ url: img.file_data }))); // Use file_data
-        setIsCustomerImageModalVisible(true);
-      } else {
-        Alert.alert('No Images', 'No images found for this customer.');
+  const onMapMessage = (event) => {
+    try {
+      let raw = event.nativeEvent?.data || event.data;
+      if (typeof raw === 'string') {
+        raw = JSON.parse(raw);
       }
+      if (!raw) return;
+
+      if (raw.type === 'viewProducts') {
+        navigation.navigate('Catalog', { userId: raw.sellerId, sellerId: raw.sellerId });
+      } else if (raw.type === 'sellerClicked') {
+        setSelectedSeller(raw.seller);
+      } else if (raw.type === 'getDirections') {
+        handleOpenDirections(raw.latitude, raw.longitude, raw.name);
+      }
+    } catch (err) {
+      console.error('Error handling map message:', err);
     }
   };
-
-  const openImageViewer = (index) => {
-    setViewerImages(currentCustomerImages);
-    setIsImageViewerVisible(true);
-  };
-
-  const renderCustomerImage = ({ item, index }) => (
-    <TouchableOpacity onPress={() => openImageViewer(index)}>
-      <Image source={{ uri: item.url }} style={styles.customerImageThumbnail} />
-    </TouchableOpacity>
-  );
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0000ff" />
-        <Text>Loading map data...</Text>
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading sellers and map...</Text>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.container}>
+      <View style={styles.centerContainer}>
+        <Icon name="exclamation-circle" size={44} color="#EF4444" />
         <Text style={styles.errorText}>Error: {error}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => navigation.replace('Welcome')}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -380,324 +418,1032 @@ export default function WelcomeScreen({ route }) { // Remove navigation from pro
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Customer Map</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-        <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
-        <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+        <title>Sellers Map</title>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
         <style>
-            body { margin: 0; padding: 0; }
-            #mapid { width: 100vw; height: 100vh; background-color: #f0f0f0; }
-            .leaflet-routing-container { display: none; }
-            .customer-image-button { margin-top: 5px; padding: 5px 10px; background-color: #007AFF; color: white; border-radius: 5px; border: none; cursor: pointer; }
+            html, body, #mapid {
+                width: 100vw;
+                height: 100vh;
+                margin: 0;
+                padding: 0;
+                background-color: #f8fafc;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            }
+            .seller-pin {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 42px;
+                height: 42px;
+                background: linear-gradient(135deg, #007AFF 0%, #0056b3 100%);
+                border-radius: 50% 50% 50% 0;
+                transform: rotate(-45deg);
+                box-shadow: 0 4px 12px rgba(0,122,255,0.4);
+                border: 2px solid #FFFFFF;
+                cursor: pointer;
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+            }
+            .seller-pin:hover {
+                transform: rotate(-45deg) scale(1.15);
+                box-shadow: 0 6px 16px rgba(0,122,255,0.6);
+            }
+            .seller-pin i {
+                transform: rotate(45deg);
+                color: #FFFFFF;
+                font-size: 17px;
+            }
+            .user-pulse {
+                width: 18px;
+                height: 18px;
+                background: #10B981;
+                border: 3px solid #FFFFFF;
+                border-radius: 50%;
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.35);
+            }
+            .custom-popup .leaflet-popup-content-wrapper {
+                border-radius: 16px;
+                padding: 6px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.18);
+                border: 1px solid #E2E8F0;
+            }
+            .custom-popup .leaflet-popup-content {
+                margin: 10px 12px;
+                line-height: 1.4;
+            }
+            .popup-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 6px;
+            }
+            .popup-title {
+                font-size: 16px;
+                font-weight: 700;
+                color: #0F172A;
+                margin: 0;
+            }
+            .popup-tag {
+                display: inline-block;
+                background: #E0F2FE;
+                color: #0284C7;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 2px 8px;
+                border-radius: 6px;
+                margin-bottom: 8px;
+            }
+            .popup-info-row {
+                font-size: 12px;
+                color: #64748B;
+                margin-bottom: 4px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .popup-btn-primary {
+                width: 100%;
+                background: #007AFF;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 10px;
+                padding: 9px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                margin-top: 10px;
+                transition: background 0.15s;
+            }
+            .popup-btn-primary:active {
+                background: #0056b3;
+            }
+            .popup-btn-secondary {
+                width: 100%;
+                background: #F1F5F9;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                border-radius: 10px;
+                padding: 7px 12px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                margin-top: 6px;
+            }
         </style>
     </head>
     <body>
         <div id="mapid"></div>
         <script>
-            var map = L.map('mapid').setView([20.5937, 78.9629], 5);
-            var customerMarkers = {};
+            var map = L.map('mapid', { zoomControl: false }).setView([20.5937, 78.9629], 5);
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19
             }).addTo(map);
 
             function postMessage(data) {
-                if (window.ReactNativeWebView) {
-                    window.ReactNativeWebView.postMessage(JSON.stringify(data));
-                } else {
-                    window.parent.postMessage(data, '*');
+                var json = typeof data === 'string' ? data : JSON.stringify(data);
+                if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                    window.ReactNativeWebView.postMessage(json);
+                }
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage(json, '*');
                 }
             }
 
-            function viewProducts(customerId) {
-                postMessage({ type: 'viewProducts', customerId: customerId });
+            function viewProducts(sellerId) {
+                postMessage({ type: 'viewProducts', sellerId: sellerId });
             }
 
-            function viewTopProducts(customerId) {
-                postMessage({ type: 'viewTopProducts', customerId: customerId });
+            function getDirections(latitude, longitude, name) {
+                postMessage({ type: 'getDirections', latitude: latitude, longitude: longitude, name: name });
             }
 
-            function getDirections(latitude, longitude) {
-                postMessage({ type: 'getDirections', latitude: latitude, longitude: longitude });
-            }
-
-            function viewCustomerImages(customerId) {
-                postMessage({ type: 'viewCustomerImages', customerId: customerId });
-            }
-
-            var customerLocations = ${JSON.stringify(customerLocations.map(loc => ({
-                latitude: loc.latitude,
-                longitude: loc.longitude,
-                name: loc.name || loc.email,
-                mobile: loc.mobile || 'N/A',
-                book_no: loc.book_no || 'N/A',
-                id: loc.id
-            })))};
-
-            var allAreas = ${JSON.stringify(allAreas)};
-
+            var sellers = ${JSON.stringify(sellers)};
             var userLocation = ${JSON.stringify(userLocation)};
+            var sellerMarkers = {};
+            window.sellerMarkers = sellerMarkers;
+            window.map = map;
 
-            if (userLocation) {
-                L.circleMarker([userLocation.latitude, userLocation.longitude], {
-                    color: 'blue',
-                    fillColor: '#30f',
-                    fillOpacity: 0.8,
-                    radius: 8
-                })
+            if (userLocation && userLocation.latitude && userLocation.longitude) {
+                var userIcon = L.divIcon({
+                    className: 'user-pulse-container',
+                    html: '<div class="user-pulse"></div>',
+                    iconSize: [18, 18],
+                    iconAnchor: [9, 9]
+                });
+                L.marker([userLocation.latitude, userLocation.longitude], { icon: userIcon })
                     .addTo(map)
-                    .bindPopup('Your Location')
-                    .openPopup();
-                map.setView([userLocation.latitude, userLocation.longitude], 13);
+                    .bindPopup('<b>You are here</b>');
             }
 
-            allAreas.forEach(function(area) {
-                L.circle([area.latitude, area.longitude], { 
-                    color: 'red',
-                    fillColor: '#f03',
-                    fillOpacity: 0.5,
-                    radius: 500
-                }).addTo(map).bindPopup(area.area_name);
-            });
+            if (sellers.length > 0) {
+                var boundsPoints = [];
 
-            if (customerLocations.length > 0) {
-                // Limit routing to first 10 locations to prevent URL length errors
-                var waypoints = customerLocations.slice(0, 10).map(function(loc) {
-                    return L.latLng(loc.latitude, loc.longitude);
+                sellers.forEach(function(seller) {
+                    boundsPoints.push([seller.latitude, seller.longitude]);
+
+                    var sellerIcon = L.divIcon({
+                        className: 'seller-icon-wrapper',
+                        html: '<div class="seller-pin"><i class="fas fa-store"></i></div>',
+                        iconSize: [42, 42],
+                        iconAnchor: [21, 42],
+                        popupAnchor: [0, -42]
+                    });
+
+                    var popupHtml =
+                        '<div class="popup-header">' +
+                            '<i class="fas fa-store" style="color:#007AFF; font-size:18px;"></i>' +
+                            '<h4 class="popup-title">' + (seller.full_name || 'Seller Store') + '</h4>' +
+                        '</div>' +
+                        '<div class="popup-tag">Verified Seller</div>' +
+                        (seller.city ? '<div class="popup-info-row"><i class="fas fa-map-marker-alt" style="color:#64748B;"></i> ' + seller.city + '</div>' : '') +
+                        (seller.mobile ? '<div class="popup-info-row"><i class="fas fa-phone" style="color:#64748B;"></i> ' + seller.mobile + '</div>' : '') +
+                        (seller.productCount > 0 ? '<div class="popup-info-row"><i class="fas fa-box-open" style="color:#10B981;"></i> ' + seller.productCount + ' Products available</div>' : '') +
+                        '<button class="popup-btn-primary" onclick="viewProducts(\\'' + seller.id + '\\')">' +
+                            '<i class="fas fa-shopping-bag"></i> View Products' +
+                        '</button>' +
+                        '<button class="popup-btn-secondary" onclick="getDirections(' + seller.latitude + ', ' + seller.longitude + ', \\'' + (seller.full_name || 'Seller') + '\\')">' +
+                            '<i class="fas fa-directions"></i> Get Directions' +
+                        '</button>';
+
+                    var marker = L.marker([seller.latitude, seller.longitude], { icon: sellerIcon })
+                        .addTo(map)
+                        .bindPopup(popupHtml, { className: 'custom-popup' });
+
+                    marker.on('click', function() {
+                        postMessage({ type: 'sellerClicked', seller: seller });
+                    });
+
+                    sellerMarkers[seller.id] = marker;
                 });
 
-                var routingControl = L.Routing.control({
-                    waypoints: waypoints,
-                    routeWhileDragging: false,
-                    showAlternatives: false,
-                    addWaypoints: false,
-                    draggableWaypoints: false,
-                    fitSelectedRoutes: true,
-                    show: false,
-                    lineOptions: {
-                        styles: [{ color: 'blue', weight: 5 }]
-                    },
-                    router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' })
-                }).addTo(map);
+                window.sellerBounds = L.latLngBounds(boundsPoints);
 
-                routingControl.on('routesfound', function(e) {
-                    var routes = e.routes;
-                    if (routes.length > 0) {
-                        var bounds = L.latLngBounds(waypoints);
-                        if (!userLocation) { 
-                            map.fitBounds(bounds.pad(0.1));
-                        }
-
-                        customerLocations.forEach(function(location) {
-                            var popupContent = 
-                                '<b>' + (location.name || 'Customer') + '</b><br/>' +
-                                'Mobile: ' + (location.mobile || 'N/A') + '<br/>' +
-                                'Card No: ' + (location.book_no || 'N/A') +
-                                '<br/><button onclick="viewTopProducts(' + location.id + ')">View Top 10 Products</button>' +
-                                '<br/><button onclick="getDirections(' + location.latitude + ',' + location.longitude + ')"><i class="fas fa-directions"></i> Directions</button>' +
-                                '<br/><button onclick="viewCustomerImages(' + location.id + ')" class="customer-image-button"><i class="fas fa-images"></i> Images</button>';
-                            var marker = L.marker([location.latitude, location.longitude])
-                                .addTo(map)
-                                .bindPopup(popupContent);
-                            customerMarkers[location.id] = marker;
-                        });
-                    }
-                });
-
-            } else if (allAreas.length > 0 && !userLocation) {
-                var areaBounds = L.latLngBounds(allAreas.map(a => [a.latitude, a.longitude]));
-                map.fitBounds(areaBounds.pad(0.1));
+                if (userLocation && userLocation.latitude && userLocation.longitude) {
+                    map.setView([userLocation.latitude, userLocation.longitude], 13);
+                } else if (boundsPoints.length > 0) {
+                    map.fitBounds(window.sellerBounds.pad(0.2));
+                }
+            } else if (userLocation) {
+                map.setView([userLocation.latitude, userLocation.longitude], 13);
             }
         </script>
     </body>
     </html>
   `;
 
+  const calculatedDistance =
+    selectedSeller && userLocation
+      ? calculateDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          selectedSeller.latitude,
+          selectedSeller.longitude
+        )
+      : null;
+
   return (
-    <View style={styles.container}>
-        <AreaSearchBar onAreaSelected={onAreaSelected} onClear={() => setSelectedArea(null)} />
-        {selectedArea && <CustomerSearchBar onCustomerSelected={onCustomerSelected} areaId={selectedArea} />}
-        <UniversalWebView
-            ref={webViewRef}
-            originWhitelist={['*']}
-            source={{ html: htmlContent }}
-            style={styles.webview}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            onMessage={onMapMessage}
-        />
-        <View style={styles.iconContainer}>
-          {user ? (
-            <TouchableOpacity onPress={handleLogout} style={styles.iconWrapper}>
-              <Icon name="sign-out" size={30} color="#FF3B30" />
-              <Text style={styles.iconText}>Logout</Text>
+    <SafeAreaView style={styles.container}>
+      {/* Search Header Bar with 3 Horizontal Dots Button */}
+      <View style={styles.topHeaderContainer}>
+        <View style={styles.searchBarWrapper}>
+          <Icon name="search" size={16} color="#64748B" style={styles.searchIcon} />
+          <TextInput
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            placeholder="Search area, city or seller..."
+            placeholderTextColor="#94A3B8"
+            style={styles.searchInput}
+            returnKeyType="search"
+          />
+          {searchLoading && (
+            <ActivityIndicator size="small" color="#007AFF" style={styles.searchLoader} />
+          )}
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={handleClearSearch} style={styles.clearButton}>
+              <Icon name="times-circle" size={18} color="#94A3B8" />
             </TouchableOpacity>
-          ) : (
-            <>
-              <TouchableOpacity onPress={() => navigation.navigate('BuyerLogin')} style={styles.iconWrapper}>
-                <Icon name="shopping-cart" size={30} color="#007AFF" />
-                <Text style={styles.iconText}>Buyer</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('SellerLogin')} style={styles.iconWrapper}>
-                <Icon name="user" size={30} color="#007AFF" />
-                <Text style={styles.iconText}>Seller</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('DeliveryManagerLogin')} style={styles.iconWrapper}>
-                <Icon name="truck" size={30} color="#007AFF" />
-                <Text style={styles.iconText}>Delivery</Text>
-              </TouchableOpacity>
-            </>
           )}
         </View>
 
-        {/* Customer Images Modal */}
-        <Modal
-          visible={isCustomerImageModalVisible}
-          transparent={true}
-          onRequestClose={() => setIsCustomerImageModalVisible(false)}
+        {/* 3 Horizontal Dots Menu Button */}
+        <TouchableOpacity
+          style={styles.dotsMenuButton}
+          onPress={() => setIsMenuVisible(true)}
+          activeOpacity={0.8}
+          accessibilityLabel="Portals Menu"
         >
-          <View style={styles.modalBackground}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Customer Images</Text>
-              <ScrollView horizontal={true} contentContainerStyle={styles.imageScrollContainer}>
-                {currentCustomerImages.map((image, index) => (
-                  <TouchableOpacity key={index} onPress={() => openImageViewer(index)}>
-                    <Image source={{ uri: image.url }} style={styles.customerModalImage} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              <Button title="Close" onPress={() => setIsCustomerImageModalVisible(false)} />
-            </View>
-          </View>
-        </Modal>
+          <Icon name="ellipsis-h" size={20} color="#1E293B" />
+        </TouchableOpacity>
+      </View>
 
-        {/* Full Screen Image Viewer Modal */}
-        <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
-          <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
-        </Modal>
-        {user && (
-          <View style={styles.bottomRightIcons}>
-            <OrderIconComponent navigation={navigation} />
-            <CartIconComponent navigation={navigation} />
-            <ProfileIconComponent navigation={navigation} />
-            {/* Assuming 'seller' or 'admin' role can manage products */}
-            {user && ( // Render if any user is logged in
-              <ProductManageIconComponent navigation={navigation} session={user} customerId={user?.id} />
+      {/* Auto-suggest Search Dropdown */}
+      {suggestions.length > 0 && (
+        <View style={styles.suggestionDropdown}>
+          <FlatList
+            data={suggestions}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.suggestionRow}
+                onPress={() => handleSelectSuggestion(item)}
+              >
+                <View
+                  style={[
+                    styles.suggestionIconBox,
+                    item.type === 'seller' ? styles.sellerIconBox : styles.areaIconBox,
+                  ]}
+                >
+                  <Icon
+                    name={item.type === 'seller' ? 'home' : 'map-marker'}
+                    size={14}
+                    color={item.type === 'seller' ? '#007AFF' : '#10B981'}
+                  />
+                </View>
+                <View style={styles.suggestionTextContainer}>
+                  <Text style={styles.suggestionTitle} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.suggestionSubtitle} numberOfLines={1}>
+                    {item.subtitle}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.typeBadge,
+                    item.type === 'seller' ? styles.sellerBadge : styles.areaBadge,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.typeBadgeText,
+                      item.type === 'seller' ? styles.sellerBadgeText : styles.areaBadgeText,
+                    ]}
+                  >
+                    {item.type === 'seller' ? 'Seller' : 'Area'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      )}
+
+      {/* Interactive Map View */}
+      <UniversalWebView
+        ref={webViewRef}
+        originWhitelist={['*']}
+        source={{ html: htmlContent }}
+        style={styles.webview}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        onMessage={onMapMessage}
+      />
+
+      {/* Floating Selected Seller Card */}
+      {selectedSeller && (
+        <View style={styles.sellerCard}>
+          <View style={styles.sellerCardHeader}>
+            <View style={styles.sellerAvatarBox}>
+              <Icon name="home" size={20} color="#007AFF" />
+            </View>
+            <View style={styles.sellerDetails}>
+              <View style={styles.sellerNameRow}>
+                <Text style={styles.sellerName} numberOfLines={1}>
+                  {selectedSeller.full_name}
+                </Text>
+                <View style={styles.verifiedTag}>
+                  <Text style={styles.verifiedTagText}>Seller</Text>
+                </View>
+              </View>
+              <Text style={styles.sellerLocation} numberOfLines={1}>
+                {selectedSeller.city || selectedSeller.address || 'Seller Location'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setSelectedSeller(null)}
+              style={styles.closeCardButton}
+            >
+              <Icon name="times" size={16} color="#94A3B8" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.sellerMetaRow}>
+            {calculatedDistance && (
+              <View style={styles.metaBadge}>
+                <Icon name="location-arrow" size={12} color="#007AFF" />
+                <Text style={styles.metaBadgeText}>{calculatedDistance} away</Text>
+              </View>
+            )}
+            {selectedSeller.productCount > 0 && (
+              <View style={styles.metaBadge}>
+                <Icon name="cubes" size={12} color="#10B981" />
+                <Text style={styles.metaBadgeText}>
+                  {selectedSeller.productCount} Products
+                </Text>
+              </View>
+            )}
+            {selectedSeller.mobile ? (
+              <View style={styles.metaBadge}>
+                <Icon name="phone" size={12} color="#64748B" />
+                <Text style={styles.metaBadgeText}>{selectedSeller.mobile}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.sellerActions}>
+            <TouchableOpacity
+              style={styles.primaryActionButton}
+              onPress={() =>
+                navigation.navigate('Catalog', {
+                  userId: selectedSeller.id,
+                  sellerId: selectedSeller.id,
+                })
+              }
+            >
+              <Icon name="shopping-bag" size={16} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>View Products</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryActionButton}
+              onPress={() =>
+                handleOpenDirections(
+                  selectedSeller.latitude,
+                  selectedSeller.longitude,
+                  selectedSeller.full_name
+                )
+              }
+            >
+              <Icon name="compass" size={16} color="#1E293B" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* 3 Horizontal Dots Menu Modal (Buyer, Seller, Delivery Portals) */}
+      <Modal
+        visible={isMenuVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setIsMenuVisible(false)}
+        >
+          <View style={styles.menuCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.menuHeader}>
+              <View>
+                <Text style={styles.menuHeaderTitle}>Needs Tracking</Text>
+                <Text style={styles.menuHeaderSubtitle}>Access Portals & Services</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsMenuVisible(false)}
+                style={styles.menuCloseBtn}
+              >
+                <Icon name="times" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* If user is logged in, show user profile summary and quick links */}
+            {user && (
+              <View style={styles.userSection}>
+                <View style={styles.userProfileRow}>
+                  <View style={styles.userAvatar}>
+                    <Text style={styles.userAvatarText}>
+                      {(user.email || user.phone || 'U').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.userInfo}>
+                    <Text style={styles.userEmail} numberOfLines={1}>
+                      {user.email || user.phone || 'Signed In User'}
+                    </Text>
+                    <View style={styles.roleTag}>
+                      <Text style={styles.roleTagText}>
+                        {role ? role.toUpperCase() : 'USER'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.userQuickLinks}>
+                  <TouchableOpacity
+                    style={styles.quickLinkItem}
+                    onPress={() => {
+                      setIsMenuVisible(false);
+                      navigation.navigate('OrderList');
+                    }}
+                  >
+                    <Icon name="list-alt" size={16} color="#007AFF" />
+                    <Text style={styles.quickLinkText}>My Orders</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.quickLinkItem}
+                    onPress={() => {
+                      setIsMenuVisible(false);
+                      navigation.navigate('Cart');
+                    }}
+                  >
+                    <Icon name="shopping-cart" size={16} color="#007AFF" />
+                    <Text style={styles.quickLinkText}>My Cart</Text>
+                  </TouchableOpacity>
+
+                  {(role === 'seller' || role === 'admin') && (
+                    <TouchableOpacity
+                      style={styles.quickLinkItem}
+                      onPress={() => {
+                        setIsMenuVisible(false);
+                        navigation.navigate('ProductTabs');
+                      }}
+                    >
+                      <Icon name="cubes" size={16} color="#10B981" />
+                      <Text style={styles.quickLinkText}>Manage Store</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* Role Portals Options: Buyer, Seller, Delivery */}
+            <Text style={styles.portalsHeading}>Portals</Text>
+
+            {/* 1. Buyer Portal */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => {
+                setIsMenuVisible(false);
+                navigation.navigate('BuyerLogin');
+              }}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: '#EFF6FF' }]}>
+                <Icon name="shopping-cart" size={22} color="#007AFF" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>Buyer Portal</Text>
+                <Text style={styles.portalDesc}>Browse nearby sellers & place orders</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* 2. Seller Portal */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => {
+                setIsMenuVisible(false);
+                navigation.navigate('SellerLogin');
+              }}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: '#ECFDF5' }]}>
+                <Icon name="home" size={20} color="#10B981" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>Seller Portal</Text>
+                <Text style={styles.portalDesc}>Manage products, pricing & inventory</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* 3. Delivery Manager Portal */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => {
+                setIsMenuVisible(false);
+                navigation.navigate('DeliveryManagerLogin');
+              }}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: '#FAF5FF' }]}>
+                <Icon name="truck" size={20} color="#8B5CF6" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>Delivery Portal</Text>
+                <Text style={styles.portalDesc}>Real-time delivery management & tracking</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* Logout Button if signed in */}
+            {user && (
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                <Icon name="sign-out" size={16} color="#EF4444" />
+                <Text style={styles.logoutButtonText}>Log Out</Text>
+              </TouchableOpacity>
             )}
           </View>
-        )}
-    </View>
+        </TouchableOpacity>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 15,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  errorText: {
+    marginTop: 12,
+    fontSize: 15,
+    color: '#EF4444',
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   webview: {
     flex: 1,
   },
-  errorText: {
-    color: 'red',
-    textAlign: 'center',
-    marginTop: 20,
+  topHeaderContainer: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 52 : 20,
+    left: 16,
+    right: 16,
+    zIndex: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  searchContainer: {
-      position: 'absolute',
-      top: 10,
-      left: 10,
-      right: 10,
-      zIndex: 2,
-      backgroundColor: 'white',
-      borderRadius: 8,
-      padding: 8,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.25,
-      shadowRadius: 3.84,
-      elevation: 5,
+  searchBarWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    height: 48,
+    marginRight: 10,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  searchIcon: {
+    marginRight: 8,
   },
   searchInput: {
-      flex: 1,
-      borderWidth: 1,
-      borderColor: '#ccc',
-      borderRadius: 8,
-      padding: 8,
+    flex: 1,
+    height: '100%',
+    fontSize: 14,
+    color: '#0F172A',
   },
-  suggestionList: {
-      backgroundColor: '#fff',
-      borderRadius: 8,
-      elevation: 2,
-      maxHeight: 150,
-      marginTop: 2,
+  searchLoader: {
+    marginLeft: 6,
   },
-  suggestionItem: {
-      padding: 10,
-      borderBottomWidth: 1,
-      borderBottomColor: '#eee',
+  clearButton: {
+    padding: 4,
   },
-  iconContainer: { position: 'absolute', top: 130, right: 20, zIndex: 10 },
-  iconWrapper: { alignItems: 'center', marginBottom: 15 },
-  iconText: { fontSize: 12, color: '#007AFF' },
-  loginMenu: {
+  dotsMenuButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  suggestionDropdown: {
     position: 'absolute',
-    top: 170,
-    right: 20,
-    backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-    zIndex: 10,
+    top: Platform.OS === 'ios' ? 106 : 74,
+    left: 16,
+    right: 74,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    maxHeight: 250,
+    zIndex: 60,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 14,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
   },
-  loginMenuItem: {
+  suggestionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
-  loginMenuItemText: {
-    fontSize: 16,
-    marginLeft: 10,
+  suggestionIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
   },
-  modalBackground: {
+  sellerIconBox: {
+    backgroundColor: '#EFF6FF',
+  },
+  areaIconBox: {
+    backgroundColor: '#ECFDF5',
+  },
+  suggestionTextContainer: {
     flex: 1,
+  },
+  suggestionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  suggestionSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  typeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  sellerBadge: {
+    backgroundColor: '#EFF6FF',
+  },
+  areaBadge: {
+    backgroundColor: '#ECFDF5',
+  },
+  typeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  sellerBadgeText: {
+    color: '#007AFF',
+  },
+  areaBadgeText: {
+    color: '#10B981',
+  },
+  sellerCard: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 34 : 20,
+    left: 16,
+    right: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    zIndex: 40,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  sellerCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sellerAvatarBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  sellerDetails: {
+    flex: 1,
+  },
+  sellerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sellerName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    flexShrink: 1,
+  },
+  verifiedTag: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  verifiedTagText: {
+    fontSize: 10,
+    color: '#0284C7',
+    fontWeight: '600',
+  },
+  sellerLocation: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  closeCardButton: {
+    padding: 6,
+  },
+  sellerMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  metaBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  metaBadgeText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '500',
+  },
+  sellerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+  },
+  primaryActionButton: {
+    flex: 1,
+    backgroundColor: '#007AFF',
+    height: 44,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  primaryActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  secondaryActionButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-  },
-  modalContent: {
-    backgroundColor: 'white',
-    borderRadius: 10,
     padding: 20,
-    width: '90%',
-    maxHeight: '80%',
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
+  menuCard: {
+    width: width > 420 ? 380 : '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
   },
-  imageScrollContainer: {
+  menuHeader: {
     flexDirection: 'row',
-    paddingVertical: 10,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
   },
-  customerModalImage: {
-    width: 150,
-    height: 150,
-    borderRadius: 8,
-    marginHorizontal: 5,
+  menuHeaderTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0F172A',
   },
-  bottomRightIcons: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
+  menuHeaderSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  menuCloseBtn: {
+    padding: 6,
+  },
+  userSection: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  userProfileRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+  },
+  userAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  userAvatarText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  userInfo: {
+    flex: 1,
+  },
+  userEmail: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  roleTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 2,
+  },
+  roleTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  userQuickLinks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  quickLinkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  quickLinkText: {
+    fontSize: 12,
+    color: '#334155',
+    fontWeight: '500',
+  },
+  portalsHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  portalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 10,
+  },
+  portalIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  portalDetails: {
+    flex: 1,
+  },
+  portalTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  portalDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginTop: 6,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+  },
+  logoutButtonText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

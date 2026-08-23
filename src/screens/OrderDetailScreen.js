@@ -1,68 +1,114 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, FlatList, TouchableOpacity, Alert, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  ScrollView,
+  FlatList,
+  TouchableOpacity,
+  Alert,
+  Image,
+  Linking,
+  Platform,
+} from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
 import { printReceipt } from '../services/printerService';
-import { WebView } from 'react-native-webview';
+import UniversalWebView from '../components/UniversalWebView';
+import { useCart } from '../context/CartContext';
 
 const OrderDetailScreen = ({ navigation, route }) => {
   const { orderId } = route?.params || {};
+  const { role } = useCart();
   const [order, setOrder] = useState(null);
+  const [deliveryPartner, setDeliveryPartner] = useState(null);
+  const [partnerCoords, setPartnerCoords] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState(null);
   const webViewRef = useRef(null);
 
-  useEffect(() => {
-    const fetchOrderDetails = async () => {
+  const fetchOrderDetails = async () => {
+    try {
       const fetchedOrder = await getOrderById(orderId);
       if (fetchedOrder) {
         setOrder(fetchedOrder);
         setSelectedStatus(fetchedOrder.status);
-      }
-      setLoading(false);
-    };
 
+        // If delivery manager assigned, fetch their profile & live location
+        if (fetchedOrder.delivery_manager_id) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id, full_name, mobile')
+            .eq('id', fetchedOrder.delivery_manager_id)
+            .maybeSingle();
+
+          if (profile) setDeliveryPartner(profile);
+
+          const { data: loc } = await supabase
+            .from('delivery_partner_locations')
+            .select('latitude, longitude, heading, speed, updated_at')
+            .eq('partner_id', fetchedOrder.delivery_manager_id)
+            .maybeSingle();
+
+          if (loc && loc.latitude && loc.longitude) {
+            setPartnerCoords({ lat: loc.latitude, lon: loc.longitude });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching order details:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchOrderDetails();
 
+    if (!orderId) return;
+
+    // Realtime channel for order updates & live delivery location
     const channel = supabase
-      .channel(`order-tracking:${orderId}`)
-      .on('broadcast', { event: 'partner_location' }, (payload) => {
-        if (payload?.payload && webViewRef.current) {
-          const { latitude, longitude } = payload.payload;
-          webViewRef.current.injectJavaScript(`if (window.updateMarkerLocation) { window.updateMarkerLocation(${latitude}, ${longitude}); } true;`);
-        }
-      })
+      .channel(`order-live-tracking:${orderId}`)
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'UPDATE',
           schema: 'public',
-          table: 'delivery_partner_locations',
-          filter: `partner_id=eq.${order?.delivery_manager_id}`,
+          table: 'orders',
+          filter: `id=eq.${orderId}`,
         },
         (payload) => {
-          if (payload.new && webViewRef.current) {
-            const { latitude, longitude } = payload.new;
-            webViewRef.current.injectJavaScript(`if (window.updateMarkerLocation) { window.updateMarkerLocation(${latitude}, ${longitude}); } true;`);
+          if (payload.new) {
+            setOrder((prev) => ({ ...prev, ...payload.new }));
+            setSelectedStatus(payload.new.status);
           }
         }
       )
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
-          table: 'delivery_manager_locations',
-          filter: `manager_id=eq.${order?.delivery_manager_id}`,
+          table: 'delivery_partner_locations',
         },
         (payload) => {
-          if (payload.new && webViewRef.current) {
-            const point = payload.new.location.match(/POINT\(([-\d\.]+) ([-\d\.]+)\)/);
-            if (point) {
-              const lat = parseFloat(point[2]);
-              const lon = parseFloat(point[1]);
-              webViewRef.current.injectJavaScript(`if (window.updateMarkerLocation) { window.updateMarkerLocation(${lat}, ${lon}); } true;`);
+          if (payload.new && payload.new.latitude && payload.new.longitude) {
+            const { latitude, longitude } = payload.new;
+            setPartnerCoords({ lat: latitude, lon: longitude });
+
+            // Send live update to map
+            if (webViewRef.current) {
+              const script = `if (window.updateMarkerLocation) { window.updateMarkerLocation(${latitude}, ${longitude}); } true;`;
+              if (Platform.OS === 'web') {
+                try {
+                  webViewRef.current.contentWindow?.eval(script);
+                } catch (e) {}
+              } else {
+                webViewRef.current.injectJavaScript?.(script);
+              }
             }
           }
         }
@@ -72,7 +118,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId, order?.delivery_manager_id]);
+  }, [orderId]);
 
   const handleUpdateStatus = async () => {
     if (selectedStatus !== order.status) {
@@ -81,11 +127,30 @@ const OrderDetailScreen = ({ navigation, route }) => {
       if (success) {
         setOrder({ ...order, status: selectedStatus });
         Alert.alert('Success', 'Order status updated successfully.');
-        navigation.goBack(); // Go back to the previous screen
       } else {
         Alert.alert('Error', 'Failed to update order status.');
       }
       setLoading(false);
+    }
+  };
+
+  const handleCallPartner = (phone) => {
+    if (!phone) {
+      Alert.alert('No Phone', 'No phone number available for delivery partner.');
+      return;
+    }
+    Linking.openURL(`tel:${phone}`);
+  };
+
+  const getShippingLocation = () => {
+    if (!order?.shipping_address) return null;
+    if (typeof order.shipping_address === 'object') {
+      return order.shipping_address;
+    }
+    try {
+      return JSON.parse(order.shipping_address);
+    } catch {
+      return null;
     }
   };
 
@@ -106,91 +171,180 @@ const OrderDetailScreen = ({ navigation, route }) => {
         <View style={styles.orderItemTextContainer}>
           <Text style={styles.itemProductName}>
             {prod?.product_name || 'Product'}
-            {item.product_variant_combinations?.combination_string ? ` (${item.product_variant_combinations.combination_string})` : ''}
+            {item.product_variant_combinations?.combination_string
+              ? ` (${item.product_variant_combinations.combination_string})`
+              : ''}
           </Text>
           <Text style={styles.itemQuantity}>Quantity: {item.quantity}</Text>
-          <Text style={styles.itemPrice}>Price: ₹{item.price.toFixed(2)}</Text>
+          <Text style={styles.itemPrice}>Price: ₹{Number(item.price || 0).toFixed(2)}</Text>
         </View>
       </View>
     );
   };
 
   const getHtmlContent = () => {
-    const deliveryManagerLocation = order?.profiles?.latest_delivery_manager_locations[0]?.location;
-    const shippingLocation = order?.shipping_address;
-
-    let managerCoords = null;
-    if (deliveryManagerLocation) {
-      const point = deliveryManagerLocation.match(/POINT\(([-\d\.]+) ([-\d\.]+)\)/);
-      if (point) {
-        managerCoords = { lat: parseFloat(point[2]), lon: parseFloat(point[1]) };
-      }
-    }
+    const shipping = getShippingLocation();
 
     return `
       <!DOCTYPE html>
       <html>
       <head>
-          <title>Order Tracking</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-          <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-          <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.AnimatedMarker/1.0.0/Leaflet.AnimatedMarker.js"></script>
-          <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
-          <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+          <title>Order Live Tracking</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
           <style>
-              body { margin: 0; padding: 0; }
-              #mapid { width: 100%; height: 300px; }
+              body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+              #mapid { width: 100vw; height: 280px; background-color: #f1f5f9; }
+
+              .bike-marker-container {
+                  position: relative;
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                  justify-content: center;
+              }
+              .radar-pulse {
+                  position: absolute;
+                  top: 0;
+                  left: 2px;
+                  width: 44px;
+                  height: 44px;
+                  border-radius: 50%;
+                  background: rgba(0, 122, 255, 0.25);
+                  animation: radarRipple 2s infinite ease-out;
+                  z-index: 1;
+              }
+              @keyframes radarRipple {
+                  0% { transform: scale(0.6); opacity: 1; }
+                  100% { transform: scale(1.8); opacity: 0; }
+              }
+              .bike-pin {
+                  width: 44px;
+                  height: 44px;
+                  border-radius: 50%;
+                  background: linear-gradient(135deg, #007AFF 0%, #00C6FF 100%);
+                  border: 2.5px solid #FFFFFF;
+                  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.5);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: #FFFFFF;
+                  font-size: 19px;
+                  z-index: 2;
+                  position: relative;
+                  transition: transform 0.2s ease;
+              }
+              .marker-badge {
+                  margin-top: 3px;
+                  background: rgba(15, 23, 42, 0.85);
+                  color: #FFFFFF;
+                  font-size: 10px;
+                  font-weight: 700;
+                  padding: 2px 7px;
+                  border-radius: 6px;
+                  white-space: nowrap;
+                  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+                  z-index: 3;
+              }
+
+              .dest-marker-container {
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                  justify-content: center;
+              }
+              .dest-pin {
+                  width: 38px;
+                  height: 38px;
+                  border-radius: 50%;
+                  background: linear-gradient(135deg, #EF4444 0%, #F87171 100%);
+                  border: 2.5px solid #FFFFFF;
+                  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.45);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: #FFFFFF;
+                  font-size: 16px;
+              }
+              .dest-badge {
+                  margin-top: 3px;
+                  background: rgba(239, 68, 68, 0.9);
+                  color: #FFFFFF;
+                  font-size: 10px;
+                  font-weight: 700;
+                  padding: 2px 6px;
+                  border-radius: 6px;
+                  white-space: nowrap;
+              }
           </style>
       </head>
       <body>
           <div id="mapid"></div>
           <script>
-              document.addEventListener('DOMContentLoaded', function() {
-                var map = L.map('mapid');
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+              var map = L.map('mapid', { zoomControl: true }).setView([20.5937, 78.9629], 5);
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                  attribution: '&copy; OpenStreetMap',
+                  maxZoom: 19
+              }).addTo(map);
 
-                var managerLocation = ${JSON.stringify(managerCoords)};
-                var shippingLocation = ${JSON.stringify(shippingLocation)};
-                var deliveryMarker = null;
+              var managerCoords = ${JSON.stringify(partnerCoords)};
+              var destCoords = ${JSON.stringify(
+                shipping?.latitude && shipping?.longitude
+                  ? { lat: shipping.latitude, lon: shipping.longitude }
+                  : null
+              )};
 
-                var waypoints = [];
-                if (managerLocation) {
-                  waypoints.push(L.latLng(managerLocation.lat, managerLocation.lon));
-                  deliveryMarker = L.animatedMarker([L.latLng(managerLocation.lat, managerLocation.lon)], { autoStart: false, distance: 3000, interval: 2000 }).addTo(map);
-                  deliveryMarker.bindPopup('Delivery Manager');
-                }
-                if (shippingLocation && shippingLocation.latitude && shippingLocation.longitude) {
-                  waypoints.push(L.latLng(shippingLocation.latitude, shippingLocation.longitude));
-                  L.marker([shippingLocation.latitude, shippingLocation.longitude]).addTo(map).bindPopup('Delivery Address');
-                }
+              var deliveryMarker = null;
+              var waypoints = [];
 
-                if (waypoints.length > 0) {
-                  setTimeout(function() { 
-                    map.fitBounds(L.latLngBounds(waypoints).pad(0.5));
-                    map.invalidateSize();
-                  }, 200);
-                } else {
-                  // Fallback if no waypoints are available
-                  setTimeout(function() { 
-                    map.setView([20.5937, 78.9629], 5); // Default view of India
-                    map.invalidateSize();
-                  }, 200);
-                }
-
-                if (waypoints.length === 2) {
-                  L.Routing.control({ waypoints: waypoints, routeWhileDragging: false, show: false }).addTo(map);
-                }
-
-                window.updateMarkerLocation = function(lat, lon) {
-                  if (deliveryMarker) {
-                    deliveryMarker.moveTo(L.latLng(lat, lon), 2000);
-                  } else {
-                    deliveryMarker = L.animatedMarker([L.latLng(lat, lon)], { autoStart: false, distance: 3000, interval: 2000 }).addTo(map);
-                    deliveryMarker.bindPopup('Delivery Manager');
-                  }
-                }
+              var deliveryIcon = L.divIcon({
+                  className: 'custom-bike-wrapper',
+                  html: '<div class="bike-marker-container"><div class="radar-pulse"></div><div class="bike-pin"><i class="fas fa-motorcycle"></i></div><div class="marker-badge">🛵 In Transit</div></div>',
+                  iconSize: [60, 68],
+                  iconAnchor: [30, 24]
               });
+
+              var destIcon = L.divIcon({
+                  className: 'custom-dest-wrapper',
+                  html: '<div class="dest-marker-container"><div class="dest-pin"><i class="fas fa-home"></i></div><div class="dest-badge">📍 Delivery</div></div>',
+                  iconSize: [50, 58],
+                  iconAnchor: [25, 20]
+              });
+
+              if (managerCoords && managerCoords.lat && managerCoords.lon) {
+                  deliveryMarker = L.marker([managerCoords.lat, managerCoords.lon], { icon: deliveryIcon })
+                      .addTo(map)
+                      .bindPopup('<b>🛵 Delivery Partner Live Location</b>')
+                      .openPopup();
+                  waypoints.push([managerCoords.lat, managerCoords.lon]);
+              }
+
+              if (destCoords && destCoords.lat && destCoords.lon) {
+                  L.marker([destCoords.lat, destCoords.lon], { icon: destIcon })
+                      .addTo(map)
+                      .bindPopup('<b>📍 Customer Destination</b>');
+                  waypoints.push([destCoords.lat, destCoords.lon]);
+              }
+
+              if (waypoints.length > 1) {
+                  L.polyline(waypoints, { color: '#007AFF', weight: 4, dashArray: '6, 8', opacity: 0.8 }).addTo(map);
+                  map.fitBounds(L.latLngBounds(waypoints).pad(0.35));
+              } else if (waypoints.length === 1) {
+                  map.setView(waypoints[0], 15);
+              }
+
+              window.updateMarkerLocation = function(lat, lon) {
+                  if (deliveryMarker) {
+                      deliveryMarker.setLatLng([lat, lon]);
+                  } else {
+                      deliveryMarker = L.marker([lat, lon], { icon: deliveryIcon })
+                          .addTo(map)
+                          .bindPopup('<b>🛵 Delivery Partner Live Location</b>');
+                  }
+                  map.panTo([lat, lon], { animate: true });
+              };
           </script>
       </body>
       </html>
@@ -200,7 +354,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
   if (loading && !order) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#0000ff" />
+        <ActivityIndicator size="large" color="#007AFF" />
       </View>
     );
   }
@@ -208,76 +362,137 @@ const OrderDetailScreen = ({ navigation, route }) => {
   if (!order) {
     return (
       <View style={styles.centered}>
-        <Text>Order not found.</Text>
+        <Text style={styles.notFoundText}>Order not found.</Text>
       </View>
     );
   }
 
+  const shipping = getShippingLocation();
+  const isDeliveryAssigned = Boolean(order.delivery_manager_id);
+  const canUpdateStatus = role === 'seller' || role === 'admin' || role === 'delivery_manager';
+
   return (
-    <View style={{flex: 1, backgroundColor: 'white'}}>
+    <View style={styles.mainContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Order Details</Text>
+        <Text style={styles.headerTitle}>Order #{order.order_number || order.id.substring(0, 8)}</Text>
         <View style={styles.headerIcons}>
-          <TouchableOpacity style={{marginRight: 20}} onPress={() => printReceipt(order)}>
-            <Icon name="print" size={24} color="#333" />
+          <TouchableOpacity style={{ marginRight: 16 }} onPress={() => printReceipt(order)}>
+            <Icon name="print" size={22} color="#1E293B" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Icon name="close" size={24} color="#333" />
+            <Icon name="times" size={22} color="#1E293B" />
           </TouchableOpacity>
         </View>
       </View>
+
       <ScrollView style={styles.container}>
-        {order.delivery_manager_id && (
-          <WebView
-            ref={webViewRef}
-            originWhitelist={['*']}
-            source={{ html: getHtmlContent() }}
-            style={{ height: 300, width: '100%' }}
-            javaScriptEnabled={true}
-          />
+        {/* Live Tracking Map if Delivery Partner is Assigned */}
+        {isDeliveryAssigned && (
+          <View style={styles.trackingCard}>
+            <View style={styles.trackingHeader}>
+              <View style={styles.trackingTitleRow}>
+                <Icon name="motorcycle" size={18} color="#007AFF" />
+                <Text style={styles.trackingTitle}>Live Delivery Tracking</Text>
+              </View>
+              <View style={styles.livePulseBadge}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.livePulseText}>LIVE</Text>
+              </View>
+            </View>
+
+            <View style={styles.mapContainer}>
+              <UniversalWebView
+                ref={webViewRef}
+                originWhitelist={['*']}
+                source={{ html: getHtmlContent() }}
+                style={{ height: 280, width: '100%' }}
+                javaScriptEnabled={true}
+                domStorageEnabled={true}
+              />
+            </View>
+
+            {/* Delivery Partner Info */}
+            <View style={styles.partnerInfoRow}>
+              <View style={styles.partnerAvatar}>
+                <Icon name="user" size={18} color="#007AFF" />
+              </View>
+              <View style={styles.partnerDetails}>
+                <Text style={styles.partnerName}>
+                  {deliveryPartner?.full_name || 'Assigned Delivery Partner'}
+                </Text>
+                <Text style={styles.partnerSub}>
+                  {partnerCoords ? 'Broadcasting live location' : 'Partner assigned'}
+                </Text>
+              </View>
+              {deliveryPartner?.mobile && (
+                <TouchableOpacity
+                  style={styles.callBtn}
+                  onPress={() => handleCallPartner(deliveryPartner.mobile)}
+                >
+                  <Icon name="phone" size={14} color="#FFFFFF" />
+                  <Text style={styles.callBtnText}>Call</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
         )}
+
+        {/* Order Status Badge */}
         <View style={styles.detailCard}>
-          <Text style={styles.label}>Order ID:</Text>
-          <Text style={styles.value}>{order.id}</Text>
+          <Text style={styles.label}>Order Status</Text>
+          <View style={styles.statusRow}>
+            <View style={[styles.statusBadge, getStatusStyle(order.status)]}>
+              <Text style={styles.statusBadgeText}>{(order.status || 'Pending').toUpperCase()}</Text>
+            </View>
+            <Text style={styles.statusDateText}>{new Date(order.created_at).toLocaleString()}</Text>
+          </View>
         </View>
 
-        <View style={styles.detailCard}>
-          <Text style={styles.label}>Status:</Text>
-          <Text style={styles.value}>{order.status}</Text>
-        </View>
+        {/* Status Update (for Sellers/Admins/Delivery Managers) */}
+        {canUpdateStatus && (
+          <View style={styles.detailCard}>
+            <Text style={styles.label}>Update Order Status</Text>
+            <View style={styles.pickerWrapper}>
+              <Picker
+                selectedValue={selectedStatus}
+                onValueChange={(itemValue) => setSelectedStatus(itemValue)}
+                style={styles.picker}
+              >
+                <Picker.Item label="Pending" value="pending" />
+                <Picker.Item label="Processing" value="processing" />
+                <Picker.Item label="Out for Delivery" value="out_for_delivery" />
+                <Picker.Item label="Shipped" value="shipped" />
+                <Picker.Item label="Completed" value="completed" />
+                <Picker.Item label="Cancelled" value="cancelled" />
+              </Picker>
+            </View>
+            <TouchableOpacity style={styles.saveButton} onPress={handleUpdateStatus}>
+              <Text style={styles.saveButtonText}>Save Status</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
+        {/* Total Amount & Payment */}
         <View style={styles.detailCard}>
-          <Text style={styles.label}>Update Status:</Text>
-          <Picker
-            selectedValue={selectedStatus}
-            onValueChange={(itemValue) => setSelectedStatus(itemValue)}
-            style={styles.picker}
-          >
-            <Picker.Item label="Pending" value="pending" />
-            <Picker.Item label="Out for Delivery" value="out_for_delivery" />
-            <Picker.Item label="Completed" value="completed" />
-            <Picker.Item label="Shipped" value="shipped" />
-            <Picker.Item label="Cancelled" value="cancelled" />
-          </Picker>
-        </View>
-
-        <View style={styles.detailCard}>
-          <Text style={styles.label}>Total Amount:</Text>
-          <Text style={styles.value}>₹{order.total_amount.toFixed(2)}</Text>
-        </View>
-
-        <View style={styles.detailCard}>
-          <Text style={styles.label}>Order Date:</Text>
-          <Text style={styles.value}>{new Date(order.created_at).toLocaleString()}</Text>
-        </View>
-
-        <View style={styles.detailCard}>
-          <Text style={styles.label}>Shipping Address:</Text>
-          <Text style={styles.value}>
-            {order.shipping_address.address}, {order.shipping_address.city}
+          <View style={styles.amountRow}>
+            <Text style={styles.label}>Total Amount</Text>
+            <Text style={styles.amountValue}>₹{Number(order.total_amount || 0).toFixed(2)}</Text>
+          </View>
+          <Text style={styles.paymentMethodText}>
+            Payment Method: {(order.payment_method || 'Cash on Delivery').toUpperCase()}
           </Text>
         </View>
 
+        {/* Shipping Address */}
+        <View style={styles.detailCard}>
+          <Text style={styles.label}>Delivery Address</Text>
+          <Text style={styles.addressText}>
+            {shipping?.address || order.shipping_address || 'No address provided'}
+            {shipping?.city ? `, ${shipping.city}` : ''}
+          </Text>
+        </View>
+
+        {/* Items List */}
         <Text style={styles.sectionTitle}>Order Items</Text>
         {order.order_items && order.order_items.length > 0 ? (
           <FlatList
@@ -290,150 +505,294 @@ const OrderDetailScreen = ({ navigation, route }) => {
         ) : (
           <Text style={styles.noItemsText}>No items in this order.</Text>
         )}
-
-        <TouchableOpacity style={styles.saveButton} onPress={handleUpdateStatus}>
-          <Text style={styles.saveButtonText}>Save Changes</Text>
-        </TouchableOpacity>
       </ScrollView>
     </View>
   );
 };
 
+function getStatusStyle(status) {
+  const s = (status || '').toLowerCase();
+  if (s.includes('completed') || s.includes('delivered')) return { backgroundColor: '#ECFDF5' };
+  if (s.includes('out')) return { backgroundColor: '#EFF6FF' };
+  if (s.includes('cancelled')) return { backgroundColor: '#FEF2F2' };
+  return { backgroundColor: '#FFFBEB' };
+}
+
 const styles = StyleSheet.create({
+  mainContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 52 : 16,
+    paddingBottom: 16,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#E2E8F0',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   headerIcons: {
     flexDirection: 'row',
+    alignItems: 'center',
   },
   container: {
     flex: 1,
     padding: 16,
-    backgroundColor: '#f8f8f8',
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
-  title: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
-    textAlign: 'center',
+  notFoundText: {
+    fontSize: 16,
+    color: '#64748B',
+  },
+  trackingCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginBottom: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  trackingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  trackingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  trackingTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  livePulseBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  pulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  livePulseText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  mapContainer: {
+    height: 280,
+    width: '100%',
+  },
+  partnerInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  partnerAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  partnerDetails: {
+    flex: 1,
+  },
+  partnerName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  partnerSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  callBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#10B981',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  callBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   detailCard: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   label: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#555',
-    marginBottom: 5,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 6,
   },
-  value: {
-    fontSize: 16,
-    color: '#333',
+  statusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  statusDateText: {
+    fontSize: 12,
+    color: '#94A3B8',
+  },
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    marginTop: 4,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  picker: {
+    height: 48,
+    width: '100%',
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  amountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  amountValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  paymentMethodText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  addressText: {
+    fontSize: 14,
+    color: '#334155',
+    lineHeight: 20,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginTop: 20,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginTop: 10,
     marginBottom: 10,
-    color: '#333',
   },
   itemsList: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    padding: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    marginBottom: 24,
   },
   orderItemDetail: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#F1F5F9',
   },
   orderItemImage: {
-    width: 50,
-    height: 50,
+    width: 48,
+    height: 48,
     borderRadius: 8,
     marginRight: 12,
-    backgroundColor: '#f1f5f9',
   },
   orderItemPlaceholder: {
-    width: 50,
-    height: 50,
+    width: 48,
+    height: 48,
     borderRadius: 8,
-    marginRight: 12,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    justifyContent: 'center',
+    marginRight: 12,
   },
   orderItemTextContainer: {
     flex: 1,
   },
   itemProductName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
   },
   itemQuantity: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   itemPrice: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginTop: 2,
   },
   noItemsText: {
     textAlign: 'center',
-    marginTop: 20,
-    fontSize: 16,
-    color: '#777',
-  },
-  picker: {
-    height: 50,
-    width: '100%',
-  },
-  saveButton: {
-    backgroundColor: '#007AFF',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
+    color: '#94A3B8',
+    marginVertical: 16,
   },
 });
-
 
 export default OrderDetailScreen;

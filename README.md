@@ -2,7 +2,9 @@
 
 A full-stack React Native mobile application supporting **Buyers**, **Sellers**, and **Delivery Partners** with real-time location tracking, instant order dispatch, and Supabase backend integration.
 
-> 📖 **Comprehensive Documentation**: For the detailed end-to-end architecture, role-based workflows, and database setup, please see [**`LATEST_PROCESS_AND_SYSTEM_FLOW.md`**](file:///workspaces/needsTracking/LATEST_PROCESS_AND_SYSTEM_FLOW.md).
+> 📖 **Comprehensive Documentation**:
+> - [**`LATEST_PROCESS_AND_SYSTEM_FLOW.md`**](file:///workspaces/needsTracking/LATEST_PROCESS_AND_SYSTEM_FLOW.md) — Detailed end-to-end architecture, role-based workflows, and database setup.
+> - [**`LIVE_TRACKING_AND_DELIVERY_SYSTEM_UPDATES.md`**](file:///workspaces/needsTracking/LIVE_TRACKING_AND_DELIVERY_SYSTEM_UPDATES.md) — Live location tracking architecture, delivery dispatch logic, sellers-only map, and push notifications flow.
 
 ---
 

@@ -453,6 +453,7 @@ export async function getCart(userId) {
             id,
             product_name,
             customer_id,
+            user_id,
             product_media (media_url, media_type)
           )
         )
@@ -1145,7 +1146,9 @@ export async function getAvailableDeliveryOrders() {
       )
     `)
     .is('delivery_manager_id', null)
-    .neq('order_type', 'shop-order')
+    .or('order_type.is.null,order_type.neq.shop-order')
+    .neq('status', 'completed')
+    .neq('status', 'cancelled')
     .order('created_at', { ascending: false });
 
   if (error) {
