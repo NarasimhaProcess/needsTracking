@@ -143,42 +143,70 @@ The app requires the following permissions:
 - ACCESS_BACKGROUND_LOCATION
 - FOREGROUND_SERVICE
 
-## 🚀 Deployment
+## 🚀 CI/CD & Deployment Guide
 
-### Building for Production
+This project includes automated GitHub Actions workflows for building Android APKs, running EAS Cloud builds, and deploying the Web application to GitHub Pages.
 
-1. **Configure app.json**
-```json
-{
-  "expo": {
-    "name": "User Tracking",
-    "slug": "user-tracking-mobile",
-    "version": "1.0.0"
-  }
-}
-```
+---
 
-2. **Build for iOS**
+### 🔑 1. Required GitHub Secrets Configuration
+
+Before triggering builds, configure the repository secrets in GitHub:
+**Repository** $\rightarrow$ **Settings** $\rightarrow$ **Secrets and variables** $\rightarrow$ **Actions** $\rightarrow$ **New repository secret**
+
+| Secret Name | Required? | Description & Source |
+| :--- | :---: | :--- |
+| **`SUPABASE_URL`** | **Mandatory** | Your Supabase Project URL (`https://xxxx.supabase.co`).<br>📍 *Supabase Dashboard $\rightarrow$ Project Settings $\rightarrow$ API* |
+| **`SUPABASE_ANON_KEY`** | **Mandatory** | Your Supabase Anonymous Public API key (`eyJhb...`).<br>📍 *Supabase Dashboard $\rightarrow$ Project Settings $\rightarrow$ API* |
+| **`GOOGLE_MAPS_API_KEY`** | *Optional* | Google Maps API key (if using native Google Maps SDK). |
+| **`ORG_NAME`** | *Optional* | Organization/store branding string (defaults to `"localwala's"`). |
+| **`EXPO_TOKEN`** | *For EAS Cloud* | Expo Access Token.<br>📍 *Create at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens)* |
+
+---
+
+### ⚙️ 2. Workflow Permissions & GitHub Pages Setup
+
+1. **Workflow Permissions**:
+   - Go to **Settings** $\rightarrow$ **Actions** $\rightarrow$ **General**.
+   - Under **Workflow permissions**, select **"Read and write permissions"** and check **"Allow GitHub Actions to create and approve pull requests"**.
+   - Click **Save**.
+2. **GitHub Pages (Web App)**:
+   - Go to **Settings** $\rightarrow$ **Pages**.
+   - Under **Build and deployment**, set **Source** to **Deploy from a branch**, choose branch **`gh-pages`** and folder **`/ (root)`**, then click **Save**.
+
+---
+
+### 📦 3. Automated Build Workflows
+
+#### Option A: Free Android APK Build (Gradle on GitHub Runner)
+- **Workflow File**: [`.github/workflows/android-build-gradle.yml`](file:///.github/workflows/android-build-gradle.yml)
+- **How to Run**: Go to **Actions** tab $\rightarrow$ **Build Android APK - Gradle** $\rightarrow$ **Run workflow**.
+- **Output**: Generates and uploads a standalone `.apk` directly as a downloadable GitHub Actions artifact (No EAS build limits or credits required).
+
+#### Option B: EAS Cloud Build (Android / iOS / Production)
+- **Workflow File**: [`.github/workflows/eas-build.yml`](file:///.github/workflows/eas-build.yml)
+- **How to Run**: Go to **Actions** tab $\rightarrow$ **EAS Build (Expo Cloud)** $\rightarrow$ Select platform (`android`/`ios`/`all`) and profile (`preview`/`production`) $\rightarrow$ **Run workflow**.
+- **Output**: Builds `.apk`/`.aab` or iOS builds in the Expo Cloud and attaches live dashboard links.
+
+#### Option C: Automated Web Deployment (GitHub Pages)
+- **Workflow File**: [`.github/workflows/deploy-web.yml`](file:///.github/workflows/deploy-web.yml)
+- **How to Run**: Triggers automatically on every `push` to `master` or `main` (or run manually via **Run workflow**).
+- **Output**: Exports and publishes the web application to GitHub Pages at `https://NarasimhaProcess.github.io/needsTracking/`.
+
+---
+
+### 📱 4. Local CLI Builds (Alternative)
+
 ```bash
-expo build:ios
+# Build standalone Android APK locally using EAS CLI
+eas build -p android --profile preview
+
+# Build production Android App Bundle (AAB) for Google Play
+eas build -p android --profile production
+
+# Export web build locally
+npx expo export --platform web
 ```
-
-3. **Build for Android**
-```bash
-expo build:android
-```
-
-### App Store Deployment
-
-1. **iOS App Store**
-- Create app in App Store Connect
-- Upload build via Xcode or Expo
-- Submit for review
-
-2. **Google Play Store**
-- Create app in Google Play Console
-- Upload APK/AAB file
-- Submit for review
 
 ## 🔧 Development
 
