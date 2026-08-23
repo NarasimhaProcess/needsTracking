@@ -23,36 +23,92 @@ import VariantManager from './VariantManager';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
-const generateVariantCombinations = (variants, basePrice) => {
-  if (!variants || variants.length === 0) {
+const generateVariantCombinations = (variants, basePrice = 0) => {
+  const activeVariants = (variants || [])
+    .map(v => {
+      const name = (v.name || '').trim();
+      const validOptions = (v.variant_options || [])
+        .map(o => ({
+          ...o,
+          value: (typeof o === 'string' ? o : o?.value || '').trim(),
+          price: typeof o === 'object' && o?.price !== undefined && o?.price !== '' ? o.price : undefined,
+          quantity: typeof o === 'object' && o?.quantity !== undefined && o?.quantity !== '' ? o.quantity : undefined,
+        }))
+        .filter(o => o.value.length > 0);
+      return { ...v, name, variant_options: validOptions };
+    })
+    .filter(v => v.name.length > 0 && v.variant_options.length > 0);
+
+  if (activeVariants.length === 0) {
     return [{ combination_string: 'Default', sku: '', price: basePrice, quantity: 100 }];
   }
 
   let combinations = [];
 
-  const generate = (index, currentCombination, currentSku) => {
-    if (index === variants.length) {
+  const generate = (index, currentParts, currentSku, lastPrice, lastQuantity) => {
+    if (index === activeVariants.length) {
       combinations.push({
-        combination_string: currentCombination.join(', '),
+        combination_string: currentParts.join(', '),
         sku: currentSku,
-        price: basePrice, // Default to base price
-        quantity: 100, // Default stock to 100
+        price: lastPrice !== undefined && lastPrice !== '' ? (parseFloat(lastPrice) || basePrice) : basePrice,
+        quantity: lastQuantity !== undefined && lastQuantity !== '' ? (parseInt(lastQuantity, 10) || 100) : 100,
       });
       return;
     }
 
-    const variant = variants[index];
+    const variant = activeVariants[index];
     for (const option of variant.variant_options) {
+      const optPrice = option.price !== undefined && option.price !== '' ? option.price : lastPrice;
+      const optQty = option.quantity !== undefined && option.quantity !== '' ? option.quantity : lastQuantity;
       generate(
         index + 1,
-        [...currentCombination, `${variant.name}:${option.value}`],
-        currentSku ? `${currentSku}-${option.value}` : option.value // Simple SKU generation
+        [...currentParts, `${variant.name}:${option.value}`],
+        currentSku ? `${currentSku}-${option.value}` : option.value,
+        optPrice,
+        optQty
       );
     }
   };
 
-  generate(0, [], '');
+  generate(0, [], '', undefined, undefined);
   return combinations;
+};
+
+const syncVariantCombinations = (variants, currentCombos = [], baseAmount = 0) => {
+  const basePrice = parseFloat(baseAmount) || 0;
+  const generated = generateVariantCombinations(variants, basePrice);
+
+  const hasActiveVariants = (variants || []).some(
+    v => (v.name || '').trim() && (v.variant_options || []).some(o => ((typeof o === 'string' ? o : o?.value) || '').trim())
+  );
+
+  if (!hasActiveVariants) {
+    const existingDefault = (currentCombos || []).find(c => c.combination_string === 'Default');
+    return [{
+      combination_string: 'Default',
+      sku: existingDefault?.sku || '',
+      price: existingDefault?.price !== undefined ? existingDefault.price : basePrice,
+      quantity: existingDefault?.quantity !== undefined ? existingDefault.quantity : 100,
+    }];
+  }
+
+  return generated.map(newCombo => {
+    const match = (currentCombos || []).find(oldCombo => {
+      if (!oldCombo || !oldCombo.combination_string) return false;
+      return oldCombo.combination_string.replace(/\s/g, '').toLowerCase() === newCombo.combination_string.replace(/\s/g, '').toLowerCase();
+    });
+
+    if (match) {
+      return {
+        ...newCombo,
+        id: match.id,
+        price: match.price !== undefined && match.price !== '' ? match.price : newCombo.price,
+        quantity: match.quantity !== undefined && match.quantity !== '' ? match.quantity : newCombo.quantity,
+        sku: match.sku || newCombo.sku,
+      };
+    }
+    return newCombo;
+  });
 };
 
 const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, customerMediaUrl, onDeleteMedia, onDeleteProduct, session }) => {
@@ -63,6 +119,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const [amount, setAmount] = useState('');
   const [productType, setProductType] = useState('other');
   const [unit, setUnit] = useState('');
+  const [stockQuantity, setStockQuantity] = useState('100');
   const [productVariants, setProductVariants] = useState([]);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
@@ -81,68 +138,125 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const [currentModalMediaIndex, setCurrentModalMediaIndex] = useState(0);
   const [allModalMediaForViewer, setAllModalMediaForViewer] = useState([]);
 
+  const [showMatrix, setShowMatrix] = useState(false);
+
   useEffect(() => {
     if (productToEdit) {
-      setProductName(productToEdit.product_name);
+      setProductName(productToEdit.product_name || '');
       setDescription(productToEdit.description || '');
-      setAmount(productToEdit.amount.toString());
+      setAmount(productToEdit.amount !== undefined && productToEdit.amount !== null ? productToEdit.amount.toString() : '');
       setProductType(productToEdit.product_type || 'other');
       setUnit(productToEdit.unit || '');
-      setStartDate(new Date(productToEdit.start_date));
-      setEndDate(new Date(productToEdit.end_date));
+      setStartDate(productToEdit.start_date ? new Date(productToEdit.start_date) : new Date());
+      setEndDate(productToEdit.end_date ? new Date(productToEdit.end_date) : new Date());
       if (productToEdit.visible_from) {
         setVisibleFrom(new Date(productToEdit.visible_from));
       }
       if (productToEdit.visible_to) {
         setVisibleTo(new Date(productToEdit.visible_to));
       }
-      setIsActive(productToEdit.is_active);
+      setIsActive(productToEdit.is_active !== undefined ? productToEdit.is_active : true);
       setDisplayOrder(productToEdit.display_order ? productToEdit.display_order.toString() : '0');
-      setSelectedMedia(productToEdit.product_media.map(media => ({
+      setSelectedMedia(productToEdit.product_media ? productToEdit.product_media.map(media => ({
         uri: media.media_url,
         type: media.media_type,
         id: media.id
-      })));
-      setProductVariants(productToEdit.product_variants || []);
-      setVariantCombinations(productToEdit.product_variant_combinations || []);
+      })) : []);
+      
+      const loadedCombinations = productToEdit.product_variant_combinations || [];
+      if (loadedCombinations.length > 0 && loadedCombinations[0].quantity !== undefined && loadedCombinations[0].quantity !== null) {
+        setStockQuantity(loadedCombinations[0].quantity.toString());
+      } else {
+        setStockQuantity('100');
+      }
+
+      const loadedVariants = (productToEdit.product_variants || []).map(v => ({
+        ...v,
+        variant_options: (v.variant_options || []).map(o => {
+          const optVal = typeof o === 'string' ? o : o?.value || '';
+          const matchCombo = loadedCombinations.find(c => {
+            const normalizedComb = (c.combination_string || '').replace(/\s/g, '').toLowerCase();
+            return normalizedComb === `${v.name}:${optVal}`.replace(/\s/g, '').toLowerCase() ||
+                   normalizedComb === optVal.replace(/\s/g, '').toLowerCase();
+          });
+          return {
+            ...(typeof o === 'object' ? o : { value: o }),
+            value: optVal,
+            price: matchCombo?.price !== undefined ? matchCombo.price : (o.price !== undefined ? o.price : productToEdit.amount),
+            quantity: matchCombo?.quantity !== undefined ? matchCombo.quantity : (o.quantity !== undefined ? o.quantity : 100),
+          };
+        }),
+      }));
+
+      setProductVariants(loadedVariants);
+      if (loadedCombinations.length > 0) {
+        setVariantCombinations(loadedCombinations);
+      } else {
+        setVariantCombinations(syncVariantCombinations(loadedVariants, [], productToEdit.amount));
+      }
     } else {
       setProductName('');
       setDescription('');
       setAmount('');
       setProductType('other');
       setUnit('');
+      setStockQuantity('100');
       setStartDate(new Date());
       setEndDate(new Date());
       setVisibleFrom(new Date());
       setVisibleTo(new Date());
+      setIsActive(true);
+      setDisplayOrder('0');
       setSelectedMedia([]);
       setProductVariants([]);
-    }
-  }, [productToEdit]);
-
-  useEffect(() => {
-    if (productVariants.length > 0) {
-      const newCombinations = generateVariantCombinations(productVariants, parseFloat(amount) || 0);
-      
-      // Preserve existing prices and quantities
-      const updatedCombinations = newCombinations.map(newCombo => {
-        const existingCombo = variantCombinations.find(
-          oldCombo => oldCombo.combination_string === newCombo.combination_string
-        );
-        return existingCombo ? { ...newCombo, price: existingCombo.price, quantity: existingCombo.quantity } : newCombo;
-      });
-
-      setVariantCombinations(updatedCombinations);
-    } else {
-      // If there are no variants, maintain a default combination with stock
       setVariantCombinations([{
         combination_string: 'Default',
         sku: '',
-        price: parseFloat(amount) || 0,
+        price: 0,
         quantity: 100,
       }]);
     }
-  }, [productVariants, amount]);
+  }, [productToEdit]);
+
+  const handleVariantsChange = (newVariants) => {
+    setProductVariants(newVariants);
+    setVariantCombinations(prevCombos => syncVariantCombinations(newVariants, prevCombos, amount));
+  };
+
+  const handleAmountChange = (newAmount) => {
+    setAmount(newAmount);
+    setVariantCombinations(prevCombos => {
+      if (prevCombos.length === 1 && prevCombos[0].combination_string === 'Default') {
+        return [{
+          ...prevCombos[0],
+          price: parseFloat(newAmount) || 0,
+        }];
+      }
+      return prevCombos;
+    });
+  };
+
+  const handleComboPriceChange = (index, text) => {
+    setVariantCombinations(prevCombos => {
+      const updated = [...prevCombos];
+      updated[index] = {
+        ...updated[index],
+        price: text === '' ? '' : (parseFloat(text) || text),
+      };
+      return updated;
+    });
+  };
+
+  const handleComboQuantityChange = (index, text) => {
+    setVariantCombinations(prevCombos => {
+      const updated = [...prevCombos];
+      updated[index] = {
+        ...updated[index],
+        quantity: text === '' ? '' : (parseInt(text, 10) || text),
+      };
+      return updated;
+    });
+  };
 
   const handleMediaPick = async (mediaType) => {
     let result;
@@ -226,48 +340,78 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         return;
       }
       productResult = data ? data[0] : null;
-      await deleteProductVariants(productResult.id);
     } else {
       productResult = await createProduct(productData);
     }
 
     if (productResult) {
       try {
-        for (const variant of productVariants) {
+        // Clear any auto-generated or previous variant combinations to prevent duplicates
+        await deleteProductVariants(productResult.id);
+
+        const activeVariants = (productVariants || []).filter(
+          v => (v.name || '').trim() && (v.variant_options || []).some(o => ((typeof o === 'string' ? o : o?.value) || '').trim())
+        );
+
+        for (const variant of activeVariants) {
+          const variantName = variant.name.trim();
+          const validOptions = (variant.variant_options || [])
+            .map(o => (typeof o === 'string' ? o : o?.value || '').trim())
+            .filter(v => v.length > 0);
+
+          if (validOptions.length === 0) continue;
+
           const variantResult = await createProductVariant({
             product_id: productResult.id,
-            name: variant.name,
+            name: variantName,
           });
+
           if (variantResult) {
-            for (const option of variant.variant_options) {
+            for (const optVal of validOptions) {
               await createVariantOption({
                 variant_id: variantResult.id,
-                value: option.value,
+                value: optVal,
               });
             }
           }
         }
 
         // Generate and save product variant combinations
-        const combosToSave = (variantCombinations && variantCombinations.length > 0)
+        const defaultQty = parseInt(stockQuantity, 10);
+        const validDefaultQty = !isNaN(defaultQty) ? defaultQty : 100;
+
+        const combosToSave = (activeVariants.length > 0 && variantCombinations && variantCombinations.length > 0)
           ? variantCombinations
-          : [{ combination_string: 'Default', sku: '', price: parseFloat(amount) || 0, quantity: 100 }];
+          : [{ combination_string: 'Default', sku: '', price: parseFloat(amount) || 0, quantity: validDefaultQty }];
 
         for (const combo of combosToSave) {
+          const priceVal = typeof combo.price === 'number'
+            ? combo.price
+            : (parseFloat(combo.price) || parseFloat(amount) || 0);
+          const qtyVal = typeof combo.quantity === 'number'
+            ? combo.quantity
+            : (parseInt(combo.quantity, 10) !== undefined && !isNaN(parseInt(combo.quantity, 10)) ? parseInt(combo.quantity, 10) : validDefaultQty);
+
           await createProductVariantCombination({
             product_id: productResult.id,
             combination_string: combo.combination_string || 'Default',
-            price: combo.price !== undefined ? combo.price : (parseFloat(amount) || 0),
-            quantity: combo.quantity !== undefined ? combo.quantity : 100,
-            sku: combo.sku || '', // SKU will be generated or can be added later
+            price: priceVal,
+            quantity: qtyVal,
+            sku: combo.sku || '',
           });
         }
 
+        let mediaErrors = 0;
         for (const media of selectedMedia.filter(m => !m.id)) {
           const mediaUrl = await saveProductMedia(productResult.id, media.uri, media.type, userId, accessToken);
           if (!mediaUrl) {
-            throw new Error("Failed to upload media.");
+            console.warn("Failed to upload media:", media.uri);
+            mediaErrors++;
           }
+        }
+
+        if (mediaErrors > 0) {
+          Alert.alert("Notice", `Product saved successfully, but ${mediaErrors} image(s) could not be uploaded.`);
         }
 
         onSubmit();
@@ -312,12 +456,12 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               onChangeText={setDescription}
               multiline
             />
-            <Text style={styles.label}>Amount</Text>
+            <Text style={styles.label}>Base Price / Amount (₹)</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter amount"
+              placeholder="Enter base amount / price"
               value={amount}
-              onChangeText={setAmount}
+              onChangeText={handleAmountChange}
               keyboardType="numeric"
             />
             <Text style={styles.label}>Product Type</Text>
@@ -344,40 +488,118 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               <Picker.Item label="ml" value="ml" />
             </Picker>
 
-            <VariantManager product={productToEdit} onVariantsChange={setProductVariants} />
-
-            {variantCombinations.length > 0 && (
-              <View style={styles.combinationsContainer}>
-                <Text style={styles.title}>Variant Prices and Quantities</Text>
-                {variantCombinations.map((combo, index) => (
-                  <View key={index} style={styles.combinationRow}>
-                    <Text style={styles.combinationString}>{combo.combination_string}</Text>
-                    <TextInput
-                      style={styles.comboInput}
-                      placeholder="Price"
-                      value={combo.price.toString()}
-                      onChangeText={(text) => {
-                        const newCombinations = [...variantCombinations];
-                        newCombinations[index].price = parseFloat(text) || 0;
-                        setVariantCombinations(newCombinations);
-                      }}
-                      keyboardType="numeric"
-                    />
-                    <TextInput
-                      style={styles.comboInput}
-                      placeholder="Quantity"
-                      value={(combo.quantity || 0).toString()}
-                      onChangeText={(text) => {
-                        const newCombinations = [...variantCombinations];
-                        newCombinations[index].quantity = parseInt(text, 10) || 0;
-                        setVariantCombinations(newCombinations);
-                      }}
-                      keyboardType="numeric"
-                    />
-                  </View>
-                ))}
+            {(!productVariants || productVariants.length === 0 || !productVariants.some(v => (v.name || '').trim())) && (
+              <View style={{ marginBottom: 6 }}>
+                <Text style={styles.label}>Available Stock Quantity ({unit || 'units'})</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 100"
+                  value={stockQuantity}
+                  onChangeText={setStockQuantity}
+                  keyboardType="numeric"
+                />
               </View>
             )}
+
+            <VariantManager
+              variants={productVariants}
+              onVariantsChange={handleVariantsChange}
+              baseAmount={amount}
+              unit={unit}
+            />
+
+            {productVariants.filter(v => (v.name || '').trim() && (v.variant_options || []).some(o => ((typeof o === 'string' ? o : o?.value) || '').trim())).length > 1 && variantCombinations.length > 0 && (
+              <View style={styles.matrixToggleContainer}>
+                <TouchableOpacity 
+                  style={styles.matrixToggleHeader}
+                  onPress={() => setShowMatrix(!showMatrix)}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <View style={styles.matrixTitleRow}>
+                      <Icon name="sliders" size={15} color="#007AFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.matrixToggleTitle}>
+                        Custom Combination Matrix (Optional)
+                      </Text>
+                    </View>
+                    <Text style={styles.matrixToggleSubtitle}>
+                      {showMatrix
+                        ? 'Tap to collapse. (Option prices are automatically used by default)'
+                        : 'Tap to manually override prices/stock for specific multi-attribute combinations (e.g., Small + Red).'}
+                    </Text>
+                  </View>
+                  <Icon name={showMatrix ? "chevron-up" : "chevron-down"} size={16} color="#007AFF" />
+                </TouchableOpacity>
+
+                {showMatrix && (
+                  <View style={styles.combinationsContainer}>
+                    <View style={styles.combinationsHeader}>
+                      <Text style={styles.combinationsTitle}>Multi-Variant Cross Combinations</Text>
+                      <Text style={styles.combinationsSubtitle}>
+                        Customize individual cross-combination prices and stock below:
+                      </Text>
+                    </View>
+
+                {variantCombinations.map((combo, index) => {
+                  const parts = (combo.combination_string || '')
+                    .split(',')
+                    .map(p => p.trim())
+                    .filter(Boolean);
+
+                  return (
+                    <View key={index} style={styles.combinationCard}>
+                      <View style={styles.combinationCardHeader}>
+                        <Text style={styles.comboIndexText}>Option #{index + 1}</Text>
+                        <View style={styles.badgesWrapper}>
+                          {parts.length === 0 ? (
+                            <View style={styles.comboBadge}>
+                              <Text style={styles.comboBadgeValue}>{combo.combination_string || 'Default'}</Text>
+                            </View>
+                          ) : (
+                            parts.map((part, pIdx) => {
+                              const colonIdx = part.indexOf(':');
+                              const vName = colonIdx > -1 ? part.substring(0, colonIdx).trim() : '';
+                              const vVal = colonIdx > -1 ? part.substring(colonIdx + 1).trim() : part.trim();
+                              return (
+                                <View key={pIdx} style={styles.comboBadge}>
+                                  {vName ? <Text style={styles.comboBadgeName}>{vName}: </Text> : null}
+                                  <Text style={styles.comboBadgeValue}>{vVal}</Text>
+                                </View>
+                              );
+                            })
+                          )}
+                        </View>
+                      </View>
+
+                      <View style={styles.comboInputsRow}>
+                        <View style={styles.comboInputGroup}>
+                          <Text style={styles.comboInputLabel}>Price (₹)</Text>
+                          <TextInput
+                            style={styles.comboInput}
+                            placeholder="0.00"
+                            value={combo.price !== undefined && combo.price !== null ? combo.price.toString() : ''}
+                            onChangeText={(text) => handleComboPriceChange(index, text)}
+                            keyboardType="numeric"
+                          />
+                        </View>
+                        <View style={styles.comboInputGroup}>
+                          <Text style={styles.comboInputLabel}>Stock Qty ({unit || 'units'})</Text>
+                          <TextInput
+                            style={styles.comboInput}
+                            placeholder="100"
+                            value={combo.quantity !== undefined && combo.quantity !== null ? combo.quantity.toString() : ''}
+                            onChangeText={(text) => handleComboQuantityChange(index, text)}
+                            keyboardType="numeric"
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
 
             <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
               <Text>Start Date: {startDate.toLocaleDateString()}</Text>
@@ -622,23 +844,107 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   combinationsContainer: {
-    marginTop: 20,
+    marginTop: 15,
+    marginBottom: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
-  combinationRow: {
+  combinationsHeader: {
+    marginBottom: 12,
+  },
+  combinationsTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#212529',
+  },
+  combinationsSubtitle: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginTop: 2,
+  },
+  combinationCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  combinationCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
+    flexWrap: 'wrap',
   },
-  combinationString: {
-    flex: 2,
+  comboIndexText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0d47a1',
+    backgroundColor: '#e3f2fd',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  badgesWrapper: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    flex: 1,
+  },
+  comboBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e8f5e9',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 6,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#c8e6c9',
+  },
+  comboBadgeName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2e7d32',
+  },
+  comboBadgeValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1b5e20',
+  },
+  comboInputsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  comboInputGroup: {
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  comboInputLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#495057',
+    marginBottom: 4,
   },
   comboInput: {
-    flex: 1,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#ddd',
-    padding: 5,
-    borderRadius: 5,
-    marginLeft: 10,
+    borderColor: '#ced4da',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 14,
+    color: '#212529',
   },
   switchContainer: {
     flexDirection: 'row',

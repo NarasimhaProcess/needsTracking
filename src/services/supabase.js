@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem
+import { Buffer } from 'buffer';
 let Storage;
 if (Platform.OS === 'web') {
   Storage = {
@@ -73,118 +74,146 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
     try {
       const cleanUri = mediaData.split('?')[0];
       const fileExtension = cleanUri.split('.').pop() || (mediaType === 'video' ? 'mp4' : 'jpg');
-      const fileName = `${Date.now()}.${fileExtension}`;
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExtension}`;
       const filePath = `product_media/${productId}/${fileName}`;
       const contentType = mediaType === 'video' ? `video/${fileExtension}` : `image/${fileExtension}`;
 
       let publicUrl = null;
+      let fileData = null;
 
-      // Primary Attempt: Direct upload to Supabase Storage
-      try {
-        console.log("Attempting direct Supabase storage upload...");
-        let fileData;
-        if (Platform.OS === 'web') {
+      // Safe binary data conversion for Web, iOS, and Android
+      if (Platform.OS === 'web') {
+        try {
           const fileResponse = await fetch(mediaData);
           fileData = await fileResponse.blob();
-        } else {
-          const base64 = await FileSystem.readAsStringAsync(mediaData, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          fileData = new Uint8Array(
-            atob(base64).split("").map((c) => c.charCodeAt(0))
-          );
+        } catch (webBlobErr) {
+          console.warn('Web blob fetch failed:', webBlobErr.message);
         }
-
-        const { data: storageUploadData, error: storageUploadError } = await supabase.storage
-          .from('productsmedia')
-          .upload(filePath, fileData, {
-            contentType: contentType,
-            upsert: true,
-          });
-
-        if (!storageUploadError) {
-          const { data: publicUrlData } = supabase.storage
-            .from('productsmedia')
-            .getPublicUrl(filePath);
-          publicUrl = publicUrlData.publicUrl;
-          console.log("Direct storage upload successful. Public URL:", publicUrl);
-        } else {
-          console.warn("Direct storage upload failed, trying Edge Function fallback:", storageUploadError.message);
+      } else {
+        try {
+          const fileResponse = await fetch(mediaData);
+          fileData = await fileResponse.blob();
+        } catch (fetchBlobErr) {
+          try {
+            const base64 = await FileSystem.readAsStringAsync(mediaData, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            if (typeof Buffer !== 'undefined') {
+              const buf = Buffer.from(base64, 'base64');
+              fileData = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+            } else {
+              fileData = new Uint8Array(
+                atob(base64).split('').map((c) => c.charCodeAt(0))
+              ).buffer;
+            }
+          } catch (fsErr) {
+            console.error('FileSystem read error:', fsErr.message);
+          }
         }
-      } catch (directErr) {
-        console.warn("Direct storage upload error, trying Edge Function fallback:", directErr.message);
       }
 
-      // Fallback Attempt: Signed URL workflow via Edge Function
-      if (!publicUrl) {
-        let token = accessToken;
-        if (!token) {
-          const { data: { session } } = await supabase.auth.getSession();
-          token = session?.access_token || supabaseAnonKey;
+      // Primary Attempt: Try storage buckets
+      const bucketsToTry = ['productsmedia', 'locationtracker', 'chat_media', 'damage_photos'];
+      for (const bucketName of bucketsToTry) {
+        if (!fileData) break;
+        try {
+          console.log(`Attempting upload to Supabase storage bucket '${bucketName}'...`);
+          const { data: storageUploadData, error: storageUploadError } = await supabase.storage
+            .from(bucketName)
+            .upload(filePath, fileData, {
+              contentType: contentType,
+              upsert: true,
+            });
+
+          if (!storageUploadError) {
+            const { data: publicUrlData } = supabase.storage
+              .from(bucketName)
+              .getPublicUrl(filePath);
+            if (publicUrlData?.publicUrl) {
+              publicUrl = publicUrlData.publicUrl;
+              console.log(`Direct storage upload successful to '${bucketName}'. Public URL:`, publicUrl);
+              break;
+            }
+          } else {
+            console.warn(`Storage upload to '${bucketName}' failed:`, storageUploadError.message);
+          }
+        } catch (bucketErr) {
+          console.warn(`Error trying storage bucket '${bucketName}':`, bucketErr.message);
         }
+      }
 
-        const { data: functionData, error: funcError } = await supabase.functions.invoke('upload-image', {
-          body: {
-            action: 'generateSignedUrl',
-            file_name: fileName,
-            file_path: filePath,
-            content_type: contentType,
-            user_id: userId,
-          },
-        });
+      // Fallback Attempt: Signed URL workflow via Edge Function if storage direct failed
+      if (!publicUrl) {
+        try {
+          let token = accessToken;
+          if (!token) {
+            const { data: { session } } = await supabase.auth.getSession();
+            token = session?.access_token || supabaseAnonKey;
+          }
 
-        let signedUrl = functionData?.signedUrl;
-
-        if (funcError || !signedUrl) {
-          const edgeFunctionUrl = `${supabaseUrl}/functions/v1/upload-image`;
-          const signedUrlResponse = await fetch(edgeFunctionUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-            },
-            body: JSON.stringify({
+          const { data: functionData, error: funcError } = await supabase.functions.invoke('upload-image', {
+            body: {
               action: 'generateSignedUrl',
               file_name: fileName,
               file_path: filePath,
               content_type: contentType,
               user_id: userId,
-            }),
+            },
           });
 
-          if (!signedUrlResponse.ok) {
-            const errorText = await signedUrlResponse.text();
-            throw new Error(`Failed to get signed URL: ${signedUrlResponse.status} - ${errorText}`);
+          let signedUrl = functionData?.signedUrl;
+
+          if (funcError || !signedUrl) {
+            const edgeFunctionUrl = `${supabaseUrl}/functions/v1/upload-image`;
+            const signedUrlResponse = await fetch(edgeFunctionUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                action: 'generateSignedUrl',
+                file_name: fileName,
+                file_path: filePath,
+                content_type: contentType,
+                user_id: userId,
+              }),
+            });
+
+            if (signedUrlResponse.ok) {
+              const resJson = await signedUrlResponse.json();
+              signedUrl = resJson.signedUrl;
+            }
           }
-          const resJson = await signedUrlResponse.json();
-          signedUrl = resJson.signedUrl;
+
+          if (signedUrl) {
+            const fileResponse = await fetch(mediaData);
+            const blob = await fileResponse.blob();
+
+            const uploadDirectResponse = await fetch(signedUrl, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': contentType,
+                'x-upsert': 'true',
+              },
+              body: blob,
+            });
+
+            if (uploadDirectResponse.ok) {
+              const { data: pubData } = supabase.storage
+                .from('productsmedia')
+                .getPublicUrl(filePath);
+              publicUrl = pubData.publicUrl;
+            }
+          }
+        } catch (edgeErr) {
+          console.warn('Edge function fallback error:', edgeErr.message);
         }
-
-        const fileResponse = await fetch(mediaData);
-        const blob = await fileResponse.blob();
-
-        const uploadDirectResponse = await fetch(signedUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': contentType,
-            'x-upsert': 'true',
-          },
-          body: blob,
-        });
-
-        if (!uploadDirectResponse.ok) {
-          const errorText = await uploadDirectResponse.text();
-          throw new Error(`Direct upload to signed URL failed: ${uploadDirectResponse.status} - ${errorText}`);
-        }
-
-        const { data: pubData } = supabase.storage
-          .from('productsmedia')
-          .getPublicUrl(filePath);
-        publicUrl = pubData.publicUrl;
       }
 
       if (!publicUrl) {
-        throw new Error("Failed to obtain public URL for uploaded media.");
+        console.error('Failed to obtain public URL for uploaded media.');
+        return null;
       }
 
       // Save Public URL to Database

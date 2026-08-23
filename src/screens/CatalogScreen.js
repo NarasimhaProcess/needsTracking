@@ -41,11 +41,37 @@ const CatalogScreen = ({ navigation, route }) => {
   const [variantSearch, setVariantSearch] = useState({});
   const [isProductModalVisible, setIsProductModalVisible] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedVariants, setSelectedVariants] = useState({});
+  const [selectedVariantFilter, setSelectedVariantFilter] = useState(null);
 
   const getProductCombinations = useCallback((product) => {
     if (!product) return [];
-    if (product.product_variant_combinations && product.product_variant_combinations.length > 0) {
-      return product.product_variant_combinations;
+    const rawCombos = product.product_variant_combinations || [];
+    if (rawCombos.length > 0) {
+      const hasActiveVariants = (product.product_variants || []).some(
+        v => (v.name || '').trim() && (v.variant_options || []).length > 0
+      );
+      if (!hasActiveVariants) {
+        // Single item product without variants -> strictly return only 1 default combination
+        return [{
+          ...rawCombos[0],
+          combination_string: 'Default',
+          price: rawCombos[0].price || product.amount || 0,
+          quantity: rawCombos[0].quantity !== undefined ? rawCombos[0].quantity : 100,
+        }];
+      }
+
+      // If has variants, deduplicate any repeated combination strings
+      const seen = new Set();
+      const uniqueCombos = [];
+      for (const c of rawCombos) {
+        const key = (c.combination_string || '').trim().toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          uniqueCombos.push(c);
+        }
+      }
+      return uniqueCombos.length > 0 ? uniqueCombos : rawCombos;
     }
     return [{
       id: product.id,
@@ -62,20 +88,12 @@ const CatalogScreen = ({ navigation, route }) => {
     const items = user ? cart?.cart_items : guestCart;
     if (items && Array.isArray(items)) {
       items.forEach(item => {
-        const comboId = user ? item?.product_variant_combinations?.id : item?.product_variant_combination_id;
-        const prodId = 
-          item?.product_variant_combinations?.products?.id || 
-          item?.product_variant_combinations?.product_id ||
-          item?.product_id;
+        const comboId = user 
+          ? (item?.product_variant_combinations?.id || item?.product_variant_combination_id)
+          : (item?.product_variant_combination_id || item?.product_variant_combinations?.id || item?.id);
         const qty = item?.quantity || 0;
         if (comboId) {
           map[comboId] = (map[comboId] || 0) + qty;
-        }
-        if (prodId) {
-          map[prodId] = (map[prodId] || 0) + qty;
-        }
-        if (item?.id) {
-          map[item.id] = (map[item.id] || 0) + qty;
         }
       });
     }
@@ -192,15 +210,103 @@ const CatalogScreen = ({ navigation, route }) => {
     }, [sellerId, customerId])
   );
 
+  const formatCombinationTitle = useCallback((combinationString, product) => {
+    if (!combinationString || combinationString === 'Default') {
+      return product?.product_name ? `${product.product_name} (Standard)` : 'Standard Option';
+    }
+    const parts = combinationString.split(',').map(p => p.trim()).filter(Boolean);
+    return parts.map(part => {
+      const colonIdx = part.indexOf(':');
+      if (colonIdx > -1) {
+        return part.substring(colonIdx + 1).trim();
+      }
+      return part;
+    }).join(' • ');
+  }, []);
+
   const openProductModal = (product) => {
     setSelectedProduct(product);
+    setSelectedVariantFilter(null);
+    const variants = product?.product_variants || [];
+    if (variants.length > 0) {
+      const defaultVars = {};
+      variants.forEach((v) => {
+        const vName = v.name || v.variant_name;
+        if (vName && v.variant_options && v.variant_options.length > 0) {
+          const firstOpt = v.variant_options[0];
+          const val = typeof firstOpt === 'string' ? firstOpt : (firstOpt.value || firstOpt.name || '');
+          defaultVars[vName] = val;
+        }
+      });
+      setSelectedVariants(defaultVars);
+    } else {
+      const combos = getProductCombinations(product);
+      if (combos.length > 0 && combos[0].combination_string && combos[0].combination_string !== 'Default') {
+        const parts = combos[0].combination_string.split(',');
+        const defaultVars = {};
+        parts.forEach(part => {
+          const [k, v] = part.split(':');
+          if (k && v) {
+            defaultVars[k.trim()] = v.trim();
+          }
+        });
+        setSelectedVariants(defaultVars);
+      } else {
+        setSelectedVariants({});
+      }
+    }
     setIsProductModalVisible(true);
   };
 
   const closeProductModal = () => {
     setSelectedProduct(null);
+    setSelectedVariants({});
+    setSelectedVariantFilter(null);
     setIsProductModalVisible(false);
   };
+
+  const getSelectedCombination = useCallback(() => {
+    if (!selectedProduct) return null;
+    const combos = getProductCombinations(selectedProduct);
+    if (combos.length === 0) {
+      return { id: selectedProduct.id, combination_string: 'Default', price: selectedProduct.amount || 0, quantity: 100 };
+    }
+    if (combos.length === 1) {
+      return combos[0];
+    }
+
+    const variantKeys = Object.keys(selectedVariants).filter(k => selectedVariants[k]);
+    if (variantKeys.length === 0) {
+      return combos[0];
+    }
+
+    const sortedKeys = [...variantKeys].sort();
+    const combinationString = sortedKeys
+      .map((key) => `${key}:${selectedVariants[key]}`)
+      .join(',');
+    const normalizedCombinationString = combinationString.replace(/\s/g, '').toLowerCase();
+
+    let found = combos.find((c) => {
+      if (c.combination_string) {
+        const normalizedDbString = c.combination_string.replace(/\s/g, '').toLowerCase();
+        return normalizedDbString === normalizedCombinationString;
+      }
+      return false;
+    });
+
+    if (!found) {
+      found = combos.find((c) => {
+        if (!c.combination_string) return false;
+        const dbNormalized = c.combination_string.replace(/\s/g, '').toLowerCase();
+        return variantKeys.every(k => {
+          const pair = `${k.toLowerCase()}:${String(selectedVariants[k]).toLowerCase().trim()}`;
+          return dbNormalized.includes(pair);
+        });
+      });
+    }
+
+    return found || combos[0];
+  }, [selectedProduct, selectedVariants, getProductCombinations]);
 
   const handleUpdateCart = async (product, combinationId, change) => {
     if (updatingCart) return;
@@ -232,20 +338,16 @@ const CatalogScreen = ({ navigation, route }) => {
     const localQuantityMap = {};
     if (items) {
       items.forEach(item => {
-        const comboId = freshUser ? item.product_variant_combinations?.id : item.product_variant_combination_id;
-        const prodId = 
-          item.product_variant_combinations?.products?.id || 
-          item.product_variant_combinations?.product_id || 
-          item.product_id;
+        const comboId = freshUser 
+          ? (item.product_variant_combinations?.id || item.product_variant_combination_id) 
+          : (item.product_variant_combination_id || item.product_variant_combinations?.id || item.id);
         const qty = item.quantity || 0;
         if (comboId) localQuantityMap[comboId] = (localQuantityMap[comboId] || 0) + qty;
-        if (prodId) localQuantityMap[prodId] = (localQuantityMap[prodId] || 0) + qty;
-        if (item.id) localQuantityMap[item.id] = (localQuantityMap[item.id] || 0) + qty;
       });
     }
     // --- End get fresh data ---
 
-    const currentQuantity = localQuantityMap[targetCombinationId] || localQuantityMap[product.id] || 0;
+    const currentQuantity = localQuantityMap[targetCombinationId] || 0;
     const newQuantity = currentQuantity + change;
 
     if (newQuantity < 0) {
@@ -266,8 +368,7 @@ const CatalogScreen = ({ navigation, route }) => {
             const originalCartItem = (freshCart?.cart_items || []).find(item => 
               (item.product_variant_combinations?.id === targetCombinationId) ||
               (item.product_variant_combination_id === targetCombinationId) ||
-              (item.product_variant_combinations?.product_id === product.id) ||
-              (item.product_variant_combinations?.products?.id === product.id)
+              (item.id === targetCombinationId)
             );
             if (newQuantity > 0) {
                 if (originalCartItem) {
@@ -294,8 +395,7 @@ const CatalogScreen = ({ navigation, route }) => {
         const itemIndex = optimisticGuestCart.findIndex(item => 
           item.product_variant_combination_id === targetCombinationId ||
           item.id === targetCombinationId ||
-          item.product_variant_combinations?.id === targetCombinationId ||
-          item.product_variant_combinations?.products?.id === product.id
+          item.product_variant_combinations?.id === targetCombinationId
         );
 
         if (newQuantity > 0) {
@@ -305,6 +405,7 @@ const CatalogScreen = ({ navigation, route }) => {
                 optimisticGuestCart.push({
                     id: targetCombinationId,
                     product_variant_combination_id: targetCombinationId,
+                    combination_string: combination.combination_string,
                     quantity: newQuantity,
                     price: combination.price || product.amount || 0,
                     product_name: product.product_name,
@@ -461,7 +562,17 @@ const CatalogScreen = ({ navigation, route }) => {
     return (
       <View style={styles.productContainer}>
         <TouchableOpacity onPress={() => openProductModal(item)} activeOpacity={0.8}>
-          <Image style={styles.productImage} source={{ uri: item.product_media?.[0]?.media_url || 'https://placehold.co/600x400' }} />
+          {item.product_media && item.product_media.length > 0 && item.product_media[0]?.media_url ? (
+            <Image 
+              style={styles.productImage} 
+              source={{ uri: item.product_media[0].media_url }} 
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.productImagePlaceholder}>
+              <Icon name="shopping-bag" size={32} color="#94a3b8" />
+            </View>
+          )}
         </TouchableOpacity>
         <View style={styles.productDetails}>
           <TouchableOpacity onPress={() => openProductModal(item)}>
@@ -598,7 +709,7 @@ const CatalogScreen = ({ navigation, route }) => {
           onRequestClose={closeProductModal}
         >
           <View style={styles.modalContainer}>
-            <View style={styles.productModalContent}>
+            <View style={styles.swiggyModalContent}>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={closeProductModal}
@@ -607,118 +718,211 @@ const CatalogScreen = ({ navigation, route }) => {
               </TouchableOpacity>
               
               <View style={styles.swiperContainer}>
-                <Swiper showsButtons={false} loop={false}>
-                  {((selectedProduct?.product_media && selectedProduct.product_media.length > 0) 
-                    ? selectedProduct.product_media 
-                    : [{ media_url: 'https://placehold.co/600x400' }]
-                  ).map((media, index) => (
-                    <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)}>
-                      <Image source={{ uri: media?.media_url }} style={styles.modalProductImage} />
-                    </TouchableOpacity>
-                  ))}
-                </Swiper>
+                {selectedProduct?.product_media && selectedProduct.product_media.length > 0 && selectedProduct.product_media.some(m => m?.media_url) ? (
+                  <Swiper showsButtons={false} loop={false}>
+                    {selectedProduct.product_media
+                      .filter(m => m?.media_url)
+                      .map((media, index) => (
+                        <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
+                          <Image source={{ uri: media.media_url }} style={styles.modalProductImage} resizeMode="contain" />
+                        </TouchableOpacity>
+                      ))}
+                  </Swiper>
+                ) : (
+                  <View style={styles.modalProductImagePlaceholder}>
+                    <Icon name="shopping-bag" size={48} color="#94a3b8" />
+                    <Text style={styles.modalPlaceholderText}>{selectedProduct?.product_name || 'Product'}</Text>
+                  </View>
+                )}
               </View>
 
-              <Text style={styles.modalProductName}>{selectedProduct?.product_name || ''}</Text>
+              <View style={styles.swiggyHeaderSection}>
+                <Text style={styles.swiggyProductName}>{selectedProduct?.product_name || ''}</Text>
+                {selectedProduct?.description ? (
+                  <Text style={styles.swiggyProductDesc}>{selectedProduct.description}</Text>
+                ) : null}
+              </View>
               
-              <ScrollView style={{ flex: 1 }}>
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
                 {(() => {
                   const combos = getProductCombinations(selectedProduct);
-                  if (combos.length > 1) {
-                    return (
-                      <View style={styles.variantsContainer}>
-                        <TextInput
-                          style={styles.variantSearchInput}
-                          placeholder="Search options..."
-                          value={variantSearch[selectedProduct.id] || ''}
-                          onChangeText={text => {
-                            setVariantSearch(prevState => ({
-                              ...prevState,
-                              [selectedProduct.id]: text
-                            }));
-                          }}
-                        />
-                        {combos
-                          .filter(combo => 
-                            (combo?.combination_string || '').toLowerCase().includes((variantSearch[selectedProduct.id] || '').toLowerCase())
-                          )
-                          .map(combo => {
-                            if (!combo) return null;
-                            const quantity = quantityMap[combo.id] || 0;
-                            return (
-                              <View key={combo.id} style={styles.variantRow}>
-                                <View style={styles.variantInfo}>
-                                    <Text style={styles.variantNameText}>{combo.combination_string}</Text>
-                                    <Text style={styles.stockText}><Text style={styles.labelText}>Price: </Text>₹{combo.price}</Text>
-                                    <Text style={styles.stockText}><Text style={styles.labelText}>In Stock: </Text>{combo.quantity || 0}</Text>
-                                </View>
-                                <View style={styles.quantitySelector}>
-                                  <Text style={styles.labelText}>Qty:</Text>
-                                  <TouchableOpacity 
-                                    onPress={() => handleUpdateCart(selectedProduct, combo.id, -1)} 
-                                    disabled={updatingCart || quantity === 0}
-                                    style={{ padding: 4 }}
+                  const isMultiCombo = combos.length > 1;
+
+                  // Filter by selected variant filter if active
+                  const filteredCombos = combos.filter(combo => {
+                    if (!selectedVariantFilter) return true;
+                    const normalizedCombo = (combo?.combination_string || '').toLowerCase();
+                    return normalizedCombo.includes(selectedVariantFilter.toLowerCase());
+                  });
+
+                  return (
+                    <View style={{ flex: 1 }}>
+                      {/* Filter chips if product has multiple variants */}
+                      {selectedProduct?.product_variants && selectedProduct.product_variants.length > 1 && (
+                        <View style={styles.swiggyFilterSection}>
+                          <Text style={styles.swiggyFilterLabel}>Filter by:</Text>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.swiggyFilterScroll}>
+                            <TouchableOpacity
+                              style={[styles.swiggyFilterChip, !selectedVariantFilter && styles.swiggyFilterChipActive]}
+                              onPress={() => setSelectedVariantFilter(null)}
+                            >
+                              <Text style={[styles.swiggyFilterChipText, !selectedVariantFilter && styles.swiggyFilterChipTextActive]}>
+                                All ({combos.length})
+                              </Text>
+                            </TouchableOpacity>
+                            {selectedProduct.product_variants.map(v => (
+                              (v.variant_options || []).map((opt, oIdx) => {
+                                const optVal = typeof opt === 'string' ? opt : (opt?.value || opt?.name || '');
+                                const isChipActive = selectedVariantFilter === optVal;
+                                return (
+                                  <TouchableOpacity
+                                    key={`${v.id}-${oIdx}`}
+                                    style={[styles.swiggyFilterChip, isChipActive && styles.swiggyFilterChipActive]}
+                                    onPress={() => setSelectedVariantFilter(isChipActive ? null : optVal)}
                                   >
-                                    <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
+                                    <Text style={[styles.swiggyFilterChipText, isChipActive && styles.swiggyFilterChipTextActive]}>
+                                      {optVal}
+                                    </Text>
                                   </TouchableOpacity>
-                                  <Text style={styles.quantityText}>{quantity}</Text>
-                                  <TouchableOpacity 
-                                    onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)} 
-                                    disabled={updatingCart}
-                                    style={{ padding: 4 }}
-                                  >
-                                    <Icon name="plus-circle" size={32} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
-                                  </TouchableOpacity>
+                                );
+                              })
+                            ))}
+                          </ScrollView>
+                        </View>
+                      )}
+
+                      {/* Section Title */}
+                      <View style={styles.swiggyOptionsHeaderRow}>
+                        <Text style={styles.swiggyOptionsSectionTitle}>
+                          {isMultiCombo ? 'Available Options & Sizes' : 'Product Details'}
+                        </Text>
+                        <Text style={styles.swiggyOptionsSectionSubtitle}>
+                          {isMultiCombo ? 'Select quantity for each option you want to add' : 'Add to your cart'}
+                        </Text>
+                      </View>
+
+                      {/* Swiggy/Zomato style Options list */}
+                      <View style={styles.swiggyOptionsList}>
+                        {filteredCombos.map((combo, index) => {
+                          const qtyInCart = quantityMap[combo.id] || 0;
+                          const comboPrice = combo?.price !== undefined && combo?.price !== null ? combo.price : (selectedProduct.amount || 0);
+                          const stockQty = combo?.quantity !== undefined && combo?.quantity !== null ? combo.quantity : 100;
+                          const isOutOfStock = stockQty <= 0;
+                          
+                          const comboTitle = formatCombinationTitle(combo.combination_string, selectedProduct);
+                          const parts = (combo.combination_string || '')
+                            .split(',')
+                            .map(p => p.trim())
+                            .filter(Boolean);
+
+                          return (
+                            <View 
+                              key={combo.id || index} 
+                              style={[styles.swiggyOptionCard, qtyInCart > 0 && styles.swiggyOptionCardActive]}
+                            >
+                              <View style={styles.swiggyOptionInfoCol}>
+                                <Text style={styles.swiggyOptionTitle}>{comboTitle}</Text>
+                                
+                                {parts.length > 0 && combo.combination_string !== 'Default' && (
+                                  <View style={styles.swiggyBadgesRow}>
+                                    {parts.map((part, pIdx) => {
+                                      const colonIdx = part.indexOf(':');
+                                      const vName = colonIdx > -1 ? part.substring(0, colonIdx).trim() : '';
+                                      const vVal = colonIdx > -1 ? part.substring(colonIdx + 1).trim() : part.trim();
+                                      return (
+                                        <View key={pIdx} style={styles.swiggyBadge}>
+                                          {vName ? <Text style={styles.swiggyBadgeName}>{vName}: </Text> : null}
+                                          <Text style={styles.swiggyBadgeVal}>{vVal}</Text>
+                                        </View>
+                                      );
+                                    })}
+                                  </View>
+                                )}
+
+                                <View style={styles.swiggyPriceStockRow}>
+                                  <Text style={styles.swiggyOptionPriceText}>₹{comboPrice}</Text>
+                                  <Text style={[styles.swiggyStockText, isOutOfStock && styles.swiggyStockOutText]}>
+                                    {isOutOfStock ? '• Out of Stock' : `• In Stock: ${stockQty} ${selectedProduct.unit || 'units'}`}
+                                  </Text>
                                 </View>
                               </View>
-                            );
-                          })}
+
+                              <View style={styles.swiggyActionCol}>
+                                {qtyInCart > 0 ? (
+                                  <View style={styles.swiggyStepperBox}>
+                                    <TouchableOpacity
+                                      style={styles.swiggyStepperBtn}
+                                      onPress={() => handleUpdateCart(selectedProduct, combo.id, -1)}
+                                      disabled={updatingCart}
+                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                      <Icon name="minus" size={12} color="#166534" />
+                                    </TouchableOpacity>
+                                    <Text style={styles.swiggyStepperQtyText}>{qtyInCart}</Text>
+                                    <TouchableOpacity
+                                      style={[styles.swiggyStepperBtn, (qtyInCart >= stockQty || updatingCart) && styles.swiggyBtnDisabled]}
+                                      onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)}
+                                      disabled={updatingCart || qtyInCart >= stockQty}
+                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                      <Icon name="plus" size={12} color="#166534" />
+                                    </TouchableOpacity>
+                                  </View>
+                                ) : (
+                                  <TouchableOpacity
+                                    style={[styles.swiggyAddBtn, isOutOfStock && styles.swiggyAddBtnDisabled]}
+                                    onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)}
+                                    disabled={updatingCart || isOutOfStock}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Text style={[styles.swiggyAddBtnText, isOutOfStock && styles.swiggyAddBtnTextDisabled]}>
+                                      {isOutOfStock ? 'OUT' : 'ADD +'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        })}
                       </View>
-                    );
-                  } else {
-                    const combo = combos[0];
-                    const quantity = quantityMap[combo.id] || 0;
-                    return (
-                      <View style={styles.singleVariantModalContainer}>
-                        <View style={styles.variantRow}>
-                          <View style={styles.variantInfo}>
-                            <Text style={styles.variantNameText}>{getPriceDisplay(selectedProduct)}</Text>
-                            <Text style={styles.stockText}><Text style={styles.labelText}>In Stock: </Text>{combo?.quantity || 100}</Text>
-                          </View>
-                          <View style={styles.quantitySelector}>
-                            <Text style={styles.labelText}>Qty:</Text>
-                            <TouchableOpacity 
-                              onPress={() => handleUpdateCart(selectedProduct, combo.id, -1)} 
-                              disabled={updatingCart || quantity === 0}
-                              style={{ padding: 4 }}
-                            >
-                              <Icon name="minus-circle" size={32} color={quantity === 0 ? '#ccc' : '#E53935'} style={updatingCart && { opacity: 0.5 }} />
-                            </TouchableOpacity>
-                            <Text style={styles.quantityText}>{quantity}</Text>
-                            <TouchableOpacity 
-                              onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)} 
-                              disabled={updatingCart}
-                              style={{ padding: 4 }}
-                            >
-                              <Icon name="plus-circle" size={32} color="#43A047" style={updatingCart && { opacity: 0.5 }} />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                        {quantity === 0 && (
-                          <TouchableOpacity 
-                            style={styles.modalAddToCartButton}
-                            onPress={() => handleUpdateCart(selectedProduct, combo.id, 1)}
-                            disabled={updatingCart}
-                          >
-                            <Icon name="shopping-cart" size={18} color="#fff" style={{ marginRight: 8 }} />
-                            <Text style={styles.modalAddToCartButtonText}>Add to Cart</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    );
-                  }
+                    </View>
+                  );
                 })()}
               </ScrollView>
+
+              {/* Swiggy/Zomato style Sticky Footer Bar */}
+              <View style={styles.swiggyModalFooter}>
+                <View style={styles.swiggyFooterInfo}>
+                  <Text style={styles.swiggyFooterItemsCount}>
+                    {productTotalQuantityInCart[selectedProduct?.id] || 0} {(productTotalQuantityInCart[selectedProduct?.id] || 0) === 1 ? 'item' : 'items'} added
+                  </Text>
+                  <Text style={styles.swiggyFooterTotalPrice}>
+                    ₹{(productTotalPriceInCart[selectedProduct?.id] || 0).toFixed(2)}
+                  </Text>
+                </View>
+                <View style={styles.swiggyFooterActionsRow}>
+                  <TouchableOpacity
+                    style={styles.swiggyDoneBtn}
+                    onPress={closeProductModal}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.swiggyDoneBtnText}>Done</Text>
+                  </TouchableOpacity>
+                  {cartTotals.totalItems > 0 && (
+                    <TouchableOpacity
+                      style={styles.swiggyViewCartBtn}
+                      onPress={() => {
+                        closeProductModal();
+                        setIsCartModalVisible(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.swiggyViewCartBtnText}>View Cart</Text>
+                      <Icon name="arrow-right" size={12} color="#ffffff" style={{ marginLeft: 6 }} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
             </View>
           </View>
         </Modal>
@@ -832,6 +1036,27 @@ const styles = StyleSheet.create({
   productImage: {
     width: '100%',
     height: 150,
+    backgroundColor: '#f8fafc',
+  },
+  productImagePlaceholder: {
+    width: '100%',
+    height: 150,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalProductImagePlaceholder: {
+    width: '100%',
+    height: 250,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalPlaceholderText: {
+    fontSize: 14,
+    color: '#64748b',
+    marginTop: 8,
+    fontWeight: '600',
   },
   productDetails: {
     padding: 10,
@@ -1137,11 +1362,282 @@ const styles = StyleSheet.create({
     height: 250,
     resizeMode: 'contain',
   },
-  modalProductName: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 15,
+  swiggyModalContent: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '92%',
+    paddingTop: 16,
+    overflow: 'hidden',
+  },
+  swiggyHeaderSection: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  swiggyProductName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  swiggyProductDesc: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  swiggyFilterSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#f8fafc',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  swiggyFilterLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  swiggyFilterScroll: {
+    flexDirection: 'row',
+  },
+  swiggyFilterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    marginRight: 8,
+  },
+  swiggyFilterChipActive: {
+    backgroundColor: '#16a34a',
+    borderColor: '#16a34a',
+  },
+  swiggyFilterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  swiggyFilterChipTextActive: {
+    color: '#ffffff',
+  },
+  swiggyOptionsHeaderRow: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 8,
+  },
+  swiggyOptionsSectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  swiggyOptionsSectionSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  swiggyOptionsList: {
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  swiggyOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  swiggyOptionCardActive: {
+    borderColor: '#86efac',
+    backgroundColor: '#f0fdf4',
+  },
+  swiggyOptionInfoCol: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  swiggyOptionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 4,
+  },
+  swiggyBadgesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 6,
+  },
+  swiggyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginRight: 6,
+    marginBottom: 4,
+  },
+  swiggyBadgeName: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  swiggyBadgeVal: {
+    fontSize: 11,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  swiggyPriceStockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  swiggyOptionPriceText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginRight: 8,
+  },
+  swiggyStockText: {
+    fontSize: 12,
+    color: '#16a34a',
+    fontWeight: '600',
+  },
+  swiggyStockOutText: {
+    color: '#dc2626',
+  },
+  swiggyActionCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 100,
+  },
+  swiggyAddBtn: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#16a34a',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 90,
+  },
+  swiggyAddBtnDisabled: {
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f1f5f9',
+  },
+  swiggyAddBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#16a34a',
+  },
+  swiggyAddBtnTextDisabled: {
+    color: '#94a3b8',
+    fontSize: 11,
+  },
+  swiggyStepperBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16a34a',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    minWidth: 96,
+    justifyContent: 'space-between',
+    elevation: 2,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+  },
+  swiggyStepperBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swiggyStepperQtyText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+    paddingHorizontal: 8,
+  },
+  swiggyBtnDisabled: {
+    opacity: 0.5,
+  },
+  swiggyModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 8,
+  },
+  swiggyFooterInfo: {
+    flex: 1,
+  },
+  swiggyFooterItemsCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  swiggyFooterTotalPrice: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  swiggyFooterActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  swiggyDoneBtn: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginRight: 8,
+  },
+  swiggyDoneBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  swiggyViewCartBtn: {
+    backgroundColor: '#16a34a',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  swiggyViewCartBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginRight: 4,
   },
   labelText: {
     fontSize: 12,

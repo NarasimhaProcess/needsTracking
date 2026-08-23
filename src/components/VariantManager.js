@@ -1,131 +1,382 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  Button,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 
-const VariantManager = ({ product, onVariantsChange }) => {
-  const [variants, setVariants] = useState([]);
-
-  useEffect(() => {
-    setVariants(product?.product_variants || []);
-  }, [product]);
-
-  const handleVariantChange = (newVariants) => {
-    setVariants(newVariants);
-    onVariantsChange(newVariants);
-  };
+const VariantManager = ({ variants = [], onVariantsChange, product, baseAmount = '', unit = '' }) => {
+  const currentVariants = Array.isArray(variants) ? variants : (product?.product_variants || []);
 
   const handleAddVariant = () => {
     const newVariant = {
-      name: 'New Variant',
-      variant_options: [],
+      name: '',
+      variant_options: [{ value: '', price: baseAmount || '', quantity: '100' }],
     };
-    handleVariantChange([...variants, newVariant]);
+    onVariantsChange([...currentVariants, newVariant]);
   };
 
-  const handleDeleteVariant = (index) => {
-    const newVariants = [...variants];
-    newVariants.splice(index, 1);
-    handleVariantChange(newVariants);
+  const handleDeleteVariant = (vIndex) => {
+    const updated = currentVariants.filter((_, i) => i !== vIndex);
+    onVariantsChange(updated);
   };
 
-  const handleAddOption = (variantIndex) => {
-    const newVariants = [...variants];
-    newVariants[variantIndex].variant_options.push({ value: 'New Option' });
-    handleVariantChange(newVariants);
+  const handleVariantNameChange = (vIndex, text) => {
+    const updated = currentVariants.map((variant, i) => {
+      if (i !== vIndex) return variant;
+      return { ...variant, name: text };
+    });
+    onVariantsChange(updated);
   };
 
-  const handleDeleteOption = (variantIndex, optionIndex) => {
-    const newVariants = [...variants];
-    newVariants[variantIndex].variant_options.splice(optionIndex, 1);
-    handleVariantChange(newVariants);
+  const handleAddOption = (vIndex) => {
+    const updated = currentVariants.map((variant, i) => {
+      if (i !== vIndex) return variant;
+      const opts = variant.variant_options || [];
+      return {
+        ...variant,
+        variant_options: [...opts, { value: '', price: baseAmount || '', quantity: '100' }],
+      };
+    });
+    onVariantsChange(updated);
+  };
+
+  const handleOptionFieldChange = (vIndex, oIndex, field, text) => {
+    const updated = currentVariants.map((variant, i) => {
+      if (i !== vIndex) return variant;
+      const opts = (variant.variant_options || []).map((opt, oi) => {
+        if (oi !== oIndex) return opt;
+        return { ...opt, [field]: text };
+      });
+      return { ...variant, variant_options: opts };
+    });
+    onVariantsChange(updated);
+  };
+
+  const handleDeleteOption = (vIndex, oIndex) => {
+    const updated = currentVariants.map((variant, i) => {
+      if (i !== vIndex) return variant;
+      const opts = (variant.variant_options || []).filter((_, oi) => oi !== oIndex);
+      return { ...variant, variant_options: opts };
+    });
+    onVariantsChange(updated);
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Product Variants</Text>
-      {variants.map((variant, vIndex) => (
-        <View key={vIndex} style={styles.variantContainer}>
-          <View style={styles.variantHeader}>
-            <TextInput
-              style={styles.variantName}
-              value={variant.name}
-              onChangeText={(text) => {
-                const newVariants = [...variants];
-                newVariants[vIndex].name = text;
-                handleVariantChange(newVariants);
-              }}
-            />
-            <TouchableOpacity onPress={() => handleDeleteVariant(vIndex)}>
-              <Icon name="trash" size={20} color="red" />
-            </TouchableOpacity>
-          </View>
-          {variant.variant_options.map((option, oIndex) => (
-            <View key={oIndex} style={styles.optionContainer}>
-              <TextInput
-                style={styles.optionValue}
-                value={option.value}
-                onChangeText={(text) => {
-                  const newVariants = [...variants];
-                  newVariants[vIndex].variant_options[oIndex].value = text;
-                  handleVariantChange(newVariants);
-                }}
-              />
-              <TouchableOpacity onPress={() => handleDeleteOption(vIndex, oIndex)}>
-                <Icon name="trash-o" size={20} color="#555" />
+      <View style={styles.headerRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Product Variants, Options & Prices</Text>
+          <Text style={styles.subtitle}>
+            Add variants (e.g. Size, Weight) and set their option names, prices, and stock in one place.
+          </Text>
+        </View>
+      </View>
+
+      {currentVariants.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Icon name="tags" size={24} color="#888" style={{ marginBottom: 6 }} />
+          <Text style={styles.emptyText}>No variants added yet</Text>
+          <Text style={styles.emptySubText}>
+            Tap below to add options like Size (Small, Medium) or Weight (500g, 1kg) with individual prices.
+          </Text>
+        </View>
+      ) : (
+        currentVariants.map((variant, vIndex) => (
+          <View key={vIndex} style={styles.variantCard}>
+            <View style={styles.variantCardHeader}>
+              <View style={styles.variantNumberBadge}>
+                <Text style={styles.variantNumberText}>Variant #{vIndex + 1}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.deleteVariantBtn}
+                onPress={() => handleDeleteVariant(vIndex)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Icon name="trash" size={16} color="#E53935" />
+                <Text style={styles.deleteVariantText}>Delete Variant</Text>
               </TouchableOpacity>
             </View>
-          ))}
-          <Button title="Add Option" onPress={() => handleAddOption(vIndex)} />
-        </View>
-      ))}
-      <Button title="Add Variant" onPress={handleAddVariant} />
+
+            <Text style={styles.inputLabel}>Variant Name (e.g., Size, Weight, Color)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., Size, Weight, Flavor, Pack Size"
+              placeholderTextColor="#999"
+              value={variant.name}
+              onChangeText={(text) => handleVariantNameChange(vIndex, text)}
+            />
+
+            <View style={styles.optionsSection}>
+              <Text style={styles.optionsSectionTitle}>
+                Options & Pricing for {variant.name ? `"${variant.name}"` : `Variant #${vIndex + 1}`}
+              </Text>
+
+              {(variant.variant_options || []).map((option, oIndex) => (
+                <View key={oIndex} style={styles.optionCard}>
+                  <View style={styles.optionHeaderRow}>
+                    <Icon name="tag" size={14} color="#007AFF" style={styles.optionIcon} />
+                    <TextInput
+                      style={styles.optionNameInput}
+                      placeholder={`Option ${oIndex + 1} (e.g. ${oIndex === 0 ? 'Small, 500g, Red' : 'Medium, 1kg, Blue'})`}
+                      placeholderTextColor="#aaa"
+                      value={option.value}
+                      onChangeText={(text) => handleOptionFieldChange(vIndex, oIndex, 'value', text)}
+                    />
+                    <TouchableOpacity
+                      style={styles.deleteOptionBtn}
+                      onPress={() => handleDeleteOption(vIndex, oIndex)}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Icon name="trash-o" size={18} color="#dc3545" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.optionPricingRow}>
+                    <View style={styles.optionPricingField}>
+                      <Text style={styles.optionFieldLabel}>Price (₹)</Text>
+                      <TextInput
+                        style={styles.optionPriceInput}
+                        placeholder={baseAmount ? baseAmount.toString() : "0.00"}
+                        placeholderTextColor="#aaa"
+                        value={option.price !== undefined && option.price !== null ? option.price.toString() : ''}
+                        onChangeText={(text) => handleOptionFieldChange(vIndex, oIndex, 'price', text)}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View style={styles.optionPricingField}>
+                      <Text style={styles.optionFieldLabel}>Stock Qty ({unit || 'units'})</Text>
+                      <TextInput
+                        style={styles.optionPriceInput}
+                        placeholder="100"
+                        placeholderTextColor="#aaa"
+                        value={option.quantity !== undefined && option.quantity !== null ? option.quantity.toString() : ''}
+                        onChangeText={(text) => handleOptionFieldChange(vIndex, oIndex, 'quantity', text)}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                  </View>
+                </View>
+              ))}
+
+              <TouchableOpacity
+                style={styles.addOptionBtn}
+                onPress={() => handleAddOption(vIndex)}
+              >
+                <Icon name="plus" size={12} color="#007AFF" style={{ marginRight: 6 }} />
+                <Text style={styles.addOptionText}>Add Option Value</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+
+      <TouchableOpacity style={styles.addVariantBtn} onPress={handleAddVariant}>
+        <Icon name="plus-circle" size={16} color="#fff" style={{ marginRight: 8 }} />
+        <Text style={styles.addVariantBtnText}>Add Another Variant</Text>
+      </TouchableOpacity>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: 20,
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  headerRow: {
+    marginBottom: 10,
   },
   title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  variantContainer: {
-    marginBottom: 15,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 5,
-  },
-  variantHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  variantName: {
     fontSize: 16,
     fontWeight: 'bold',
-    flex: 1,
+    color: '#212529',
   },
-  optionContainer: {
+  subtitle: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginTop: 2,
+  },
+  emptyContainer: {
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8f9fa',
+    marginBottom: 10,
+  },
+  emptyText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#495057',
+  },
+  emptySubText: {
+    fontSize: 12,
+    color: '#868e96',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  variantCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  variantCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginLeft: 20,
-    marginBottom: 5,
+    marginBottom: 8,
   },
-  optionValue: {
+  variantNumberBadge: {
+    backgroundColor: '#e3f2fd',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  variantNumberText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0d47a1',
+  },
+  deleteVariantBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 4,
+  },
+  deleteVariantText: {
+    fontSize: 12,
+    color: '#E53935',
+    marginLeft: 4,
+    fontWeight: '600',
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  input: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#212529',
+    marginBottom: 10,
+  },
+  optionsSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 6,
+    padding: 10,
+    marginTop: 4,
+  },
+  optionsSectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#495057',
+    marginBottom: 8,
+  },
+  optionCard: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 8,
+  },
+  optionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  optionIcon: {
+    marginRight: 8,
+  },
+  optionNameInput: {
     flex: 1,
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 13,
+    color: '#212529',
+  },
+  deleteOptionBtn: {
+    padding: 4,
+    marginLeft: 6,
+  },
+  optionPricingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingLeft: 22,
+  },
+  optionPricingField: {
+    flex: 1,
+    marginRight: 8,
+  },
+  optionFieldLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6c757d',
+    marginBottom: 2,
+  },
+  optionPriceInput: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 12,
+    color: '#212529',
+  },
+  addOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 4,
+    backgroundColor: '#e7f3ff',
+    marginTop: 2,
+  },
+  addOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  addVariantBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 10,
+    borderRadius: 6,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  addVariantBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

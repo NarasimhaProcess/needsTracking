@@ -84,11 +84,20 @@ const TopProductsScreen = ({ navigation, route }) => {
     if (combos.length === 1) {
       return combos[0];
     }
-    const combinationString = Object.entries(selectedVariants)
-      .map(([key, value]) => `${key}:${value}`)
+    const sortedKeys = Object.keys(selectedVariants).sort();
+    const combinationString = sortedKeys
+      .map((key) => `${key}:${selectedVariants[key]}`)
       .join(',');
+    const normalizedCombinationString = combinationString.replace(/\s/g, '').toLowerCase();
+
     const found = combos.find(
-      (c) => c.combination_string === combinationString
+      (c) => {
+        if (c.combination_string) {
+          const normalizedDbString = c.combination_string.replace(/\s/g, '').toLowerCase();
+          return normalizedDbString === normalizedCombinationString;
+        }
+        return false;
+      }
     );
     return found || combos[0];
   };
