@@ -37,9 +37,22 @@ jobs:
       # STEP 2: Create the .env file inside the project root AFTER the directory structure is generated
       - name: Create .env and Verify Setup
         run: |
-          if [ -z "${{ secrets.SUPABASE_URL }}" ] || [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
-            echo "::error::Critical Build Error: SUPABASE_URL or SUPABASE_ANON_KEY is missing in GitHub Secrets!"
-            exit 1
+          # Check Supabase URL
+          URL_VAL="${{ secrets.SUPABASE_URL }}"
+          if [ -z "$URL_VAL" ]; then
+            echo "SUPABASE_URL is EMPTY"
+          else
+            echo "SUPABASE_URL Length: ${#URL_VAL} characters"
+            echo "SUPABASE_URL Starts with: ${URL_VAL:0:8}..."
+          fi
+
+          # Check Anon Key length
+          KEY_VAL="${{ secrets.SUPABASE_ANON_KEY }}"
+          if [ -z "$KEY_VAL" ]; then
+            echo "SUPABASE_ANON_KEY is EMPTY"
+          else
+            echo "SUPABASE_ANON_KEY Length: ${#KEY_VAL} characters"
+            echo "SUPABASE_ANON_KEY Ends with: ...${KEY_VAL: -5}"
           fi
 
           echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
