@@ -2,8 +2,8 @@ import 'dotenv/config';
 
 export default {
   "expo": {
-    "name": "NeedsTracking",
-    "slug": "needstracking",
+    "name": "Needs Tracker",
+    "slug": "needs-tracker",
     "scheme": "needstracking",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -82,7 +82,7 @@ export default {
       "expo-web-browser"
     ],
     "updates": {
-      "url": "https://u.expo.dev/f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"
+      "url": "https://u.expo.dev/3ce03f97-e109-4f80-a0ba-b0fa19f6ad0b"
     },
     "runtimeVersion": {
       "policy": "appVersion"
@@ -95,7 +95,7 @@ export default {
       "SUPABASE_URL": process.env.EXPO_PUBLIC_SUPABASE_URL,
       "SUPABASE_ANON_KEY": process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
       "eas": {
-        "projectId": "f07d0da1-dedd-4f3f-9739-ab2a1cbbf86f"
+        "projectId": "3ce03f97-e109-4f80-a0ba-b0fa19f6ad0b"
       }
     }
   }
