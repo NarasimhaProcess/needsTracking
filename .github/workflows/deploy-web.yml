@@ -1,73 +1,86 @@
-name: Deploy Web App to GitHub Pages
+name: Build Android APK - Gradle
 
 on:
-  workflow_dispatch: # Allows manual runs only. No automatic triggers on push.
+  workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-      
-      - name: Setup Node.js
+
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
-      
-      # STEP 1: Safely inject environment secrets from GitHub Settings
-      - name: Create .env file with Secrets
-        run: |
-          cat > .env << EOF
-          EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
-          EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}
-          EOF
-          echo "✅ .env file created with EXPO_PUBLIC prefixes"
-      
+          cache: npm
+
       - name: Install dependencies
         run: npm ci
-      
-      # STEP 2: Compile the project into static web assets
-      - name: Export web build
-        run: npx expo export --platform web
-      
-      - name: Build web app
-        run: npm run build --if-present
-      
-      # STEP 3: Map output folder (dist) and prepare it for GitHub Pages
-      - name: Generate dist folder for GitHub Pages
-        run: |
-          if [ ! -d "dist" ]; then
-            mkdir -p dist
-            if [ -d "web-build" ]; then
-              cp -r web-build/* dist/
-            elif [ -d ".expo/web" ]; then
-              cp -r .expo/web/* dist/
-            fi
-          fi
-          touch dist/.nojekyll
-          echo "✅ dist folder prepared"
-      
-      # STEP 4: Push compiled code directly to your isolated gh-pages branch
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
-          cname: needstracking.com
-      
-      - name: Generate Deploy Summary
-        if: always()
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      # STEP 1: Generate native android/ folders FIRST
+      - name: Generate Android project
         run: |
-          echo "## 🌐 Web Deployment Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Status**: ✅ Deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
-          echo "- Branch: main" >> $GITHUB_STEP_SUMMARY
-          echo "- Published URL: https://github.io" >> $GITHUB_STEP_SUMMARY
-          echo "- Custom Domain: needstracking.com" >> $GITHUB_STEP_SUMMARY
+          npx expo prebuild --platform android --non-interactive
+
+      # STEP 2: Create the .env file inside the project root AFTER prebuild
+      - name: Create .env and Verify Setup
+        run: |
+          URL_VAL="${{ secrets.SUPABASE_URL }}"
+          if [ -z "$URL_VAL" ]; then
+            echo "::error::Critical Build Error: SUPABASE_URL is missing in GitHub Secrets!"
+            exit 1
+          fi
+          
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
+          echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
+          
+          echo "=== Verifying .env contents for debugging ==="
+          cat .env
+
+      # FIX STEP 3: Create assets folder and export the JS bundle into the native path Gradle expects
+      - name: Force Package Production JS Bundle
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx expo export --platform android --output-dir android/app/src/main/assets
+          
+          # Rename the bundle so the native Android wrapper can resolve the script entrypoint
+          cp android/app/src/main/assets/user-bundle.js android/app/src/main/assets/index.android.bundle
+
+      - name: Create Android local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+          echo "org.gradle.jvmargs=-Xmx4096m" >> android/local.properties
+          echo "org.gradle.parallel=true" >> android/local.properties
+
+      # STEP 4: Compile the standalone production APK
+      - name: Build Android APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew clean assembleRelease
+
+      - name: Copy APK
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             needsTracking-development-release.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: needsTracking-development-apk
+          path: needsTracking-development-release.apk
+          retention-days: 30
