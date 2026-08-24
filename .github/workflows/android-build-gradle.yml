@@ -3,9 +3,6 @@ name: Build Android APK - Gradle
 on:
   workflow_dispatch:
 
-permissions: 
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,25 +26,40 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # FIX: Upgraded from @v3 to @v4 to support Node 24 and eliminate warnings
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # STEP 1: Generate native android/ folders FIRST
+      - name: Generate Android project
+        run: |
+          npx expo prebuild --platform android --non-interactive
+
+      # STEP 2: Create the .env file inside the project root AFTER the directory structure is generated
       - name: Create .env and Verify Setup
         run: |
-          # FIX 1: Expo requires the EXPO_PUBLIC_ prefix to bundle variables inside a built app
+          if [ -z "${{ secrets.SUPABASE_URL }}" ] || [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
+            echo "::error::Critical Build Error: SUPABASE_URL or SUPABASE_ANON_KEY is missing in GitHub Secrets!"
+            exit 1
+          fi
+
           echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
           echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
           
-          # Print the structure to logs for debugging info (secrets will be safely masked as ***)
           echo "=== Verifying .env contents for debugging ==="
           cat .env
 
-      - name: Generate Android project
+      # STEP 3: Manually bundle JavaScript assets with embedded secrets into the native resource path
+      - name: Force Package Production JS Bundle
         run: |
-          npx expo prebuild --platform android --non-interactive
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
 
       - name: Create Android local.properties
         run: |
@@ -55,16 +67,15 @@ jobs:
           echo "org.gradle.jvmargs=-Xmx4096m" >> android/local.properties
           echo "org.gradle.parallel=true" >> android/local.properties
 
+      # STEP 4: Compile the standalone production APK
       - name: Build Android APK
         run: |
           cd android
           chmod +x gradlew
-          # FIX 2: Switched to assembleRelease or forced bundling so the JS engine doesn't try to link to Metro
           ./gradlew clean assembleRelease
 
       - name: Copy APK
         run: |
-          # FIX 3: Point path to the production release output binary instead of debug wrapper
           cp android/app/build/outputs/apk/release/app-release.apk \
              needsTracking-development-release.apk
 
@@ -74,4 +85,3 @@ jobs:
           name: needsTracking-development-apk
           path: needsTracking-development-release.apk
           retention-days: 30
-          
