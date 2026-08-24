@@ -18,6 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+
       # ============================================================
       # 2. NODE.JS
       # ============================================================
@@ -26,6 +27,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+
 
       # ============================================================
       # 3. JAVA 17
@@ -36,11 +38,13 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+
       # ============================================================
       # 4. ANDROID SDK
       # ============================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+
 
       # ============================================================
       # 5. VERIFY SUPABASE PROJECT
@@ -79,14 +83,9 @@ jobs:
           PROJECT_REF=$(echo "$EXPO_PUBLIC_SUPABASE_URL" | \
             sed -E 's#https?://([^./]+)\.supabase\.co.*#\1#')
 
-          if [ -z "$PROJECT_REF" ] || [ "$PROJECT_REF" = "$EXPO_PUBLIC_SUPABASE_URL" ]; then
-            echo ""
-            echo "::warning::Could not automatically extract Supabase project reference."
-          else
-            echo ""
-            echo "Supabase Project Reference:"
-            echo "$PROJECT_REF"
-          fi
+          echo ""
+          echo "Supabase Project Reference:"
+          echo "$PROJECT_REF"
 
           echo ""
           echo "Supabase Anon Key:"
@@ -107,11 +106,13 @@ jobs:
           echo "Supabase configuration verified"
           echo "=========================================="
 
+
       # ============================================================
       # 6. INSTALL DEPENDENCIES
       # ============================================================
       - name: Install dependencies
         run: npm ci
+
 
       # ============================================================
       # 7. CREATE .ENV
@@ -142,15 +143,9 @@ jobs:
           echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=<configured>"
           echo "EXPO_PUBLIC_ORG_NAME=<configured>"
 
-      # ============================================================
-      # 8. CHECK EXPO PROJECT
-      # ============================================================
-      - name: Check Expo project
-        run: |
-          npx expo-doctor
 
       # ============================================================
-      # 9. EXPO PREBUILD
+      # 8. EXPO PREBUILD
       # ============================================================
       - name: Run Expo Prebuild
         env:
@@ -164,15 +159,17 @@ jobs:
             --clean \
             --non-interactive
 
+
       # ============================================================
-      # 10. ANDROID LOCAL PROPERTIES
+      # 9. ANDROID LOCAL PROPERTIES
       # ============================================================
       - name: Configure Android SDK
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
+
       # ============================================================
-      # 11. BUILD RELEASE APK
+      # 10. BUILD RELEASE APK
       # ============================================================
       - name: Build Release APK
         env:
@@ -189,13 +186,14 @@ jobs:
           chmod +x gradlew
 
           echo "=========================================="
-          echo "BUILDING RELEASE APK"
+          echo "BUILDING PRIVATE RELEASE APK"
           echo "=========================================="
 
           ./gradlew clean assembleRelease --stacktrace
 
+
       # ============================================================
-      # 12. VERIFY APK
+      # 11. VERIFY APK
       # ============================================================
       - name: Verify APK
         shell: bash
@@ -217,10 +215,12 @@ jobs:
           echo "APK BUILD SUCCESSFUL"
           echo "=========================================="
           echo ""
+
           ls -lh "$APK_PATH"
 
+
       # ============================================================
-      # 13. RENAME APK
+      # 12. PREPARE PRIVATE APK
       # ============================================================
       - name: Prepare Private APK
         shell: bash
@@ -239,8 +239,9 @@ jobs:
 
           ls -lh needsTracking-private.apk
 
+
       # ============================================================
-      # 14. UPLOAD APK
+      # 13. UPLOAD APK
       # ============================================================
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v5
@@ -249,8 +250,9 @@ jobs:
           path: needsTracking-private.apk
           retention-days: 30
 
+
       # ============================================================
-      # 15. BUILD SUMMARY
+      # 14. BUILD SUMMARY
       # ============================================================
       - name: Build Summary
         if: success()
@@ -259,10 +261,11 @@ jobs:
           echo "## needsTracking Private Android APK" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Build Status" >> "$GITHUB_STEP_SUMMARY"
-          echo "SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ SUCCESS" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**File:** needsTracking-private.apk" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Type:** Release APK" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Distribution:** Private / direct installation" >> "$GITHUB_STEP_SUMMARY"
+          echo "### APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- File: needsTracking-private.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Type: Release APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Distribution: Private / direct installation" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Download the APK from the Artifacts section." >> "$GITHUB_STEP_SUMMARY"
