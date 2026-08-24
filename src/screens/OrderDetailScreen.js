@@ -18,6 +18,7 @@ import { supabase, getOrderById, updateOrderStatus } from '../services/supabase'
 import { printReceipt } from '../services/printerService';
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
+import PrinterSettingsModal from '../components/PrinterSettingsModal';
 
 const OrderDetailScreen = ({ navigation, route }) => {
   const { orderId } = route?.params || {};
@@ -27,6 +28,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
   const [partnerCoords, setPartnerCoords] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState(null);
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   const webViewRef = useRef(null);
 
   const fetchOrderDetails = async () => {
@@ -379,6 +381,9 @@ const OrderDetailScreen = ({ navigation, route }) => {
           <TouchableOpacity style={{ marginRight: 16 }} onPress={() => printReceipt(order)}>
             <Icon name="print" size={22} color="#1E293B" />
           </TouchableOpacity>
+          <TouchableOpacity style={{ marginRight: 16 }} onPress={() => setShowPrinterSettings(true)}>
+            <Icon name="cog" size={22} color="#64748B" />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Icon name="times" size={22} color="#1E293B" />
           </TouchableOpacity>
@@ -506,6 +511,11 @@ const OrderDetailScreen = ({ navigation, route }) => {
           <Text style={styles.noItemsText}>No items in this order.</Text>
         )}
       </ScrollView>
+
+      <PrinterSettingsModal
+        visible={showPrinterSettings}
+        onClose={() => setShowPrinterSettings(false)}
+      />
     </View>
   );
 };

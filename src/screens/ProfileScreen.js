@@ -18,6 +18,7 @@ import * as Location from 'expo-location';
 import LeafletMap from '../components/LeafletMap'; // Assuming you have this component
 import QRCode from 'react-native-qrcode-svg';
 import * as ImagePicker from 'expo-image-picker';
+import PrinterSettingsModal from '../components/PrinterSettingsModal';
 
 const ProfileScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
@@ -33,6 +34,7 @@ const ProfileScreen = ({ navigation }) => {
   const [latitude, setLatitude] = useState(null);
   const [longitude, setLongitude] = useState(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   const [markerLocation, setMarkerLocation] = useState(null);
   const [mapInitialRegion, setMapInitialRegion] = useState(null);
   const [upiQrCodeUrl, setUpiQrCodeUrl] = useState(null);
@@ -337,6 +339,10 @@ const ProfileScreen = ({ navigation }) => {
         <Text style={styles.buttonText}>Update Profile</Text>
       </TouchableOpacity>
 
+      <TouchableOpacity style={[styles.button, styles.printerButton]} onPress={() => setShowPrinterSettings(true)}>
+        <Text style={styles.buttonText}>Thermal Printer Settings</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={styles.button} onPress={() => schedulePushNotification("Test Title", "This is a test notification")}>
         <Text style={styles.buttonText}>Send Test Notification</Text>
       </TouchableOpacity>
@@ -350,6 +356,12 @@ const ProfileScreen = ({ navigation }) => {
       <TouchableOpacity style={[styles.button, styles.logoutButton]} onPress={handleLogout}>
         <Text style={styles.buttonText}>Logout</Text>
       </TouchableOpacity>
+
+      {/* Printer Settings Modal */}
+      <PrinterSettingsModal
+        visible={showPrinterSettings}
+        onClose={() => setShowPrinterSettings(false)}
+      />
 
       {/* Location Picker Modal */}
       <Modal
@@ -435,6 +447,9 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  printerButton: {
+    backgroundColor: '#0284C7',
   },
   logoutButton: {
     backgroundColor: '#dc3545',

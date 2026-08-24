@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,11 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { printReceipt } from '../services/printerService';
+import PrinterSettingsModal from '../components/PrinterSettingsModal';
 
 const OrderConfirmationScreen = ({ navigation, route }) => {
   const { order, customerId } = route?.params || {};
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false);
 
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>
@@ -23,22 +25,37 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
       <View style={styles.container}>
         <Icon name="check-circle" size={80} color="green" style={styles.successIcon} />
         <Text style={styles.title}>Thank You for Your Order!</Text>
-        <Text style={styles.orderId}>Order ID: {order.id}</Text>
-        <Text style={styles.totalAmount}>Total Amount: ₹{order.total_amount}</Text>
+        <Text style={styles.orderId}>Order ID: {order?.id || 'N/A'}</Text>
+        <Text style={styles.totalAmount}>Total Amount: ₹{order?.total_amount || '0.00'}</Text>
 
-        <TouchableOpacity
-          style={styles.printButton}
-          onPress={() => printReceipt(order)}
-        >
-          <Icon name="print" size={20} color="#fff" />
-          <Text style={styles.printButtonText}>Print Receipt</Text>
-        </TouchableOpacity>
+        <View style={styles.printActionRow}>
+          <TouchableOpacity
+            style={styles.printButton}
+            onPress={() => printReceipt(order)}
+          >
+            <Icon name="print" size={20} color="#fff" />
+            <Text style={styles.printButtonText}>Print Receipt</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsIconBtn}
+            onPress={() => setShowPrinterSettings(true)}
+            accessibilityLabel="Printer Settings"
+          >
+            <Icon name="cog" size={22} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
         
         <View style={styles.navButtons}>
             <Button title="Continue Shopping" onPress={() => navigation.navigate('Catalog', { customerId })} />
             <Button title="View My Orders" onPress={() => navigation.navigate('OrderList')} />
         </View>
       </View>
+
+      <PrinterSettingsModal
+        visible={showPrinterSettings}
+        onClose={() => setShowPrinterSettings(false)}
+      />
     </View>
   );
 };
@@ -78,15 +95,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 30,
   },
+  printActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   printButton: {
     flexDirection: 'row',
     backgroundColor: '#007AFF',
     paddingVertical: 12,
-    paddingHorizontal: 30,
+    paddingHorizontal: 24,
     borderRadius: 8,
     alignItems: 'center',
-    marginBottom: 20,
     elevation: 3,
+  },
+  settingsIconBtn: {
+    marginLeft: 12,
+    padding: 12,
+    backgroundColor: '#F0F7FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
   },
   printButtonText: {
     color: '#fff',

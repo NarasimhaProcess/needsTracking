@@ -21,7 +21,8 @@ export default {
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "NeedsTracking needs access to location to track your movements for location history.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "NeedsTracking needs access to location to track your movements even when the app is in background for continuous tracking.",
-        "NSLocationAlwaysUsageDescription": "NeedsTracking needs access to location to track your movements in background for continuous location monitoring.",
+        "NSBluetoothAlwaysUsageDescription": "NeedsTracking needs access to Bluetooth to discover and connect to Bluetooth thermal receipt printers.",
+        "NSBluetoothPeripheralUsageDescription": "NeedsTracking needs access to Bluetooth to connect to thermal receipt printers.",
         "UIBackgroundModes": [
           "location",
           "background-processing"
@@ -41,7 +42,11 @@ export default {
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.WAKE_LOCK",
         "android.permission.RECORD_AUDIO",
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN"
       ],
       "package": "com.narasimhaexpo.needstrackingmobile",
       "config": {
