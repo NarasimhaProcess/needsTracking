@@ -51,14 +51,15 @@ jobs:
           echo "=== Verifying .env contents for debugging ==="
           cat .env
 
-      # FIX STEP 3: Create assets folder and export the JS bundle into the native path Gradle expects
+      # FIX STEP 3: Create assets folder, export bundle, and route the correct index.js path
       - name: Force Package Production JS Bundle
         run: |
           mkdir -p android/app/src/main/assets
           npx expo export --platform android --output-dir android/app/src/main/assets
           
-          # Rename the bundle so the native Android wrapper can resolve the script entrypoint
-          cp android/app/src/main/assets/user-bundle.js android/app/src/main/assets/index.android.bundle
+          # Copy and rename the actual Expo index.js bundle so the native wrapper can read it
+          cp android/app/src/main/assets/_expo/index.js android/app/src/main/assets/index.android.bundle
+
 
       - name: Create Android local.properties
         run: |
