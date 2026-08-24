@@ -1,10 +1,7 @@
 name: Deploy Web App to GitHub Pages
 
 on:
-  push:
-    branches:
-      - master
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual runs only. No automatic triggers on push.
 
 jobs:
   build-and-deploy:
@@ -20,25 +17,28 @@ jobs:
           node-version: '18'
           cache: 'npm'
       
+      # STEP 1: Safely inject environment secrets from GitHub Settings
       - name: Create .env file with Secrets
         run: |
           cat > .env << EOF
-          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
-          ORG_NAME=${{ secrets.ORG_NAME }}
+          EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}
           EOF
-          echo "✅ .env file created"
+          echo "✅ .env file created with EXPO_PUBLIC prefixes"
       
       - name: Install dependencies
         run: npm ci
       
+      # STEP 2: Compile the project into static web assets
       - name: Export web build
         run: npx expo export --platform web
       
       - name: Build web app
         run: npm run build --if-present
       
+      # STEP 3: Map output folder (dist) and prepare it for GitHub Pages
       - name: Generate dist folder for GitHub Pages
         run: |
           if [ ! -d "dist" ]; then
@@ -52,6 +52,7 @@ jobs:
           touch dist/.nojekyll
           echo "✅ dist folder prepared"
       
+      # STEP 4: Push compiled code directly to your isolated gh-pages branch
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
@@ -68,9 +69,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
           echo "- Branch: main" >> $GITHUB_STEP_SUMMARY
-          echo "- Published URL: https://NarasimhaProcess.github.io/needsTracking/" >> $GITHUB_STEP_SUMMARY
+          echo "- Published URL: https://github.io" >> $GITHUB_STEP_SUMMARY
           echo "- Custom Domain: needstracking.com" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### What was deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- Build directory: \`dist/\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Trigger: Push to main branch" >> $GITHUB_STEP_SUMMARY
