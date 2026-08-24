@@ -49,6 +49,12 @@ const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props 
       source={source}
       onMessage={onMessage}
       style={style}
+      originWhitelist={['*']}
+      javaScriptEnabled={true}
+      domStorageEnabled={true}
+      mixedContentMode="always"
+      allowFileAccess={true}
+      allowUniversalAccessFromFileURLs={true}
       {...props}
     />
   );
