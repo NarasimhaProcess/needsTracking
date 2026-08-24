@@ -1,4 +1,4 @@
-name: Build Android APK - Gradle
+name: Build Private Android APK
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Updated to match modern Expo bundler engines
+          node-version: '20'
           cache: npm
 
       - name: Install dependencies
@@ -23,73 +23,76 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      # STEP 1: Generate native android/ folders FIRST
-      - name: Generate Android project
+      # Create environment variables BEFORE Expo prebuild
+      - name: Create .env
         run: |
-          npx expo prebuild --platform android --non-interactive
-
-      # STEP 2: Create the .env file inside the project root AFTER prebuild
-      - name: Create .env and Verify Setup
-        run: |
-          URL_VAL="${{ secrets.SUPABASE_URL }}"
-          if [ -z "$URL_VAL" ]; then
+          if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
             echo "::error::Critical Build Error: SUPABASE_URL is missing in GitHub Secrets!"
             exit 1
           fi
-          
+
           echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
           echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
-          
-          echo "=== Verifying .env contents for debugging ==="
-          cat .env
 
-      # STEP 3: Dynamic discovery of the JavaScript bundle file
-      - name: Force Package Production JS Bundle
+          echo "Environment file created successfully."
+
+      # Generate native Android project
+      - name: Generate Android project
         run: |
-          mkdir -p android/app/src/main/assets
-          npx expo export --platform android --output-dir export-temp
-          
-          # Use find to locate any .js file generated in the export directory and clone it to assets
-          FOUND_BUNDLE=$(find export-temp -name "*.js" | head -n 1)
-          
-          if [ -z "$FOUND_BUNDLE" ]; then
-            echo "::error::Failed to locate an exported JavaScript bundle!"
-            exit 1
-          fi
-          
-          echo "Found compiled bundle at: $FOUND_BUNDLE"
-          cp "$FOUND_BUNDLE" android/app/src/main/assets/index.android.bundle
-          echo "✅ Successfully staged index.android.bundle for Gradle compilation"
+          npx expo prebuild \
+            --platform android \
+            --non-interactive \
+            --clean
 
+      # Configure Android SDK location
       - name: Create Android local.properties
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-          echo "org.gradle.jvmargs=-Xmx4096m" >> android/local.properties
-          echo "org.gradle.parallel=true" >> android/local.properties
 
-      # STEP 4: Compile the standalone production APK
-      - name: Build Android APK
+      # Build production APK.
+      # Expo/React Native Gradle integration creates the JS bundle automatically.
+      - name: Build Release APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew clean assembleRelease
 
-      - name: Copy APK
+      # Verify APK exists
+      - name: Verify APK
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::Release APK was not generated!"
+            echo "Searching for generated APK files..."
+            find android -name "*.apk" -type f
+            exit 1
+          fi
+
+          echo "✅ APK successfully generated:"
+          ls -lh "$APK_PATH"
+
+      # Rename APK for private use
+      - name: Prepare APK
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk \
-             needsTracking-development-release.apk
+             needsTracking-private.apk
 
+          echo "✅ Final APK:"
+          ls -lh needsTracking-private.apk
+
+      # Upload APK to GitHub Actions
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: needsTracking-development-apk
-          path: needsTracking-development-release.apk
+          name: needsTracking-private-apk
+          path: needsTracking-private.apk
           retention-days: 30
