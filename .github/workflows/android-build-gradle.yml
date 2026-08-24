@@ -1,98 +1,291 @@
+
 name: Build Private Android APK
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+
+      # ============================================================
+      # 2. NODE.JS
+      # ============================================================
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      # ============================================================
+      # 3. JAVA 17
+      # ============================================================
+      - name: Setup Java JDK
+        uses: actions/setup-java@v5
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
 
+
+      # ============================================================
+      # 4. ANDROID SDK
+      # ============================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      # Create environment variables BEFORE Expo prebuild
-      - name: Create .env
+
+      # ============================================================
+      # 5. VERIFY SUPABASE PROJECT
+      # ============================================================
+      - name: Verify Supabase Project
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.ORG_NAME }}
+        shell: bash
         run: |
-          if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
-            echo "::error::Critical Build Error: SUPABASE_URL is missing in GitHub Secrets!"
+          set -e
+
+          if [ -z "$EXPO_PUBLIC_SUPABASE_URL" ]; then
+            echo "::error::SUPABASE_URL is missing from GitHub Secrets!"
             exit 1
           fi
 
-          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
-          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
-          echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
-          echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
+          if [ -z "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE_ANON_KEY is missing from GitHub Secrets!"
+            exit 1
+          fi
 
-          echo "Environment file created successfully."
+          echo "=========================================="
+          echo "🔎 SUPABASE BUILD CONFIGURATION"
+          echo "=========================================="
 
-      # Generate native Android project
-      - name: Generate Android project
+          echo ""
+          echo "Organization:"
+          echo "${EXPO_PUBLIC_ORG_NAME:-Not configured}"
+
+          echo ""
+          echo "Supabase URL:"
+          echo "$EXPO_PUBLIC_SUPABASE_URL"
+
+          # Extract project reference from:
+          # https://PROJECT_REF.supabase.co
+          PROJECT_REF=$(echo "$EXPO_PUBLIC_SUPABASE_URL" | \
+            sed -E 's#https?://([^./]+)\.supabase\.co.*#\1#')
+
+          if [ -z "$PROJECT_REF" ] || [ "$PROJECT_REF" = "$EXPO_PUBLIC_SUPABASE_URL" ]; then
+            echo ""
+            echo "::warning::Could not automatically extract Supabase project reference."
+          else
+            echo ""
+            echo "Supabase Project Reference:"
+            echo "$PROJECT_REF"
+          fi
+
+          echo ""
+          echo "Supabase Anon Key:"
+          KEY_LENGTH=${#EXPO_PUBLIC_SUPABASE_ANON_KEY}
+
+          if [ "$KEY_LENGTH" -gt 12 ]; then
+            echo "${EXPO_PUBLIC_SUPABASE_ANON_KEY:0:6}********${EXPO_PUBLIC_SUPABASE_ANON_KEY: -6}"
+          else
+            echo "********"
+          fi
+
+          echo ""
+          echo "Anon Key Length:"
+          echo "$KEY_LENGTH characters"
+
+          echo ""
+          echo "=========================================="
+          echo "✅ Supabase configuration verified"
+          echo "=========================================="
+
+
+      # ============================================================
+      # 6. INSTALL DEPENDENCIES
+      # ============================================================
+      - name: Install dependencies
+        run: npm ci
+
+
+      # ============================================================
+      # 7. CREATE .ENV
+      # ============================================================
+      - name: Create .env for Android build
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.ORG_NAME }}
+        shell: bash
+        run: |
+          set -e
+
+          cat > .env << EOF
+          EXPO_PUBLIC_SUPABASE_URL=$EXPO_PUBLIC_SUPABASE_URL
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=$EXPO_PUBLIC_SUPABASE_ANON_KEY
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+          EXPO_PUBLIC_ORG_NAME=$EXPO_PUBLIC_ORG_NAME
+          EOF
+
+          echo "=========================================="
+          echo "✅ .env file created"
+          echo "=========================================="
+
+          echo ""
+          echo "Configured variables:"
+
+          echo "EXPO_PUBLIC_SUPABASE_URL=<configured>"
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=<configured>"
+          echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=<configured>"
+          echo "EXPO_PUBLIC_ORG_NAME=<configured>"
+
+
+      # ============================================================
+      # 8. CHECK EXPO PROJECT
+      # ============================================================
+      - name: Check Expo project
+        run: |
+          npx expo doctor
+
+
+      # ============================================================
+      # 9. EXPO PREBUILD
+      # ============================================================
+      - name: Run Expo Prebuild
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.ORG_NAME }}
         run: |
           npx expo prebuild \
             --platform android \
-            --non-interactive \
-            --clean
+            --clean \
+            --non-interactive
 
-      # Configure Android SDK location
-      - name: Create Android local.properties
+
+      # ============================================================
+      # 10. ANDROID LOCAL PROPERTIES
+      # ============================================================
+      - name: Configure Android SDK
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
-      # Build production APK.
-      # Expo/React Native Gradle integration creates the JS bundle automatically.
-      - name: Build Release APK
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew clean assembleRelease
 
-      # Verify APK exists
-      - name: Verify APK
+      # ============================================================
+      # 11. BUILD RELEASE APK
+      # ============================================================
+      - name: Build Release APK
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.ORG_NAME }}
+        shell: bash
         run: |
+          set -e
+
+          cd android
+
+          chmod +x gradlew
+
+          echo "=========================================="
+          echo "📱 BUILDING RELEASE APK"
+          echo "=========================================="
+
+          ./gradlew clean assembleRelease --stacktrace
+
+
+      # ============================================================
+      # 12. VERIFY APK
+      # ============================================================
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
           APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
 
           if [ ! -f "$APK_PATH" ]; then
-            echo "::error::Release APK was not generated!"
-            echo "Searching for generated APK files..."
-            find android -name "*.apk" -type f
+            echo ""
+            echo "::error::APK was not generated!"
+            echo ""
+            echo "Searching for APK files..."
+            find android -type f -name "*.apk" -print
             exit 1
           fi
 
-          echo "✅ APK successfully generated:"
+          echo ""
+          echo "=========================================="
+          echo "✅ APK BUILD SUCCESSFUL"
+          echo "=========================================="
+          echo ""
+          echo "APK:"
           ls -lh "$APK_PATH"
 
-      # Rename APK for private use
-      - name: Prepare APK
-        run: |
-          cp android/app/build/outputs/apk/release/app-release.apk \
-             needsTracking-private.apk
 
-          echo "✅ Final APK:"
+      # ============================================================
+      # 13. RENAME APK
+      # ============================================================
+      - name: Prepare Private APK
+        shell: bash
+        run: |
+          set -e
+
+          cp \
+            android/app/build/outputs/apk/release/app-release.apk \
+            needsTracking-private.apk
+
+          echo ""
+          echo "=========================================="
+          echo "📦 FINAL APK"
+          echo "=========================================="
+          echo ""
+
           ls -lh needsTracking-private.apk
 
-      # Upload APK to GitHub Actions
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+
+      # ============================================================
+      # 14. UPLOAD APK
+      # ============================================================
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v5
         with:
           name: needsTracking-private-apk
           path: needsTracking-private.apk
           retention-days: 30
+
+
+      # ============================================================
+      # 15. BUILD SUMMARY
+      # ============================================================
+      - name: Build Summary
+        if: success()
+        shell: bash
+        run: |
+          echo "## 📱 needsTracking Private Android APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Build Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ **Successful**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- File: \`needsTracking-private.apk\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Type: Release APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Distribution: Private / direct installation" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download the APK from the **Artifacts** section." >> "$GITHUB_STEP_SUMMARY"
