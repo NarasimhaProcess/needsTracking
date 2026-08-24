@@ -3,9 +3,6 @@ name: Build Android APK - Gradle
 on:
   workflow_dispatch:
 
-permissions: 
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,57 +26,54 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # FIX: Upgraded from @v3 to @v4 to support Node 24 and eliminate warnings
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # STEP 1: Generate native android/ folders FIRST
+      - name: Generate Android project
+        run: |
+          npx expo prebuild --platform android --non-interactive
+
+      # STEP 2: Create the .env file inside the project root AFTER prebuild
       - name: Create .env and Verify Setup
         run: |
-          # Check Supabase URL
           URL_VAL="${{ secrets.SUPABASE_URL }}"
           if [ -z "$URL_VAL" ]; then
-            echo "SUPABASE_URL is EMPTY"
-          else
-            echo "SUPABASE_URL Length: ${#URL_VAL} characters"
-            echo "SUPABASE_URL Starts with: ${URL_VAL:0:8}..."
+            echo "::error::Critical Build Error: SUPABASE_URL is missing in GitHub Secrets!"
+            exit 1
           fi
-
-          # Check Anon Key length
-          KEY_VAL="${{ secrets.SUPABASE_ANON_KEY }}"
-          if [ -z "$KEY_VAL" ]; then
-            echo "SUPABASE_ANON_KEY is EMPTY"
-          else
-            echo "SUPABASE_ANON_KEY Length: ${#KEY_VAL} characters"
-            echo "SUPABASE_ANON_KEY Ends with: ...${KEY_VAL: -5}"
-          fi
-          # FIX 1: Expo requires the EXPO_PUBLIC_ prefix to bundle variables inside a built app
+          
           echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
           echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
           
-          # Print the structure to logs for debugging info (secrets will be safely masked as ***)
           echo "=== Verifying .env contents for debugging ==="
           cat .env
-      - name: Generate Android project
+
+      # STEP 3: Bundle JavaScript assets using official Expo compiler to read EXPO_PUBLIC vars
+      - name: Force Package Production JS Bundle
         run: |
-          npx expo prebuild --platform android --non-interactive
+          npx expo export --platform android
+
       - name: Create Android local.properties
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
           echo "org.gradle.jvmargs=-Xmx4096m" >> android/local.properties
           echo "org.gradle.parallel=true" >> android/local.properties
+
+      # STEP 4: Compile the standalone production APK
       - name: Build Android APK
         run: |
           cd android
           chmod +x gradlew
-          # FIX 2: Switched to assembleRelease or forced bundling so the JS engine doesn't try to link to Metro
           ./gradlew clean assembleRelease
+
       - name: Copy APK
         run: |
-          # FIX 3: Point path to the production release output binary instead of debug wrapper
           cp android/app/build/outputs/apk/release/app-release.apk \
              needsTracking-development-release.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
