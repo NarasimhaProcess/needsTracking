@@ -1,73 +1,154 @@
+
 name: Deploy Web App to GitHub Pages
 
 on:
-  workflow_dispatch: # Allows manual runs only. No automatic triggers on push.
+  workflow_dispatch:
+
+# Give GitHub Actions permission to write to the repository.
+permissions:
+  contents: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
+
+    permissions:
+      contents: write
+
     steps:
+      # ----------------------------------------
+      # 1. Checkout
+      # ----------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0
+
+      # ----------------------------------------
+      # 2. Setup Node.js
+      # ----------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-      
-      # STEP 1: Safely inject environment secrets from GitHub Settings
-      - name: Create .env file with Secrets
+          node-version: '20'
+          cache: npm
+
+      # ----------------------------------------
+      # 3. Create environment file
+      # ----------------------------------------
+      - name: Create .env
+        shell: bash
         run: |
+          set -e
+
+          if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
+            echo "::error::SUPABASE_URL is missing!"
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
+            echo "::error::SUPABASE_ANON_KEY is missing!"
+            exit 1
+          fi
+
           cat > .env << EOF
           EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
           EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}
           EOF
-          echo "✅ .env file created with EXPO_PUBLIC prefixes"
-      
+
+          echo "✅ .env created"
+
+      # ----------------------------------------
+      # 4. Install dependencies
+      # ----------------------------------------
       - name: Install dependencies
         run: npm ci
-      
-      # STEP 2: Compile the project into static web assets
-      - name: Export web build
-        run: npx expo export --platform web
-      
-      - name: Build web app
-        run: npm run build --if-present
-      
-      # STEP 3: Map output folder (dist) and prepare it for GitHub Pages
-      - name: Generate dist folder for GitHub Pages
+
+      # ----------------------------------------
+      # 5. Clean previous web output
+      # ----------------------------------------
+      - name: Clean web build
         run: |
+          rm -rf dist
+          rm -rf web-build
+          rm -rf .expo/web
+
+      # ----------------------------------------
+      # 6. Export Expo web application
+      # ----------------------------------------
+      - name: Export Expo web build
+        run: |
+          npx expo export --platform web
+
+      # ----------------------------------------
+      # 7. Verify web build
+      # ----------------------------------------
+      - name: Verify web build
+        shell: bash
+        run: |
+          set -e
+
           if [ ! -d "dist" ]; then
-            mkdir -p dist
-            if [ -d "web-build" ]; then
-              cp -r web-build/* dist/
-            elif [ -d ".expo/web" ]; then
-              cp -r .expo/web/* dist/
-            fi
+            echo "::error::dist directory was not generated!"
+            exit 1
           fi
+
+          if [ ! -f "dist/index.html" ]; then
+            echo "::error::dist/index.html was not generated!"
+            echo ""
+            echo "Generated files:"
+            find dist -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "✅ Web build generated"
+          echo "========================================"
+
+          find dist -maxdepth 3 -type f | sort
+          du -sh dist
+
+      # ----------------------------------------
+      # 8. Prepare GitHub Pages
+      # ----------------------------------------
+      - name: Prepare GitHub Pages
+        run: |
           touch dist/.nojekyll
-          echo "✅ dist folder prepared"
-      
-      # STEP 4: Push compiled code directly to your isolated gh-pages branch
+          echo "needstracking.com" > dist/CNAME
+
+          echo "✅ GitHub Pages files prepared"
+
+      # ----------------------------------------
+      # 9. Deploy to gh-pages
+      # ----------------------------------------
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
           publish_dir: ./dist
           cname: needstracking.com
-      
+          force_orphan: true
+          enable_jekyll: false
+
+      # ----------------------------------------
+      # 10. Summary
+      # ----------------------------------------
       - name: Generate Deploy Summary
-        if: always()
+        if: success()
         run: |
-          echo "## 🌐 Web Deployment Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Status**: ✅ Deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
-          echo "- Branch: main" >> $GITHUB_STEP_SUMMARY
-          echo "- Published URL: https://github.io" >> $GITHUB_STEP_SUMMARY
-          echo "- Custom Domain: needstracking.com" >> $GITHUB_STEP_SUMMARY
+          echo "## 🌐 Web Deployment Successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Status: ✅ Successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch: gh-pages" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Custom domain: https://needstracking.com" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build directory: dist" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate Failure Summary
+        if: failure()
+        run: |
+          echo "## ❌ Web Deployment Failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the failed step above." >> "$GITHUB_STEP_SUMMARY"
