@@ -3,6 +3,9 @@ name: Build Android APK - Gradle
 on:
   workflow_dispatch:
 
+permissions: 
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,16 +29,21 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # FIX: Upgraded from @v3 to @v4 to support Node 24 and eliminate warnings
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
-      - name: Create .env
+      - name: Create .env and Verify Setup
         run: |
           # FIX 1: Expo requires the EXPO_PUBLIC_ prefix to bundle variables inside a built app
           echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> .env
           echo "EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}" >> .env
+          
+          # Print the structure to logs for debugging info (secrets will be safely masked as ***)
+          echo "=== Verifying .env contents for debugging ==="
+          cat .env
 
       - name: Generate Android project
         run: |
@@ -66,3 +74,4 @@ jobs:
           name: needsTracking-development-apk
           path: needsTracking-development-release.apk
           retention-days: 30
+          
