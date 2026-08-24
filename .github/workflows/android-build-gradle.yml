@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20' # Updated to match modern Expo bundler engines
           cache: npm
 
       - name: Install dependencies
@@ -51,15 +51,23 @@ jobs:
           echo "=== Verifying .env contents for debugging ==="
           cat .env
 
-      # FIX STEP 3: Create assets folder, export bundle, and route the correct index.js path
+      # STEP 3: Dynamic discovery of the JavaScript bundle file
       - name: Force Package Production JS Bundle
         run: |
           mkdir -p android/app/src/main/assets
-          npx expo export --platform android --output-dir android/app/src/main/assets
+          npx expo export --platform android --output-dir export-temp
           
-          # Copy and rename the actual Expo index.js bundle so the native wrapper can read it
-          cp android/app/src/main/assets/_expo/index.js android/app/src/main/assets/index.android.bundle
-
+          # Use find to locate any .js file generated in the export directory and clone it to assets
+          FOUND_BUNDLE=$(find export-temp -name "*.js" | head -n 1)
+          
+          if [ -z "$FOUND_BUNDLE" ]; then
+            echo "::error::Failed to locate an exported JavaScript bundle!"
+            exit 1
+          fi
+          
+          echo "Found compiled bundle at: $FOUND_BUNDLE"
+          cp "$FOUND_BUNDLE" android/app/src/main/assets/index.android.bundle
+          echo "✅ Successfully staged index.android.bundle for Gradle compilation"
 
       - name: Create Android local.properties
         run: |
