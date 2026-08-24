@@ -20,8 +20,9 @@ if (Platform.OS === 'web') {
   Storage = require('@react-native-async-storage/async-storage').default;
 }
 
-const supabaseUrl = Constants.expoConfig.extra.SUPABASE_URL;
-const supabaseAnonKey = Constants.expoConfig.extra.SUPABASE_ANON_KEY;
+// Replace the old Constants code with this:
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
