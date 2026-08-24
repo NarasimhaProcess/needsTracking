@@ -105,7 +105,7 @@ export default function LoginScreen({ navigation, route }) {
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
           <Text style={styles.icon}>📍</Text>
-          <Text style={styles.title}>{Constants.expoConfig.extra.ORG_NAME}</Text>
+          <Text style={styles.title}>{Constants?.expoConfig?.extra?.ORG_NAME || process.env.EXPO_PUBLIC_ORG_NAME || 'NeedsTracker'}</Text>
           <Text style={styles.subtitle}>Sign in to track your location</Text>
         </View>
 
@@ -182,7 +182,7 @@ export default function LoginScreen({ navigation, route }) {
         </View>
       </ScrollView>
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2025 {Constants.expoConfig.extra.ORG_NAME}. Version 1.0</Text>
+        <Text style={styles.footerText}>© 2025 {Constants?.expoConfig?.extra?.ORG_NAME || process.env.EXPO_PUBLIC_ORG_NAME || 'NeedsTracking'}. Version 1.0</Text>
       </View>
     </KeyboardAvoidingView>
   );

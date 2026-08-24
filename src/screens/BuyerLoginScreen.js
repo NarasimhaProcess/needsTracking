@@ -221,7 +221,7 @@ export default function BuyerLoginScreen({ navigation, route }) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2025 {Constants.expoConfig.extra.ORG_NAME || 'NeedsTracking'}. Version 1.0</Text>
+        <Text style={styles.footerText}>© 2025 {Constants?.expoConfig?.extra?.ORG_NAME || process.env.EXPO_PUBLIC_ORG_NAME || 'NeedsTracking'}. Version 1.0</Text>
       </View>
     </KeyboardAvoidingView>
   );

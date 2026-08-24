@@ -46,8 +46,7 @@ export default {
       "package": "com.narasimhaexpo.needstrackingmobile",
       "config": {
         "googleMaps": {
-          // CHANGE 1: Use the new prefixed variable
-          "apiKey": process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+          "apiKey": process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || ""
         }
       }
     },
@@ -90,10 +89,9 @@ export default {
     "sdkVersion": "53.0.0",
     
     "extra": {
-      // CHANGE 2: Update these references to match your .env and GitHub workflow
-      "ORG_NAME": process.env.EXPO_PUBLIC_ORG_NAME || "localwala's",
-      "SUPABASE_URL": process.env.EXPO_PUBLIC_SUPABASE_URL,
-      "SUPABASE_ANON_KEY": process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+      "ORG_NAME": process.env.EXPO_PUBLIC_ORG_NAME || process.env.ORG_NAME || "localwala's",
+      "SUPABASE_URL": process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "https://wtcxhhbigmqrmqdyhzcz.supabase.co",
+      "SUPABASE_ANON_KEY": process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0Y3hoaGJpZ21xcm1xZHloemN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjE3ODgsImV4cCI6MjA2NzczNzc4OH0.AIViaiRT2odHJM2wQXl3dDZ69YxEj7t_7UiRFqEgZjY",
       "eas": {
         "projectId": "3ce03f97-e109-4f80-a0ba-b0fa19f6ad0b"
       }

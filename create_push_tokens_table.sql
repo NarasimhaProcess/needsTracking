@@ -16,20 +16,17 @@ COMMENT ON COLUMN public.push_tokens.token IS 'The push notification token from 
 ALTER TABLE public.push_tokens ENABLE ROW LEVEL SECURITY;
 
 -- Policies for push_tokens
-CREATE POLICY "Users can view their own push tokens"
-ON public.push_tokens
-FOR SELECT
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can view their own push tokens" ON public.push_tokens;
+DROP POLICY IF EXISTS "Users can insert their own push tokens" ON public.push_tokens;
+DROP POLICY IF EXISTS "Users can update their own push tokens" ON public.push_tokens;
+DROP POLICY IF EXISTS "Users can delete their own push tokens" ON public.push_tokens;
+DROP POLICY IF EXISTS "Users can manage their own push tokens" ON public.push_tokens;
 
-CREATE POLICY "Users can insert their own push tokens"
+CREATE POLICY "Users can manage their own push tokens"
 ON public.push_tokens
-FOR INSERT
+FOR ALL
+USING (auth.uid() = user_id)
 WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can delete their own push tokens"
-ON public.push_tokens
-FOR DELETE
-USING (auth.uid() = user_id);
 
 -- Also, we need to remove the old push_token column from the profiles table.
 ALTER TABLE public.profiles

@@ -58,54 +58,68 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchAndSetSession = async () => {
-      setLoading(true);
       try {
-        let { data: { session } } = await supabase.auth.getSession();
-        setSession(session);
+        const { data: { session } = {} } = await supabase.auth.getSession();
+        if (isMounted) {
+          setSession(session || null);
+        }
       } catch (err) {
-        console.error('Error fetching session:', err);
+        console.warn('Error fetching session:', err);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchAndSetSession(); // Initial fetch
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setLoading(false);
+    // Fallback safety timeout: Never keep the user stuck on the loading spinner for more than 2.5s
+    const timeoutTimer = setTimeout(() => {
+      if (isMounted) {
+        setLoading(false);
+      }
+    }, 2500);
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) {
+        setSession(session || null);
+        setLoading(false);
+      }
     });
 
     const handleDeepLink = async (url) => {
       if (!url) return;
       console.log('[App] Deep link received:', url);
 
-      let accessToken = null;
-      let refreshToken = null;
+      try {
+        let accessToken = null;
+        let refreshToken = null;
 
-      if (url.includes('#')) {
-        const hashParams = new URLSearchParams(url.split('#')[1]);
-        accessToken = hashParams.get('access_token');
-        refreshToken = hashParams.get('refresh_token');
-      }
+        if (url.includes('#')) {
+          const hashParams = new URLSearchParams(url.split('#')[1]);
+          accessToken = hashParams.get('access_token');
+          refreshToken = hashParams.get('refresh_token');
+        }
 
-      if (!accessToken && url.includes('?')) {
-        const queryParams = new URLSearchParams(url.split('?')[1]);
-        accessToken = queryParams.get('access_token');
-        refreshToken = queryParams.get('refresh_token');
-      }
+        if (!accessToken && url.includes('?')) {
+          const queryParams = new URLSearchParams(url.split('?')[1]);
+          accessToken = queryParams.get('access_token');
+          refreshToken = queryParams.get('refresh_token');
+        }
 
-      if (accessToken && refreshToken) {
-        console.log('[App] Setting session from OAuth deep link tokens');
-        try {
+        if (accessToken && refreshToken) {
+          console.log('[App] Setting session from OAuth deep link tokens');
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           });
           if (error) {
             console.error('[App] Error setting session from deep link:', error.message);
-          } else if (data?.session) {
+          } else if (data?.session && isMounted) {
             setSession(data.session);
 
             // Navigate to appropriate screen based on user role
@@ -127,14 +141,14 @@ export default function App() {
               navigationRef.current?.navigate('Catalog');
             }
           }
-        } catch (sessionErr) {
-          console.error('[App] Failed to set session from deep link:', sessionErr);
         }
+      } catch (sessionErr) {
+        console.error('[App] Failed to set session from deep link:', sessionErr);
       }
     };
 
     // Check initial launch URL
-    Linking.getInitialURL().then(handleDeepLink);
+    Linking.getInitialURL().then(handleDeepLink).catch(err => console.warn('Linking initial URL error:', err));
 
     // Listen to incoming deep links
     const linkSubscription = Linking.addEventListener('url', ({ url }) => {
@@ -142,8 +156,10 @@ export default function App() {
     });
 
     return () => {
-      subscription.unsubscribe();
-      linkSubscription.remove();
+      isMounted = false;
+      clearTimeout(timeoutTimer);
+      authListener?.subscription?.unsubscribe?.();
+      linkSubscription?.remove?.();
     };
   }, []);
 
@@ -155,28 +171,41 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS === 'web') return; // Push notifications handled differently on web
 
-    registerForPushNotificationsAsync().then(token => setExpoPushToken(token));
+    registerForPushNotificationsAsync()
+      .then(token => {
+        if (token) setExpoPushToken(token);
+      })
+      .catch(err => {
+        console.warn('Push notification initialization error:', err);
+      });
 
-    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-      setNotification(notification);
-    });
+    try {
+      notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+        setNotification(notification);
+      });
 
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-      const data = response.notification.request.content.data;
-      console.log("Notification tapped with data: ", data);
+      responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+        const data = response.notification.request.content.data;
+        console.log("Notification tapped with data: ", data);
 
-      // Navigate based on the data received
-      if (data?.orderId) {
-        navigationRef.current?.navigate('OrderDetail', { orderId: data.orderId });
-      } else if (data?.productId) {
-        // Ensure 'ProductDetailScreen' is a valid screen name in your navigation setup
-        navigationRef.current?.navigate('ProductDetailScreen', { productId: data.productId });
-      }
-    });
+        // Navigate based on the data received
+        if (data?.orderId) {
+          navigationRef.current?.navigate('OrderDetail', { orderId: data.orderId });
+        } else if (data?.productId) {
+          navigationRef.current?.navigate('ProductDetailScreen', { productId: data.productId });
+        }
+      });
+    } catch (notifErr) {
+      console.warn('Notification listener error:', notifErr);
+    }
 
     return () => {
-      Notifications.removeNotificationSubscription(notificationListener.current);
-      Notifications.removeNotificationSubscription(responseListener.current);
+      if (notificationListener.current) {
+        Notifications.removeNotificationSubscription(notificationListener.current);
+      }
+      if (responseListener.current) {
+        Notifications.removeNotificationSubscription(responseListener.current);
+      }
     };
   }, []);
 
@@ -184,20 +213,48 @@ export default function App() {
   useEffect(() => {
     const savePushToken = async () => {
       if (expoPushToken && session?.user?.id) {
-        console.log(`Saving push token for user ${session.user.id}:`, expoPushToken);
-        const { error } = await supabase
-          .from('push_tokens')
-          .upsert({ 
-            user_id: session.user.id,
-            token: expoPushToken 
-          }, { 
-            onConflict: 'token' 
-          });
+        try {
+          console.log(`Saving push token for user ${session.user.id}:`, expoPushToken);
 
-        if (error) {
-          console.error('Error saving push token:', error.message);
-        } else {
-          console.log('Push token saved successfully.');
+          // Check if token already exists
+          const { data: existingToken, error: fetchErr } = await supabase
+            .from('push_tokens')
+            .select('id, user_id')
+            .eq('token', expoPushToken)
+            .maybeSingle();
+
+          if (!fetchErr && existingToken) {
+            if (existingToken.user_id === session.user.id) {
+              console.log('Push token is already registered for this user.');
+              return;
+            }
+            // If registered to a different user, attempt update
+            const { error: updateErr } = await supabase
+              .from('push_tokens')
+              .update({ user_id: session.user.id })
+              .eq('token', expoPushToken);
+
+            if (!updateErr) {
+              console.log('Push token re-assigned to current user.');
+              return;
+            }
+          }
+
+          // Otherwise insert new push token
+          const { error: insertErr } = await supabase
+            .from('push_tokens')
+            .insert({ 
+              user_id: session.user.id, 
+              token: expoPushToken 
+            });
+
+          if (insertErr) {
+            console.warn('Note: Push token save notice (non-fatal):', insertErr.message);
+          } else {
+            console.log('Push token saved successfully.');
+          }
+        } catch (saveErr) {
+          console.warn('Non-fatal error in savePushToken:', saveErr);
         }
       }
     };

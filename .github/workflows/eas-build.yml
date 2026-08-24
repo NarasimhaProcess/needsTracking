@@ -45,13 +45,28 @@ jobs:
         run: npm ci
 
       - name: Create .env
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME }}
+        shell: bash
         run: |
           cat > .env << EOF
-          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
-          ORG_NAME=${{ secrets.ORG_NAME }}
+          EXPO_PUBLIC_SUPABASE_URL=$EXPO_PUBLIC_SUPABASE_URL
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=$EXPO_PUBLIC_SUPABASE_ANON_KEY
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+          EXPO_PUBLIC_ORG_NAME=$EXPO_PUBLIC_ORG_NAME
+          SUPABASE_URL=$EXPO_PUBLIC_SUPABASE_URL
+          SUPABASE_ANON_KEY=$EXPO_PUBLIC_SUPABASE_ANON_KEY
+          GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+          ORG_NAME=$EXPO_PUBLIC_ORG_NAME
           EOF
 
       - name: Run EAS Build
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME }}
         run: eas build --platform ${{ github.event.inputs.platform }} --profile ${{ github.event.inputs.profile }} --non-interactive

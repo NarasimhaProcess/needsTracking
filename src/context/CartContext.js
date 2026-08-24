@@ -12,40 +12,67 @@ export const CartProvider = ({ children }) => {
   const [role, setRole] = useState(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchUserAndCart = async () => {
-      setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
+      try {
+        setLoading(true);
+        const { data: { user } = {} } = await supabase.auth.getUser();
+        if (!isMounted) return;
+        setUser(user || null);
 
-      if (user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .single();
-        setRole(profile?.role);
+        if (user) {
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('role')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (isMounted) setRole(profile?.role || null);
+          } catch (profileErr) {
+            console.warn('Profile fetch error in CartContext:', profileErr);
+          }
 
-        const cartData = await getCart(user.id);
-        setCart(cartData);
+          try {
+            const cartData = await getCart(user.id);
+            if (isMounted) setCart(cartData);
+          } catch (cartErr) {
+            console.warn('Cart fetch error in CartContext:', cartErr);
+          }
 
-        // Listen for real-time changes to the cart
-        const subscription = supabase
-          .channel('public:cart_items')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'cart_items' }, (payload) => {
-            console.log('Cart change received!', payload);
-            // Re-fetch cart to get the latest state
-            getCart(user.id).then(setCart);
-          })
-          .subscribe();
+          // Listen for real-time changes to the cart
+          try {
+            const subscription = supabase
+              .channel('public:cart_items')
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'cart_items' }, (payload) => {
+                console.log('Cart change received!', payload);
+                if (isMounted) {
+                  getCart(user.id).then(newCart => {
+                    if (isMounted) setCart(newCart);
+                  }).catch(console.warn);
+                }
+              })
+              .subscribe();
 
-        return () => {
-          supabase.removeChannel(subscription);
-        };
-      } else {
-        setCart(null); // No user, no cart
-        setRole(null);
+            return () => {
+              supabase.removeChannel(subscription);
+            };
+          } catch (chanErr) {
+            console.warn('Channel subscription error in CartContext:', chanErr);
+          }
+        } else {
+          if (isMounted) {
+            setCart(null);
+            setRole(null);
+          }
+        }
+      } catch (err) {
+        console.warn('fetchUserAndCart error:', err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-      setLoading(false);
     };
 
     fetchUserAndCart();
@@ -53,16 +80,20 @@ export const CartProvider = ({ children }) => {
     // Listen for auth state changes to re-fetch cart
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
-        fetchUserAndCart(); // Re-fetch cart if user logs in
+        fetchUserAndCart();
       } else {
-        setCart(null); // Clear cart if user logs out
-        setUser(null);
-        setRole(null);
+        if (isMounted) {
+          setCart(null);
+          setUser(null);
+          setRole(null);
+          setLoading(false);
+        }
       }
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      isMounted = false;
+      authListener?.subscription?.unsubscribe?.();
     };
   }, []);
 
