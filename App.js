@@ -19,6 +19,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 
 // Import screens
 import WelcomeScreen from './src/screens/WelcomeScreen';
+import SellersMapScreen from './src/screens/SellersMapScreen';
 import CatalogScreen from './src/screens/CatalogScreen';
 import BuyerAuthScreen from './src/screens/BuyerAuthScreen';
 import BuyerLoginScreen from './src/screens/BuyerLoginScreen';
@@ -277,6 +278,7 @@ export default function App() {
         <StatusBar style="auto" />
         <Stack.Navigator key={session ? 'app' : 'auth'} screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
+          <Stack.Screen name="SellersMap" component={SellersMapScreen} />
           <Stack.Screen name="Catalog" component={CatalogScreen} />
           <Stack.Screen name="BuyerAuth" component={BuyerAuthScreen} />
           <Stack.Screen name="BuyerLogin" component={BuyerLoginScreen} />

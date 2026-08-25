@@ -124,7 +124,7 @@ export default function AdminMapScreen({ navigation }) {
       <UniversalWebView
         ref={webViewRef}
         originWhitelist={['*']}
-        source={{ html: htmlContent }}
+        source={{ html: htmlContent, baseUrl: '' }}
         style={styles.webview}
         javaScriptEnabled={true}
         domStorageEnabled={true}

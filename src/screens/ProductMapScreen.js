@@ -115,7 +115,7 @@ export default function ProductMapScreen({ route }) {
         <UniversalWebView
             ref={webViewRef}
             originWhitelist={['*']}
-            source={{ html: htmlContent }}
+            source={{ html: htmlContent, baseUrl: '' }}
             style={styles.webview}
             javaScriptEnabled={true}
             domStorageEnabled={true}
