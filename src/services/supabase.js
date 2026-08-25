@@ -24,16 +24,12 @@ if (Platform.OS === 'web') {
 const supabaseUrl =
   process.env.EXPO_PUBLIC_SUPABASE_URL ||
   process.env.SUPABASE_URL ||
-  Constants?.expoConfig?.extra?.SUPABASE_URL ||
-  Constants?.manifest?.extra?.SUPABASE_URL ||
-  'https://wtcxhhbigmqrmqdyhzcz.supabase.co';
+  Constants?.expoConfig?.extra?.SUPABASE_URL;
 
 const supabaseAnonKey =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_ANON_KEY ||
-  Constants?.expoConfig?.extra?.SUPABASE_ANON_KEY ||
-  Constants?.manifest?.extra?.SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0Y3hoaGJpZ21xcm1xZHloemN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjE3ODgsImV4cCI6MjA2NzczNzc4OH0.AIViaiRT2odHJM2wQXl3dDZ69YxEj7t_7UiRFqEgZjY';
+  Constants?.expoConfig?.extra?.SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
