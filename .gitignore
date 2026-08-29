@@ -121,7 +121,7 @@ jspm_packages/
 # Expo
 .expo/
 .expo-shared/
-dist/
+# dist/
 web-build/
 
 # EAS
