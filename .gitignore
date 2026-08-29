@@ -7,7 +7,7 @@ yarn-error.log*
 # Expo
 .expo/
 .expo-shared/
-dist/
+# dist/
 web-build/
 
 # Native
