@@ -1,6 +1,7 @@
 import 'react-native-get-random-values'; // Polyfill for crypto.getRandomValues
 import React, { useState, useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
+import * as Location from 'expo-location';
 import { registerForPushNotificationsAsync } from './src/services/notificationService';
 import {
   View,
@@ -168,6 +169,20 @@ export default function App() {
   const [notification, setNotification] = useState(false);
   const notificationListener = useRef();
   const responseListener = useRef();
+
+  useEffect(() => {
+    async function requestLocationPermission() {
+      try {
+        if (Platform.OS !== 'web') {
+          console.log('[App] Requesting location permissions on startup...');
+          await Location.requestForegroundPermissionsAsync();
+        }
+      } catch (err) {
+        console.warn('Error requesting startup location permission:', err);
+      }
+    }
+    requestLocationPermission();
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === 'web') return; // Push notifications handled differently on web

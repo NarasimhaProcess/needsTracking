@@ -4,12 +4,14 @@ export default {
   "expo": {
     "name": "Needs Tracker",
     "slug": "needs-tracker",
+    "owner": "narasimhaexpo6s-team", // 👈 Added your exact organization account name here
     "scheme": "needstracking",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/icon.png", // Replaced with valid image reference for Expo 53
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -49,11 +51,7 @@ export default {
         "android.permission.BLUETOOTH_SCAN"
       ],
       "package": "com.narasimhaexpo.needstrackingmobile",
-      "config": {
-        "googleMaps": {
-          "apiKey": process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || ""
-        }
-      }
+
     },
     "web": {
       "bundler": "metro",
@@ -92,7 +90,6 @@ export default {
       "policy": "appVersion"
     },
     "sdkVersion": "53.0.0",
-    
     "extra": {
       "ORG_NAME": process.env.EXPO_PUBLIC_ORG_NAME || process.env.ORG_NAME || "localwala's",
       "SUPABASE_URL": process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "https://wtcxhhbigmqrmqdyhzcz.supabase.co",
