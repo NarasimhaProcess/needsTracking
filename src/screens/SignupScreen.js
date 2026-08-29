@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase } from '../services/supabase';
+import { supabase, getAuthRedirectUrl } from '../services/supabase';
 import { StackActions } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Constants from 'expo-constants';
@@ -48,6 +48,7 @@ export default function SignupScreen({ navigation, route }) {
         email: email.trim(),
         password,
         options: {
+          emailRedirectTo: getAuthRedirectUrl(),
           data: {
             full_name: name.trim(),
             name: name.trim(),

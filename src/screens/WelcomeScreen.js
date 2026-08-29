@@ -46,6 +46,10 @@ export default function WelcomeScreen() {
         onPress: async () => {
           try {
             await supabase.auth.signOut();
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Welcome' }],
+            });
           } catch (err) {
             console.error('Logout error:', err);
           }

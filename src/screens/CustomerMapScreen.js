@@ -211,6 +211,8 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
         // Fetch only if customerId is provided
         if (customerId) {
           await fetchCustomerLocation(customerId);
+        } else {
+          await fetchAllLocations();
         }
       } catch (err) {
         setError(err.message);
@@ -222,12 +224,35 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
     fetchData();
   }, [customerId]);
 
+  async function fetchAllLocations() {
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('profiles')
+        .select('id, full_name, role, latitude, longitude')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null);
+
+      if (!fetchError && data && data.length > 0) {
+        setCustomerLocations(
+          data.map((p) => ({
+            id: p.id,
+            name: p.full_name || 'User Location',
+            latitude: p.latitude,
+            longitude: p.longitude,
+          }))
+        );
+      }
+    } catch (err) {
+      console.warn('Error fetching all locations in CustomerMapScreen:', err);
+    }
+  }
+
   async function fetchCustomerLocation(id) {
       if (!id) return;
       try {
         const { data, error: fetchError } = await supabase
           .from('profiles') // Assuming customer location is in profiles table
-          .select('latitude, longitude')
+          .select('latitude, longitude, full_name')
           .eq('id', id)
           .single();
 
@@ -237,7 +262,7 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
         }
 
         if (data && data.latitude && data.longitude) {
-          setCustomerLocations([{ latitude: data.latitude, longitude: data.longitude, id: id }]);
+          setCustomerLocations([{ latitude: data.latitude, longitude: data.longitude, id: id, name: data.full_name || 'Customer' }]);
         } else {
           Alert.alert('Location Not Found', 'Customer location not available.');
           setCustomerLocations([]);
@@ -249,8 +274,10 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
   }
 
   const onMapMessage = async (event) => {
-    const data = JSON.parse(event.nativeEvent.data);
-    // Handle map messages if needed
+    try {
+      const data = typeof event.nativeEvent?.data === 'string' ? JSON.parse(event.nativeEvent.data) : event.nativeEvent?.data;
+      // Handle map messages if needed
+    } catch (_) {}
   };
 
   if (loading) {
@@ -278,21 +305,16 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
         <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
-        <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" integrity="sha512-Fo3rlrZj/k7ujTnHg4CGR2D7kSs0V4LLanw2qksYuRlEzO+tcaEPQogQ0KaoGN26/zrn20ImR1DfuLWnOo7aBA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
         <style>
             body { margin: 0; padding: 0; }
             #mapid { width: 100vw; height: 100vh; background-color: #f0f0f0; }
-            .leaflet-routing-container { display: none; }
-            .customer-image-button { margin-top: 5px; padding: 5px 10px; background-color: #007AFF; color: white; border-radius: 5px; border: none; cursor: pointer; }
         </style>
     </head>
     <body>
         <div id="mapid"></div>
         <script>
             var map = L.map('mapid').setView([20.5937, 78.9629], 5);
-            var customerMarkers = {};
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -301,19 +323,32 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
             var customerLocations = ${JSON.stringify(customerLocations.map(loc => ({
                 latitude: loc.latitude,
                 longitude: loc.longitude,
-                id: loc.id
+                id: loc.id,
+                name: loc.name || 'Location'
             })))};
 
             if (customerLocations.length > 0) {
-                var customerLocation = customerLocations[0];
-                L.marker([customerLocation.latitude, customerLocation.longitude])
-                    .addTo(map)
-                    .bindPopup('Your Location')
-                    .openPopup();
-                map.setView([customerLocation.latitude, customerLocation.longitude], 13);
+                var bounds = [];
+                customerLocations.forEach(function(loc) {
+                    bounds.push([loc.latitude, loc.longitude]);
+                    L.marker([loc.latitude, loc.longitude])
+                        .addTo(map)
+                        .bindPopup('<b>' + loc.name + '</b>');
+                });
+                if (bounds.length === 1) {
+                    map.setView(bounds[0], 13);
+                } else if (bounds.length > 1) {
+                    map.fitBounds(bounds, { padding: [30, 30] });
+                }
+            } else {
+                map.setView([20.5937, 78.9629], 5);
             }
 
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'webviewLoaded' }));
+            try {
+                if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'webviewLoaded' }));
+                }
+            } catch (_) {}
         </script>
     </body>
     </html>

@@ -11,7 +11,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, signInWithGoogle, addToCart } from '../services/supabase';
+import { supabase, signInWithGoogle, addToCart, getAuthRedirectUrl } from '../services/supabase';
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
@@ -74,6 +74,7 @@ export default function BuyerSignupScreen({ navigation, route }) {
     setLoading(true);
     try {
       const signupOptions = {
+        emailRedirectTo: getAuthRedirectUrl(),
         data: {
           full_name: name.trim(),
           name: name.trim(),

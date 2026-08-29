@@ -12,7 +12,9 @@ This document outlines the **end-to-end architecture, role-based user flows, aut
 5. [Delivery Partner Operations](#5-delivery-partner-operations)
 6. [Live GPS Location Tracking](#6-live-gps-location-tracking)
 7. [Database Schema & Migrations](#7-database-schema--migrations)
-8. [Screens & File Reference](#8-screens--file-reference)
+8. [Order Receipt Printing & Day-Wise Order Numbers](#8-order-receipt-printing--day-wise-order-numbers)
+9. [Web & Mobile Real-Time Order Notifications with Voice](#9-web--mobile-real-time-order-notifications-with-voice)
+10. [Screens & File Reference](#10-screens--file-reference)
 
 ---
 
@@ -201,7 +203,47 @@ The database setup requires executing two idempotent SQL migration scripts in th
 
 ---
 
-## 7. Screens & File Reference
+## 8. Order Receipt Printing & Day-Wise Order Numbers
+
+The POS billing system supports dual order identification:
+- **Full Order Number (`Order No`)**: Unique tracking code (e.g. `20260829-0001` or UUID prefix).
+- **Day-Wise Order Number (`Day Order No`)**: The sequence number for the current calendar day (e.g. `#0001`, `#42`), extracted automatically from the order sequence or database field.
+
+### A. Thermal Printer & Web Print Architecture
+- **ESC/POS Generation (`generateEscPosBytes`)**:
+  - Generates binary ESC/POS commands for 58mm (32 chars) and 80mm (48 chars) receipt printers.
+  - Formats **`Day Order No: #0001`** in bold header alongside full **`Order No:`**, date, table/takeaway meta, itemized quantities & prices, subtotals, and feed/cut commands.
+- **Universal HTML Receipt (`generateReceiptHtml`)**:
+  - Displays a prominent **`DAY ORDER NO`** boxed banner at the top of the receipt for kitchen, counter, and customer slips.
+- **Order Parsing Helper (`extractOrderNumbers`)**:
+  - Robust parser that detects date-sequence patterns (e.g. `YYYYMMDD-0001`, `ORD-20260829-0042`, `0015`), `daily_order_number`, or `token_no` properties.
+- **UI Integration**:
+  - Both numbers are shown in [`OrderDetailScreen.js`](file:///workspaces/needsTracking/src/screens/OrderDetailScreen.js), [`OrderListScreen.js`](file:///workspaces/needsTracking/src/screens/OrderListScreen.js) (with dual-number search), and [`OrderConfirmationScreen.js`](file:///workspaces/needsTracking/src/screens/OrderConfirmationScreen.js).
+
+---
+
+## 9. Web & Mobile Real-Time Order Notifications with Voice
+
+To ensure store operators, cashiers, and delivery drivers never miss an order, the application includes audible notifications and Text-to-Speech (TTS) voice announcements across Web and Mobile:
+
+### A. Web Speech Synthesis & Audio Chime
+- **Browser Web Speech Synthesis API (`window.speechSynthesis`)**:
+  - Speaks order details aloud in clear Indian English voice (`en-IN` / `en`) without third-party plugins.
+- **Web Audio API Melodic Chime**:
+  - Synthesizes a pleasant dual-tone chime (`587.33Hz D5 -> 880.0Hz A5`) to grab immediate attention before speaking.
+- **Mobile Speech**:
+  - Native fallback via `expo-speech`.
+
+### B. Speech Announcement Triggers
+1. **New Order Arrival**:
+   - `App.js` and `DeliveryManagerDashboard.js` listen to Supabase Realtime `orders` `INSERT` events.
+   - Triggers: *"New Order Received! Day Order Number 1. Order Number 20260829-0001. Total 350 Rupees."*
+2. **Receipt Printing**:
+   - `printReceipt` automatically announces: *"Daily Order Number 1. Order Number 20260829-0001. Table number 5. Total amount 250 Rupees."*
+
+---
+
+## 10. Screens & File Reference
 
 | File | Purpose |
 | :--- | :--- |
@@ -209,9 +251,13 @@ The database setup requires executing two idempotent SQL migration scripts in th
 | [`src/screens/BuyerSignupScreen.js`](file:///workspaces/needsTracking/src/screens/BuyerSignupScreen.js) | Buyer registration with guest cart migration |
 | [`src/screens/DeliveryManagerLoginScreen.js`](file:///workspaces/needsTracking/src/screens/DeliveryManagerLoginScreen.js) | Delivery partner login & profile sync |
 | [`src/screens/DeliveryManagerSignupScreen.js`](file:///workspaces/needsTracking/src/screens/DeliveryManagerSignupScreen.js) | Delivery partner account creation |
-| [`src/screens/DeliveryManagerDashboard.js`](file:///workspaces/needsTracking/src/screens/DeliveryManagerDashboard.js) | Available orders, active tasks, maps navigation, order status controls |
+| [`src/screens/DeliveryManagerDashboard.js`](file:///workspaces/needsTracking/src/screens/DeliveryManagerDashboard.js) | Available orders, active tasks, maps navigation, realtime voice announcements |
 | [`src/screens/OrderDetailScreen.js`](file:///workspaces/needsTracking/src/screens/OrderDetailScreen.js) | Detailed order view with live Leaflet map tracking & receipt printing |
+| [`src/screens/OrderListScreen.js`](file:///workspaces/needsTracking/src/screens/OrderListScreen.js) | Order history with Order No & Day Order No badges and search |
+| [`src/screens/OrderConfirmationScreen.js`](file:///workspaces/needsTracking/src/screens/OrderConfirmationScreen.js) | Post-checkout confirmation displaying both Order No and Day Order No |
 | [`src/screens/CheckoutScreen.js`](file:///workspaces/needsTracking/src/screens/CheckoutScreen.js) | Cart checkout, payment selection, delivery order creation & driver dispatch |
+| [`src/services/printerService.js`](file:///workspaces/needsTracking/src/services/printerService.js) | ESC/POS thermal byte generator, HTML receipts, and day-wise order extraction |
+| [`src/services/speechService.js`](file:///workspaces/needsTracking/src/services/speechService.js) | Web Speech API, Web Audio chime, native TTS announcements for new orders & prints |
 | [`src/services/supabase.js`](file:///workspaces/needsTracking/src/services/supabase.js) | Supabase client API, authentication, order queries, and location updates |
 | [`supabase/functions/assign-delivery-manager/index.ts`](file:///workspaces/needsTracking/supabase/functions/assign-delivery-manager/index.ts) | Edge Function for nearest manager geo-assignment & push notifications |
 | [`fix_auth_triggers_and_profiles.sql`](file:///workspaces/needsTracking/fix_auth_triggers_and_profiles.sql) | SQL script: crash-proof auth signup trigger and profiles schema |

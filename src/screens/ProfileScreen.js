@@ -144,15 +144,32 @@ const ProfileScreen = ({ navigation }) => {
     setLoading(false);
   };
 
-  const handleLogout = async () => {
-    setLoading(true);
-    const { error } = await supabase.auth.signOut();
-    setLoading(false);
-    if (error) {
-      Alert.alert('Error', 'Failed to log out.');
-    } else {
-      // Navigation will be handled by auth state change listener in App.js
-    }
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure you want to log out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setLoading(true);
+            const { error } = await supabase.auth.signOut();
+            setLoading(false);
+            if (error) {
+              Alert.alert('Error', 'Failed to log out: ' + error.message);
+            } else {
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Welcome' }],
+              });
+            }
+          } catch (err) {
+            setLoading(false);
+            console.error('Logout error in ProfileScreen:', err);
+          }
+        },
+      },
+    ]);
   };
 
   const openLocationPicker = async () => {

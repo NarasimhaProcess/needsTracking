@@ -78,16 +78,16 @@ export const CartProvider = ({ children }) => {
     fetchUserAndCart();
 
     // Listen for auth state changes to re-fetch cart
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        fetchUserAndCart();
-      } else {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session?.user) {
         if (isMounted) {
           setCart(null);
           setUser(null);
           setRole(null);
           setLoading(false);
         }
+      } else if (session?.user) {
+        fetchUserAndCart();
       }
     });
 

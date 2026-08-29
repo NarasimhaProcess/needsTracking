@@ -49,8 +49,9 @@ import UpiQrScreen from './src/screens/UpiQrScreen';
 import ProductTabNavigator from './src/navigation/ProductTabNavigator';
 
 // Import services
-import { supabase } from './src/services/supabase';
+import { supabase, ensureUserProfile } from './src/services/supabase';
 import { CartProvider } from './src/context/CartContext';
+import { announceNewOrder } from './src/services/speechService';
 
 const Stack = createStackNavigator();
 
@@ -62,11 +63,47 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
+    const navigateToRoleScreen = async (user, currentSession) => {
+      if (!user) return;
+      try {
+        const profile = await ensureUserProfile(user);
+        const role = profile?.role || user.user_metadata?.role || 'customer';
+
+        const currentRoute = navigationRef.current?.getCurrentRoute()?.name;
+        const authScreens = [
+          'Welcome',
+          'BuyerAuth',
+          'BuyerLogin',
+          'BuyerSignup',
+          'Login',
+          'Signup',
+          'SellerLogin',
+          'DeliveryManagerLogin',
+          'DeliveryManagerSignup',
+        ];
+
+        if (!currentRoute || authScreens.includes(currentRoute)) {
+          if (role === 'delivery_manager') {
+            navigationRef.current?.navigate('DeliveryManagerDashboard');
+          } else if (role === 'seller') {
+            navigationRef.current?.navigate('ProductTabs', { session: currentSession });
+          } else {
+            navigationRef.current?.navigate('Catalog');
+          }
+        }
+      } catch (err) {
+        console.warn('[App] Error in navigateToRoleScreen:', err);
+      }
+    };
+
     const fetchAndSetSession = async () => {
       try {
         const { data: { session } = {} } = await supabase.auth.getSession();
         if (isMounted) {
           setSession(session || null);
+          if (session?.user) {
+            navigateToRoleScreen(session.user, session);
+          }
         }
       } catch (err) {
         console.warn('Error fetching session:', err);
@@ -86,10 +123,34 @@ export default function App() {
       }
     }, 2500);
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       if (isMounted) {
-        setSession(session || null);
+        setSession(currentSession || null);
         setLoading(false);
+      }
+
+      if (event === 'SIGNED_OUT' || (!currentSession && event !== 'INITIAL_SESSION')) {
+        try {
+          if (navigationRef.isReady()) {
+            navigationRef.reset({
+              index: 0,
+              routes: [{ name: 'Welcome' }],
+            });
+          }
+        } catch (navErr) {
+          console.warn('[App] Navigation reset on SIGNED_OUT notice:', navErr);
+        }
+      } else if (currentSession?.user && (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'INITIAL_SESSION')) {
+        navigateToRoleScreen(currentSession.user, currentSession);
+
+        // Clean up URL hash / code query on Web for a clean URL bar
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          if (window.location.hash.includes('access_token') || window.location.search.includes('code=')) {
+            try {
+              window.history.replaceState(null, '', window.location.pathname);
+            } catch (_) {}
+          }
+        }
       }
     });
 
@@ -123,24 +184,8 @@ export default function App() {
             console.error('[App] Error setting session from deep link:', error.message);
           } else if (data?.session && isMounted) {
             setSession(data.session);
-
-            // Navigate to appropriate screen based on user role
-            try {
-              const { data: profile } = await supabase
-                .from('profiles')
-                .select('role')
-                .eq('id', data.session.user.id)
-                .maybeSingle();
-
-              if (profile?.role === 'delivery_manager') {
-                navigationRef.current?.navigate('DeliveryManagerDashboard');
-              } else if (profile?.role === 'seller') {
-                navigationRef.current?.navigate('ProductTabs');
-              } else {
-                navigationRef.current?.navigate('Catalog');
-              }
-            } catch (navErr) {
-              navigationRef.current?.navigate('Catalog');
+            if (data.session.user) {
+              navigateToRoleScreen(data.session.user, data.session);
             }
           }
         }
@@ -277,6 +322,31 @@ export default function App() {
 
     savePushToken();
   }, [expoPushToken, session]);
+
+  // Web & In-App Realtime Order Voice Notification listener
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    const channel = supabase
+      .channel(`app_realtime_orders:${session.user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        (payload) => {
+          console.log('[App] Realtime order notification received:', payload.new);
+          try {
+            announceNewOrder(payload.new);
+          } catch (e) {
+            console.warn('[App] Realtime voice announcement error:', e);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id]);
 
   if (loading) {
     return (

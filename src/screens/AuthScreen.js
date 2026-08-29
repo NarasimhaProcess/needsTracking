@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase } from '../services/supabase';
+import { supabase, getAuthRedirectUrl } from '../services/supabase';
 import { StackActions } from '@react-navigation/native';
 
 export default function AuthScreen({ navigation, route }) {
@@ -110,6 +110,7 @@ export default function AuthScreen({ navigation, route }) {
         email: cleanEmail,
         password,
         options: {
+          emailRedirectTo: getAuthRedirectUrl(),
           data: {
             role: userType,
             full_name: fullName.trim(),

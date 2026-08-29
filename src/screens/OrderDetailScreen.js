@@ -15,7 +15,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
-import { printReceipt } from '../services/printerService';
+import { printReceipt, extractOrderNumbers } from '../services/printerService';
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
@@ -372,11 +372,17 @@ const OrderDetailScreen = ({ navigation, route }) => {
   const shipping = getShippingLocation();
   const isDeliveryAssigned = Boolean(order.delivery_manager_id);
   const canUpdateStatus = role === 'seller' || role === 'admin' || role === 'delivery_manager';
+  const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
 
   return (
     <View style={styles.mainContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Order #{order.order_number || order.id.substring(0, 8)}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Order #{orderNumber}</Text>
+          {dayOrderNo ? (
+            <Text style={styles.headerSubTitle}>Day Order No: #{dayOrderNo}</Text>
+          ) : null}
+        </View>
         <View style={styles.headerIcons}>
           <TouchableOpacity style={{ marginRight: 16 }} onPress={() => printReceipt(order)}>
             <Icon name="print" size={22} color="#1E293B" />
@@ -442,8 +448,25 @@ const OrderDetailScreen = ({ navigation, route }) => {
           </View>
         )}
 
-        {/* Order Status Badge */}
+        {/* Order Identification & Status Card */}
         <View style={styles.detailCard}>
+          <View style={styles.orderMetaTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.orderNumberLarge}>Order No: {orderNumber}</Text>
+              {dayOrderNo ? (
+                <Text style={styles.dayOrderHighlight}>Day Order No: #{dayOrderNo}</Text>
+              ) : null}
+            </View>
+            {dayOrderNo ? (
+              <View style={styles.dayOrderBadgeBox}>
+                <Text style={styles.dayOrderBadgeSmall}>DAY ORDER</Text>
+                <Text style={styles.dayOrderBadgeNum}>#{dayOrderNo}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.innerDivider} />
+
           <Text style={styles.label}>Order Status</Text>
           <View style={styles.statusRow}>
             <View style={[styles.statusBadge, getStatusStyle(order.status)]}>
@@ -548,6 +571,53 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#0F172A',
+  },
+  headerSubTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0284C7',
+    marginTop: 2,
+  },
+  orderMetaTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  orderNumberLarge: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  dayOrderHighlight: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0284C7',
+    marginTop: 3,
+  },
+  dayOrderBadgeBox: {
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  dayOrderBadgeSmall: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#0369A1',
+    letterSpacing: 0.5,
+  },
+  dayOrderBadgeNum: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0284C7',
+  },
+  innerDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 12,
   },
   headerIcons: {
     flexDirection: 'row',

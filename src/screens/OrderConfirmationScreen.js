@@ -7,12 +7,13 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { printReceipt } from '../services/printerService';
+import { printReceipt, extractOrderNumbers } from '../services/printerService';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
 
 const OrderConfirmationScreen = ({ navigation, route }) => {
   const { order, customerId } = route?.params || {};
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
 
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>
@@ -25,7 +26,10 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
       <View style={styles.container}>
         <Icon name="check-circle" size={80} color="green" style={styles.successIcon} />
         <Text style={styles.title}>Thank You for Your Order!</Text>
-        <Text style={styles.orderId}>Order ID: {order?.id || 'N/A'}</Text>
+        <Text style={styles.orderId}>Order No: {orderNumber}</Text>
+        {dayOrderNo ? (
+          <Text style={styles.dayOrderId}>Day Order No: #{dayOrderNo}</Text>
+        ) : null}
         <Text style={styles.totalAmount}>Total Amount: ₹{order?.total_amount || '0.00'}</Text>
 
         <View style={styles.printActionRow}>
@@ -89,6 +93,14 @@ const styles = StyleSheet.create({
   },
   orderId: {
     fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  dayOrderId: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0284C7',
     marginBottom: 10,
   },
   totalAmount: {

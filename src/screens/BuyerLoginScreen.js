@@ -11,7 +11,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, signInWithGoogle, addToCart } from '../services/supabase';
+import { supabase, signInWithGoogle, addToCart, getAuthRedirectUrl } from '../services/supabase';
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
@@ -120,7 +120,7 @@ export default function BuyerLoginScreen({ navigation, route }) {
     }
 
     supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: 'needstracking://reset-password',
+      redirectTo: getAuthRedirectUrl(),
     }).then(() => {
       Alert.alert('Success', 'Password reset email sent. Please check your inbox.');
     }).catch((error) => {

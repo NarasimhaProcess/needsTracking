@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase, signInWithGoogle } from '../services/supabase';
+import { supabase, signInWithGoogle, getAuthRedirectUrl } from '../services/supabase';
 import { StackActions } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
@@ -120,9 +120,9 @@ export default function SellerLoginScreen({ navigation, route }) {
     }
 
     supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: 'user-tracking-mobile://reset-password',
+      redirectTo: getAuthRedirectUrl(),
     }).then(() => {
-      Alert.alert('Success', 'Password reset email sent');
+      Alert.alert('Success', 'Password reset email sent. Please check your inbox.');
     }).catch((error) => {
       Alert.alert('Error', error.message);
     });

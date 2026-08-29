@@ -132,123 +132,139 @@ export default function SellersMapScreen() {
     }
   }, []);
 
-  // Fetch user location & sellers asynchronously with complete try/catch protection
+  // Parallelized fetch for sellers data from Supabase
+  const fetchSellersData = useCallback(async () => {
+    try {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, mobile, role, address_line_1, address_line_2, city, state, zip_code, latitude, longitude, avatar_url')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null);
+
+      if (profilesError) {
+        console.warn('Profiles fetch notice in SellersMapScreen:', profilesError.message);
+      } else if (profilesData && Array.isArray(profilesData)) {
+        let productsCountMap = {};
+        try {
+          const { data: prodData } = await supabase
+            .from('products')
+            .select('id, user_id, customer_id');
+          if (prodData && Array.isArray(prodData)) {
+            prodData.forEach((p) => {
+              const uId = p?.user_id || p?.customer_id;
+              if (uId) {
+                productsCountMap[uId] = (productsCountMap[uId] || 0) + 1;
+              }
+            });
+          }
+        } catch (_) {}
+
+        const formattedSellers = profilesData
+          .filter((p) => p && p.latitude && p.longitude)
+          .map((p) => ({
+            id: p.id,
+            full_name: p.full_name || 'Seller Store',
+            email: p.email,
+            mobile: p.mobile,
+            role: p.role,
+            city: p.city || '',
+            address: [p.address_line_1, p.address_line_2, p.city, p.state].filter(Boolean).join(', '),
+            latitude: Number(p.latitude),
+            longitude: Number(p.longitude),
+            productCount: productsCountMap[p.id] || 0,
+            avatar_url: p.avatar_url,
+          }));
+
+        setSellers(formattedSellers);
+        return formattedSellers;
+      }
+    } catch (err) {
+      console.warn('fetchSellersData exception:', err);
+    }
+    return [];
+  }, []);
+
+  // Safe non-blocking GPS Location lookup
+  const fetchLocationData = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        try {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            timeout: 3000,
+          });
+          if (loc?.coords) {
+            setUserLocation(loc.coords);
+            return loc.coords;
+          }
+        } catch (locErr) {
+          try {
+            const lastKnown = await Location.getLastKnownPositionAsync({});
+            if (lastKnown?.coords) {
+              setUserLocation(lastKnown.coords);
+              return lastKnown.coords;
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (permErr) {
+      console.warn('Location lookup notice:', permErr.message);
+    }
+    return null;
+  }, []);
+
+  // Fetch sellers & user location in parallel
   const initData = useCallback(async () => {
     try {
       setLoading(true);
-      let userCoords = null;
 
-      // 1. Safe GPS Location lookup (strict timeout to never hang on Android APK)
-      try {
-        console.log('[SellersMapScreen] Requesting foreground location permissions...');
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        console.log('[SellersMapScreen] Foreground permission status:', status);
-        if (status === 'granted') {
-          try {
-            const loc = await Location.getCurrentPositionAsync({
-              accuracy: Location.Accuracy.Balanced,
-              timeout: 3500,
-            });
-            if (loc?.coords) {
-              userCoords = loc.coords;
-              setUserLocation(loc.coords);
-            }
-          } catch (locErr) {
-            console.warn('Primary location lookup notice:', locErr.message);
-            try {
-              const lastKnown = await Location.getLastKnownPositionAsync({});
-              if (lastKnown?.coords) {
-                userCoords = lastKnown.coords;
-                setUserLocation(lastKnown.coords);
-              }
-            } catch (fallbackErr) {
-              console.warn('Fallback location lookup notice:', fallbackErr.message);
-            }
-          }
+      const [fetchedSellers, fetchedCoords] = await Promise.all([
+        fetchSellersData(),
+        fetchLocationData(),
+      ]);
+
+      if (fetchedSellers && fetchedSellers.length > 0) {
+        if (fetchedCoords) {
+          const sorted = [...fetchedSellers].sort((a, b) => {
+            return (
+              getRawDistanceKm(fetchedCoords.latitude, fetchedCoords.longitude, a.latitude, a.longitude) -
+              getRawDistanceKm(fetchedCoords.latitude, fetchedCoords.longitude, b.latitude, b.longitude)
+            );
+          });
+          setSelectedSeller(sorted[0]);
         } else {
-          Alert.alert(
-            'Location Permission Required',
-            'To see your location and find nearest sellers on the map, please grant location access permissions in your device settings.',
-            [{ text: 'OK' }]
-          );
+          setSelectedSeller(fetchedSellers[0]);
         }
-      } catch (permErr) {
-        console.warn('Location permission request notice:', permErr.message);
-      }
 
-      // 2. Fetch Sellers from profiles table with latitude & longitude
-      try {
-        const { data: profilesData, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id, full_name, email, mobile, role, address_line_1, address_line_2, city, state, zip_code, latitude, longitude, avatar_url')
-          .or('role.eq.seller,role.eq.admin')
-          .not('latitude', 'is', null)
-          .not('longitude', 'is', null);
-
-        if (profilesError) {
-          console.warn('Non-fatal error fetching sellers from profiles:', profilesError.message);
-        } else if (profilesData && Array.isArray(profilesData)) {
-          // Fetch products count per seller
-          let productsCountMap = {};
-          try {
-            const { data: prodData } = await supabase
-              .from('products')
-              .select('id, user_id');
-            if (prodData && Array.isArray(prodData)) {
-              prodData.forEach((p) => {
-                if (p?.user_id) {
-                  productsCountMap[p.user_id] = (productsCountMap[p.user_id] || 0) + 1;
-                }
-              });
-            }
-          } catch (prodErr) {
-            console.warn('Error fetching products count:', prodErr.message);
+        // Send map update command dynamically
+        sendMapCommand(`
+          if (window.updateMapData) {
+            window.updateMapData(${JSON.stringify(fetchedSellers)}, ${JSON.stringify(fetchedCoords)});
           }
-
-          const formattedSellers = profilesData
-            .filter((p) => p && p.latitude && p.longitude)
-            .map((p) => ({
-              id: p.id,
-              full_name: p.full_name || 'Seller Store',
-              email: p.email,
-              mobile: p.mobile,
-              role: p.role,
-              city: p.city || '',
-              address: [p.address_line_1, p.address_line_2, p.city, p.state].filter(Boolean).join(', '),
-              latitude: Number(p.latitude),
-              longitude: Number(p.longitude),
-              productCount: productsCountMap[p.id] || 0,
-              avatar_url: p.avatar_url,
-            }));
-
-          setSellers(formattedSellers);
-
-          // Select closest seller initially
-          if (formattedSellers.length > 0 && userCoords) {
-            const sorted = [...formattedSellers].sort((a, b) => {
-              return (
-                getRawDistanceKm(userCoords.latitude, userCoords.longitude, a.latitude, a.longitude) -
-                getRawDistanceKm(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude)
-              );
-            });
-            setSelectedSeller(sorted[0]);
-          } else if (formattedSellers.length > 0) {
-            setSelectedSeller(formattedSellers[0]);
-          }
-        }
-      } catch (fetchErr) {
-        console.warn('Seller fetch exception:', fetchErr.message);
+        `);
       }
     } catch (err) {
       console.warn('Data initialization notice:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchSellersData, fetchLocationData, sendMapCommand]);
 
   useEffect(() => {
     initData();
   }, [initData]);
+
+  // Keep map synchronized whenever sellers or userLocation changes
+  useEffect(() => {
+    if (sellers.length > 0 || userLocation) {
+      sendMapCommand(`
+        if (window.updateMapData) {
+          window.updateMapData(${JSON.stringify(sellers)}, ${JSON.stringify(userLocation)});
+        }
+      `);
+    }
+  }, [sellers, userLocation, sendMapCommand]);
 
   // Search area and sellers with try/catch
   const fetchSuggestions = async (text) => {
@@ -444,7 +460,10 @@ export default function SellersMapScreen() {
           try {
             setIsMenuVisible(false);
             await supabase.auth.signOut();
-            navigation.replace('Welcome');
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Welcome' }],
+            });
           } catch (err) {
             console.error('Logout error:', err);
           }
@@ -488,7 +507,16 @@ export default function SellersMapScreen() {
       }
       if (!raw) return;
 
-      if (raw.type === 'viewProducts') {
+      if (raw.type === 'mapReady') {
+        // Map is initialized inside WebView; immediately push latest data
+        if (sellers.length > 0 || userLocation) {
+          sendMapCommand(`
+            if (window.updateMapData) {
+              window.updateMapData(${JSON.stringify(sellers)}, ${JSON.stringify(userLocation)});
+            }
+          `);
+        }
+      } else if (raw.type === 'viewProducts') {
         safeNavigate('Catalog', { userId: raw.sellerId, sellerId: raw.sellerId });
       } else if (raw.type === 'sellerClicked') {
         setSelectedSeller(raw.seller);
@@ -648,18 +676,16 @@ export default function SellersMapScreen() {
                 var map = L.map('mapid', { zoomControl: false }).setView([${initialLat}, ${initialLon}], ${initialZoom});
                 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-                // Use Voyager basemaps which work very fast and reliable in mobile WebViews
+                // Use Voyager basemaps which work very fast and reliably in mobile WebViews
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
                     maxZoom: 19
                 }).addTo(map);
 
-                // Safe invalidateSize callback to ensure map displays correctly inside Android layout containers
-                window.onload = function() {
-                    setTimeout(function() {
-                        map.invalidateSize();
-                    }, 400);
-                };
+                window.map = map;
+                window.sellerMarkers = {};
+                window.markerLayerGroup = L.layerGroup().addTo(map);
+                window.userMarker = null;
 
                 function postMessage(data) {
                     try {
@@ -683,78 +709,113 @@ export default function SellersMapScreen() {
                     postMessage({ type: 'getDirections', latitude: latitude, longitude: longitude, name: name });
                 }
 
-                var sellers = ${JSON.stringify(sellers)};
-                var userLocation = ${JSON.stringify(userLocation)};
-                var sellerMarkers = {};
-                window.sellerMarkers = sellerMarkers;
-                window.map = map;
+                window.updateMapData = function(sellersData, userLoc) {
+                    try {
+                        if (!window.map) return;
+                        if (window.markerLayerGroup) {
+                            window.markerLayerGroup.clearLayers();
+                        } else {
+                            window.markerLayerGroup = L.layerGroup().addTo(window.map);
+                        }
+                        if (window.userMarker) {
+                            window.map.removeLayer(window.userMarker);
+                            window.userMarker = null;
+                        }
 
-                if (userLocation && userLocation.latitude && userLocation.longitude) {
-                    var userIcon = L.divIcon({
-                        className: 'user-pulse-container',
-                        html: '<div class="user-pulse"></div>',
-                        iconSize: [18, 18],
-                        iconAnchor: [9, 9]
-                    });
-                    L.marker([userLocation.latitude, userLocation.longitude], { icon: userIcon })
-                        .addTo(map)
-                        .bindPopup('<b>You are here</b>');
+                        var boundsPoints = [];
+
+                        if (userLoc && userLoc.latitude && userLoc.longitude) {
+                            boundsPoints.push([userLoc.latitude, userLoc.longitude]);
+                            var userIcon = L.divIcon({
+                                className: 'user-pulse-container',
+                                html: '<div class="user-pulse"></div>',
+                                iconSize: [18, 18],
+                                iconAnchor: [9, 9]
+                            });
+                            window.userMarker = L.marker([userLoc.latitude, userLoc.longitude], { icon: userIcon })
+                                .addTo(window.map)
+                                .bindPopup('<b>You are here</b>');
+                        }
+
+                        window.sellerMarkers = {};
+                        if (sellersData && sellersData.length > 0) {
+                            sellersData.forEach(function(seller) {
+                                if (!seller || !seller.latitude || !seller.longitude) return;
+                                boundsPoints.push([seller.latitude, seller.longitude]);
+
+                                var sellerIcon = L.divIcon({
+                                    className: 'seller-icon-wrapper',
+                                    html: '<div class="seller-pin"><i class="fas fa-store"></i></div>',
+                                    iconSize: [42, 42],
+                                    iconAnchor: [21, 42],
+                                    popupAnchor: [0, -42]
+                                });
+
+                                var safeName = (seller.full_name || 'Seller Store').replace(/'/g, "\\'");
+                                var popupHtml =
+                                    '<div class="popup-header">' +
+                                        '<i class="fas fa-store" style="color:#007AFF; font-size:18px;"></i>' +
+                                        '<h4 class="popup-title">' + (seller.full_name || 'Seller Store') + '</h4>' +
+                                    '</div>' +
+                                    '<div class="popup-tag">Verified Seller</div>' +
+                                    (seller.city ? '<div class="popup-info-row"><i class="fas fa-map-marker-alt" style="color:#64748B;"></i> ' + seller.city + '</div>' : '') +
+                                    (seller.mobile ? '<div class="popup-info-row"><i class="fas fa-phone" style="color:#64748B;"></i> ' + seller.mobile + '</div>' : '') +
+                                    (seller.productCount > 0 ? '<div class="popup-info-row"><i class="fas fa-box-open" style="color:#10B981;"></i> ' + seller.productCount + ' Products available</div>' : '') +
+                                    '<button class="popup-btn-primary" onclick="viewProducts(\'' + seller.id + '\')">' +
+                                        '<i class="fas fa-shopping-bag"></i> Browse Store' +
+                                    '</button>' +
+                                    '<button class="popup-btn-secondary" onclick="getDirections(' + seller.latitude + ', ' + seller.longitude + ', \'' + safeName + '\')">' +
+                                        '<i class="fas fa-directions"></i> Get Directions' +
+                                    '</button>';
+
+                                var marker = L.marker([seller.latitude, seller.longitude], { icon: sellerIcon })
+                                    .bindPopup(popupHtml, { className: 'custom-popup' });
+
+                                marker.on('click', function() {
+                                    postMessage({ type: 'sellerClicked', seller: seller });
+                                });
+
+                                window.markerLayerGroup.addLayer(marker);
+                                window.sellerMarkers[seller.id] = marker;
+                            });
+                        }
+
+                        if (boundsPoints.length > 0) {
+                            window.sellerBounds = L.latLngBounds(boundsPoints);
+                            if (userLoc && userLoc.latitude && userLoc.longitude) {
+                                window.map.setView([userLoc.latitude, userLoc.longitude], 13);
+                            } else if (boundsPoints.length === 1) {
+                                window.map.setView(boundsPoints[0], 14);
+                            } else {
+                                window.map.fitBounds(window.sellerBounds.pad(0.2));
+                            }
+                        } else if (userLoc && userLoc.latitude && userLoc.longitude) {
+                            window.map.setView([userLoc.latitude, userLoc.longitude], 13);
+                        }
+
+                        setTimeout(function() {
+                            window.map.invalidateSize();
+                        }, 250);
+                    } catch (e) {
+                        console.error('updateMapData error:', e);
+                    }
+                };
+
+                // Initial render with embedded data if present
+                var initialSellers = ${JSON.stringify(sellers)};
+                var initialUserLoc = ${JSON.stringify(userLocation)};
+                if (initialSellers.length > 0 || initialUserLoc) {
+                    window.updateMapData(initialSellers, initialUserLoc);
                 }
 
-                if (sellers && sellers.length > 0) {
-                    var boundsPoints = [];
+                // Notify parent that map is ready
+                postMessage({ type: 'mapReady' });
 
-                    sellers.forEach(function(seller) {
-                        if (!seller || !seller.latitude || !seller.longitude) return;
-                        boundsPoints.push([seller.latitude, seller.longitude]);
-
-                        var sellerIcon = L.divIcon({
-                            className: 'seller-icon-wrapper',
-                            html: '<div class="seller-pin"><i class="fas fa-store"></i></div>',
-                            iconSize: [42, 42],
-                            iconAnchor: [21, 42],
-                            popupAnchor: [0, -42]
-                        });
-
-                        var popupHtml =
-                            '<div class="popup-header">' +
-                                '<i class="fas fa-store" style="color:#007AFF; font-size:18px;"></i>' +
-                                '<h4 class="popup-title">' + (seller.full_name || 'Seller Store') + '</h4>' +
-                            '</div>' +
-                            '<div class="popup-tag">Verified Seller</div>' +
-                            (seller.city ? '<div class="popup-info-row"><i class="fas fa-map-marker-alt" style="color:#64748B;"></i> ' + seller.city + '</div>' : '') +
-                            (seller.mobile ? '<div class="popup-info-row"><i class="fas fa-phone" style="color:#64748B;"></i> ' + seller.mobile + '</div>' : '') +
-                            (seller.productCount > 0 ? '<div class="popup-info-row"><i class="fas fa-box-open" style="color:#10B981;"></i> ' + seller.productCount + ' Products available</div>' : '') +
-                            '<button class="popup-btn-primary" onclick="viewProducts(\'' + seller.id + '\')">' +
-                                '<i class="fas fa-shopping-bag"></i> Browse Store' +
-                            '</button>' +
-                            '<button class="popup-btn-secondary" onclick="getDirections(' + seller.latitude + ', ' + seller.longitude + ', \'' + (seller.full_name || 'Seller').replace(/'/g, "\\'") + '\')">' +
-                                '<i class="fas fa-directions"></i> Get Directions' +
-                            '</button>';
-
-                        var marker = L.marker([seller.latitude, seller.longitude], { icon: sellerIcon })
-                            .addTo(map)
-                            .bindPopup(popupHtml, { className: 'custom-popup' });
-
-                        marker.on('click', function() {
-                            postMessage({ type: 'sellerClicked', seller: seller });
-                        });
-
-                        sellerMarkers[seller.id] = marker;
-                    });
-
-                    if (boundsPoints.length > 0) {
-                        window.sellerBounds = L.latLngBounds(boundsPoints);
-                    }
-
-                    if (userLocation && userLocation.latitude && userLocation.longitude) {
-                        map.setView([userLocation.latitude, userLocation.longitude], 13);
-                    } else if (boundsPoints.length > 0) {
-                        map.fitBounds(window.sellerBounds.pad(0.2));
-                    }
-                } else if (userLocation) {
-                    map.setView([userLocation.latitude, userLocation.longitude], 13);
-                }
+                window.onload = function() {
+                    setTimeout(function() {
+                        map.invalidateSize();
+                    }, 350);
+                };
             } catch (mapErr) {
                 console.error('Leaflet initialization error:', mapErr);
             }
@@ -880,6 +941,7 @@ export default function SellersMapScreen() {
 
       {/* Interactive Map View */}
       <UniversalWebView
+        key={`sellers-map-${sellers.length > 0 ? 'loaded' : 'init'}`}
         ref={webViewRef}
         originWhitelist={['*']}
         source={{ html: htmlContent, baseUrl: '' }}

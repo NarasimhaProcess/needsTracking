@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase, signInWithGoogle } from '../services/supabase';
+import { supabase, signInWithGoogle, getAuthRedirectUrl } from '../services/supabase';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
@@ -122,10 +122,10 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
       return;
     }
 
-    supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'user-tracking-mobile://reset-password',
+    supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: getAuthRedirectUrl(),
     }).then(() => {
-      Alert.alert('Success', 'Password reset email sent');
+      Alert.alert('Success', 'Password reset email sent. Please check your inbox.');
     }).catch((error) => {
       Alert.alert('Error', error.message);
     });

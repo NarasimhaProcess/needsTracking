@@ -19,9 +19,11 @@ A full-stack React Native mobile application supporting **Buyers**, **Sellers**,
 ### 🏪 2. Sellers (Merchants)
 - **Product Management**: Create, edit, and organize multi-variant products with media uploads.
 - **Inventory & Orders**: Real-time stock decrement, counter/shop order processing (dine-in/parcel).
+- **Thermal Receipt Printing**: 58mm / 80mm Bluetooth ESC/POS and Web receipts featuring prominent **Day-Wise Order Numbers (Daily Order / Token #)** and full **Order Numbers**.
+- **Real-Time Voice Announcements**: In-app Web Audio chime alert and Text-to-Speech voice notifications announcing incoming orders and receipts aloud.
 
 ### 🛵 3. Delivery Partners (Delivery Managers)
-- **Instant Order Dispatch**: Orders created by buyers or sellers immediately broadcast to active delivery partners via push notifications and Supabase Realtime.
+- **Instant Order Dispatch**: Orders created by buyers or sellers immediately broadcast to active delivery partners via push notifications, Supabase Realtime, and voice alert announcements.
 - **Available Deliveries Pool**: One-tap **"Accept Delivery"** action to claim unassigned delivery requests.
 - **Active Task Management**: One-tap status transitions (`Start Delivery` $\rightarrow$ `Mark as Delivered`).
 - **Turn-by-Turn Directions**: Direct integration with Google Maps and Apple Maps navigation.

@@ -2,6 +2,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { supabase } from './supabase';
+import { announceOrderPrint } from './speechService';
 
 const PRINTER_STORAGE_KEY = '@printer_config_v1';
 
@@ -92,6 +94,53 @@ export const formatItemRow = (name, qty, price, totalWidth = 32) => {
 };
 
 /**
+ * Helper to parse full order number and day-wise order number from order data.
+ */
+export const extractOrderNumbers = (order = {}) => {
+  if (!order || typeof order !== 'object') {
+    return { orderNumber: 'N/A', dayOrderNo: null };
+  }
+
+  const rawId = order.id || order.order_id || order.orderId || '';
+  const orderNum =
+    order.order_number ||
+    order.orderNumber ||
+    order.order_no ||
+    (rawId ? String(rawId).substring(0, 8).toUpperCase() : 'N/A');
+
+  let dayOrderNo =
+    order.daily_order_number ||
+    order.day_wise_order_number ||
+    order.day_order_no ||
+    order.daily_order_no ||
+    order.dayOrderNo ||
+    order.dailyOrderNumber ||
+    order.day_order_number ||
+    order.token_no ||
+    order.token_number ||
+    order.token ||
+    null;
+
+  // If dayOrderNo is not explicitly set, try extracting from order_number
+  // Examples: '20260829-0001', 'ORD-20260829-0042', '20260829_0012', '#0005', '0005'
+  if (!dayOrderNo && orderNum && typeof orderNum === 'string') {
+    const suffixMatch = orderNum.match(/[-_](\d+)$/);
+    if (suffixMatch && suffixMatch[1]) {
+      dayOrderNo = suffixMatch[1];
+    } else if (/^\d{1,6}$/.test(orderNum.trim())) {
+      dayOrderNo = orderNum.trim();
+    } else if (/^#\d{1,6}$/.test(orderNum.trim())) {
+      dayOrderNo = orderNum.trim().replace(/^#/, '');
+    }
+  }
+
+  return {
+    orderNumber: String(orderNum),
+    dayOrderNo: dayOrderNo ? String(dayOrderNo) : null,
+  };
+};
+
+/**
  * Creates dashed separator line according to paper width.
  */
 export const getSeparator = (totalWidth = 32) => {
@@ -160,11 +209,20 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
 
   // 4. Order Meta
   addBytes(CMD_ALIGN_LEFT);
-  if (data.orderId) {
-    addText(formatTwoColumns(`Order #: ${String(data.orderId).substring(0, 12)}`, '', width));
+
+  // Prominently print Day Order Number if available
+  const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
+  if (dayOrder) {
+    addBytes(CMD_BOLD_ON);
+    addText(formatTwoColumns('Day Order No:', `#${String(dayOrder).replace(/^#/, '')}`, width));
+    addBytes(CMD_BOLD_OFF);
+  }
+
+  if (data.orderId || data.rawOrderId) {
+    addText(formatTwoColumns('Order No:', String(data.orderId || data.rawOrderId), width));
   }
   if (data.date) {
-    addText(formatTwoColumns(`Date: ${data.date}`, '', width));
+    addText(formatTwoColumns('Date:', String(data.date), width));
   }
   if (data.customerName) {
     addText(formatTwoColumns(`Customer: ${data.customerName}`, '', width));
@@ -173,7 +231,13 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
     addText(formatTwoColumns(`Phone: ${data.customerPhone}`, '', width));
   }
   if (data.orderType) {
-    addText(formatTwoColumns(`Type: ${data.orderType.toUpperCase()}`, '', width));
+    addText(formatTwoColumns(`Type: ${String(data.orderType).toUpperCase()}`, '', width));
+  }
+  if (data.tableNo) {
+    addText(formatTwoColumns(`Table: #${data.tableNo}`, '', width));
+  }
+  if (data.deliveryAddress) {
+    addText(`Address: ${data.deliveryAddress.substring(0, width * 2)}`);
   }
 
   // 5. Items Header
@@ -184,13 +248,15 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   addText(separator);
 
   // 6. Items List
-  if (data.items && Array.isArray(data.items)) {
+  if (data.items && Array.isArray(data.items) && data.items.length > 0) {
     data.items.forEach((item) => {
       const name = item.name || 'Item';
       const qty = item.quantity || 1;
       const price = item.price || 0;
       addText(formatItemRow(name, qty, price, width));
     });
+  } else {
+    addText(formatTwoColumns('(No itemized list)', '', width));
   }
 
   // 7. Totals & Summary
@@ -250,22 +316,32 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const is80mm = config.paperWidth === '80mm';
   const widthMm = is80mm ? '72mm' : '48mm';
 
-  const itemsHtml = (data.items || [])
-    .map(
-      (item) => `
+  const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
+
+  const itemsHtml = (data.items && data.items.length > 0)
+    ? data.items
+        .map(
+          (item) => `
+          <tr>
+            <td style="text-align: left; padding: 4px 0; word-break: break-word; font-size: inherit;">${item.name || 'Item'}</td>
+            <td style="text-align: center; padding: 4px 0; font-size: inherit;">x${item.quantity || 1}</td>
+            <td style="text-align: right; padding: 4px 0; font-size: inherit;">₹${parseFloat(item.price || 0).toFixed(2)}</td>
+            <td style="text-align: right; padding: 4px 0; font-size: inherit; font-weight: bold;">₹${parseFloat(item.total !== undefined ? item.total : (item.quantity * item.price)).toFixed(2)}</td>
+          </tr>
+        `
+        )
+        .join('')
+    : `
       <tr>
-        <td style="text-align: left; padding: 3px 0; word-break: break-word;">${item.name || 'Item'}</td>
-        <td style="text-align: center; padding: 3px 0;">x${item.quantity || 1}</td>
-        <td style="text-align: right; padding: 3px 0;">₹${parseFloat(item.price || 0).toFixed(2)}</td>
+        <td colspan="4" style="text-align: center; padding: 8px 0; color: #666; font-style: italic;">(No itemized list)</td>
       </tr>
-    `
-    )
-    .join('');
+    `;
 
   return `
     <!DOCTYPE html>
     <html>
       <head>
+        <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
         <style>
           @page {
@@ -280,36 +356,63 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
             color: #000;
             background: #fff;
             font-size: ${is80mm ? '13px' : '11px'};
-            line-height: 1.3;
+            line-height: 1.35;
           }
           .center { text-align: center; }
           .bold { font-weight: bold; }
           .store-name { font-size: ${is80mm ? '18px' : '15px'}; font-weight: bold; margin-bottom: 3px; }
-          .divider { border-top: 1px dashed #000; margin: 5px 0; }
+          .divider { border-top: 1px dashed #000; margin: 6px 0; }
           .meta-row { display: flex; justify-content: space-between; margin: 2px 0; font-size: ${is80mm ? '12px' : '10px'}; }
-          table { width: 100%; border-collapse: collapse; margin: 5px 0; font-size: inherit; }
-          th { border-bottom: 1px dashed #000; font-weight: bold; padding: 3px 0; }
+          .day-order-box {
+            border: 1.5px dashed #000;
+            padding: 4px 2px;
+            margin: 5px 0;
+            text-align: center;
+          }
+          .day-order-label {
+            font-size: ${is80mm ? '11px' : '9px'};
+            font-weight: bold;
+            letter-spacing: 0.5px;
+          }
+          .day-order-val {
+            font-size: ${is80mm ? '20px' : '17px'};
+            font-weight: 900;
+            margin-top: 1px;
+          }
+          table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: inherit; }
+          th { border-bottom: 1px dashed #000; font-weight: bold; padding: 4px 0; font-size: inherit; }
           .total-row { font-size: ${is80mm ? '16px' : '14px'}; font-weight: bold; margin: 6px 0; display: flex; justify-content: space-between; }
           .footer { margin-top: 10px; font-size: ${is80mm ? '11px' : '10px'}; }
         </style>
       </head>
       <body>
         <div class="center">
-          <div class="store-name">${config.storeName || "RECEIPT"}</div>
+          <div class="store-name">${data.storeName || config.storeName || "RECEIPT"}</div>
           ${config.storeAddress ? `<div>${config.storeAddress}</div>` : ''}
           ${config.storeContact ? `<div>Tel: ${config.storeContact}</div>` : ''}
           ${config.gstNumber ? `<div>GSTIN: ${config.gstNumber}</div>` : ''}
         </div>
 
         <div class="divider"></div>
-        <div class="center bold">${data.title || 'TAX INVOICE / RECEIPT'}</div>
+        <div class="center bold">${data.title || 'TAX INVOICE / ORDER RECEIPT'}</div>
         <div class="divider"></div>
 
-        <div class="meta-row"><span>Order ID:</span><span class="bold">${data.orderId ? String(data.orderId).substring(0, 12) : 'N/A'}</span></div>
-        <div class="meta-row"><span>Date:</span><span>${data.date || new Date().toLocaleDateString()}</span></div>
-        ${data.customerName ? `<div class="meta-row"><span>Customer:</span><span>${data.customerName}</span></div>` : ''}
+        ${dayOrder ? `
+        <div class="day-order-box">
+          <div class="day-order-label">DAY ORDER NO</div>
+          <div class="day-order-val">#${String(dayOrder).replace(/^#/, '')}</div>
+        </div>
+        <div class="divider"></div>
+        ` : ''}
+
+        <div class="meta-row"><span>Order No:</span><span class="bold">${data.orderId || data.rawOrderId || 'N/A'}</span></div>
+        ${dayOrder ? `<div class="meta-row"><span>Day Order No:</span><span class="bold">#${String(dayOrder).replace(/^#/, '')}</span></div>` : ''}
+        <div class="meta-row"><span>Date:</span><span>${data.date || new Date().toLocaleString()}</span></div>
+        ${data.customerName ? `<div class="meta-row"><span>Customer:</span><span class="bold">${data.customerName}</span></div>` : ''}
         ${data.customerPhone ? `<div class="meta-row"><span>Mobile:</span><span>${data.customerPhone}</span></div>` : ''}
         ${data.orderType ? `<div class="meta-row"><span>Type:</span><span class="bold">${String(data.orderType).toUpperCase()}</span></div>` : ''}
+        ${data.tableNo ? `<div class="meta-row"><span>Table:</span><span class="bold">#${data.tableNo}</span></div>` : ''}
+        ${data.deliveryAddress ? `<div class="meta-row" style="flex-direction:column; margin-top:2px;"><span>Address:</span><span style="font-size:0.9em; word-break:break-word;">${data.deliveryAddress}</span></div>` : ''}
 
         <div class="divider"></div>
         <table>
@@ -317,6 +420,7 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
             <tr>
               <th style="text-align: left;">ITEM</th>
               <th style="text-align: center;">QTY</th>
+              <th style="text-align: right;">RATE</th>
               <th style="text-align: right;">AMT</th>
             </tr>
           </thead>
@@ -585,47 +689,183 @@ export const printDataPayload = async (dataPayload) => {
 export const printReceipt = async (orderDetails, options = {}) => {
   if (!orderDetails) {
     Alert.alert('Error', 'No order details available to print.');
-    return;
+    return { success: false, error: 'No order details provided' };
   }
 
   try {
-    const items = (orderDetails.order_items || []).map((item) => {
+    let order = typeof orderDetails === 'string' ? { id: orderDetails } : { ...orderDetails };
+    const orderId = order.id || order.order_id || order.orderId;
+
+    // 1. If order_items are not present or empty, auto-fetch full order details from Supabase
+    if (orderId && (!order.order_items || !Array.isArray(order.order_items) || order.order_items.length === 0)) {
+      try {
+        const { data: fetchedOrder, error: fetchErr } = await supabase
+          .from('orders')
+          .select(`
+            *,
+            order_items (
+              id,
+              quantity,
+              price,
+              product_variant_combination_id,
+              product_variant_combinations (
+                id,
+                combination_string,
+                price,
+                products (
+                  id,
+                  product_name,
+                  customer_id,
+                  user_id
+                )
+              )
+            )
+          `)
+          .eq('id', orderId)
+          .maybeSingle();
+
+        if (!fetchErr && fetchedOrder) {
+          order = { ...order, ...fetchedOrder };
+        }
+      } catch (dbErr) {
+        console.warn('[PrinterService] Auto-fetching order items notice:', dbErr);
+      }
+    }
+
+    // 2. Parse Shipping Address / Contact Info
+    let shippingObj = null;
+    if (order.shipping_address) {
+      if (typeof order.shipping_address === 'object') {
+        shippingObj = order.shipping_address;
+      } else if (typeof order.shipping_address === 'string') {
+        try {
+          shippingObj = JSON.parse(order.shipping_address);
+        } catch (_) {
+          shippingObj = { address: order.shipping_address };
+        }
+      }
+    }
+
+    let customerName =
+      shippingObj?.name ||
+      order.customer_name ||
+      order.customerName ||
+      '';
+
+    let customerPhone =
+      shippingObj?.phone ||
+      shippingObj?.mobile ||
+      order.customer_mobile ||
+      order.customer_phone ||
+      order.customerPhone ||
+      '';
+
+    // If customer details still missing, query user profile by user_id
+    if ((!customerName || !customerPhone) && order.user_id) {
+      try {
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('full_name, mobile')
+          .eq('id', order.user_id)
+          .maybeSingle();
+
+        if (userProfile) {
+          if (!customerName && userProfile.full_name) customerName = userProfile.full_name;
+          if (!customerPhone && userProfile.mobile) customerPhone = userProfile.mobile;
+        }
+      } catch (_) {}
+    }
+
+    // 3. Process line items with comprehensive fallbacks
+    const rawItems = order.order_items || order.items || order.cart_items || [];
+    const items = rawItems.map((item) => {
+      const prodCombo = item.product_variant_combinations;
+      const prod = prodCombo?.products || item.products || item.product;
       const productName =
-        item.product_variant_combinations?.products?.product_name ||
+        prod?.product_name ||
         item.product_name ||
-        'Product';
-      const variantStr =
-        item.product_variant_combinations?.combination_string
-          ? ` (${item.product_variant_combinations.combination_string})`
-          : '';
+        item.itemName ||
+        item.item_name ||
+        item.name ||
+        item.title ||
+        'Item';
+
+      const comboStr = prodCombo?.combination_string || item.combination_string || item.variant || item.variant_name;
+      const variantStr = (comboStr && comboStr.trim().toLowerCase() !== 'default')
+        ? ` (${comboStr})`
+        : '';
+
+      const quantity = Number(item.quantity || item.qty || item.count || 1);
+      const unitPrice = Number(
+        item.price !== undefined && item.price !== null
+          ? item.price
+          : (prodCombo?.price !== undefined ? prodCombo.price : (item.amount || 0))
+      );
+
       return {
         name: `${productName}${variantStr}`,
-        quantity: item.quantity || 1,
-        price: item.price || 0,
+        quantity,
+        price: unitPrice,
+        total: quantity * unitPrice,
       };
     });
 
+    const subtotal = order.subtotal !== undefined
+      ? Number(order.subtotal)
+      : (items.length > 0
+          ? items.reduce((sum, it) => sum + it.total, 0)
+          : Number(order.total_amount || 0));
+
+    const total = order.total_amount !== undefined
+      ? Number(order.total_amount)
+      : (subtotal + Number(order.delivery_fee || 0) - Number(order.discount_amount || order.discount || 0));
+
+    const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
+    const resolvedDayOrderNo = options.dayOrderNo || options.dailyOrderNumber || dayOrderNo;
+
+    const formattedAddress = shippingObj
+      ? [shippingObj.address, shippingObj.city, shippingObj.postalCode || shippingObj.postal_code, shippingObj.country].filter(Boolean).join(', ')
+      : (typeof order.shipping_address === 'string' ? order.shipping_address : '');
+
+    const orderType = order.order_type || (order.table_no ? (order.table_no === 'Parcel' ? 'Takeaway / Parcel' : `Dine-In (Table #${order.table_no})`) : 'Delivery');
+
     const payload = {
-      title: 'TAX INVOICE / ORDER RECEIPT',
-      orderId: orderDetails.id || orderDetails.order_number,
-      date: orderDetails.created_at
-        ? new Date(orderDetails.created_at).toLocaleString()
-        : new Date().toLocaleString(),
-      customerName: orderDetails.profiles?.full_name || orderDetails.customer_name || '',
-      customerPhone: orderDetails.profiles?.mobile || orderDetails.customer_mobile || '',
-      orderType: orderDetails.order_type || (orderDetails.table_no ? `Dine-In (Table ${orderDetails.table_no})` : 'Delivery'),
+      title: options.title || 'TAX INVOICE / ORDER RECEIPT',
+      orderId: orderNumber,
+      rawOrderId: orderId,
+      dayOrderNo: resolvedDayOrderNo || null,
+      dailyOrderNumber: resolvedDayOrderNo || null,
+      dayWiseOrderNo: resolvedDayOrderNo || null,
+      date: order.created_at
+        ? new Date(order.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+        : new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      customerName,
+      customerPhone,
+      deliveryAddress: formattedAddress,
+      orderType,
+      tableNo: order.table_no,
       items,
-      subtotal: orderDetails.subtotal || orderDetails.total_amount,
-      deliveryFee: orderDetails.delivery_fee || 0,
-      discount: orderDetails.discount_amount || 0,
-      total: orderDetails.total_amount || 0,
-      paymentMethod: orderDetails.payment_method || 'CASH',
-      paymentStatus: orderDetails.payment_status || (orderDetails.status === 'completed' ? 'PAID' : 'PENDING'),
+      subtotal,
+      deliveryFee: Number(order.delivery_fee || 0),
+      discount: Number(order.discount_amount || order.discount || 0),
+      total,
+      paymentMethod: String(order.payment_method || 'CASH').toUpperCase(),
+      paymentStatus: String(order.payment_status || (order.status === 'completed' || order.status === 'paid' ? 'PAID' : 'PENDING')).toUpperCase(),
+      storeName: options.storeName || undefined,
     };
 
     const result = await printDataPayload(payload);
+
+    // Voice announcement (speaks order number & day order number on Web and Mobile)
+    try {
+      announceOrderPrint(payload);
+    } catch (speechErr) {
+      console.warn('[PrinterService] Speech announcement notice:', speechErr);
+    }
+
     return result;
   } catch (err) {
+    console.error('[PrinterService] printReceipt error:', err);
     Alert.alert(
       'Print Failed',
       `Could not print receipt: ${err.message || err}.\n\nPlease ensure your printer is powered on or select printer settings.`,
@@ -695,7 +935,10 @@ export const printTestReceipt = async () => {
   const config = await getPrinterConfig();
   const payload = {
     title: '=== PRINTER TEST SLIP ===',
-    orderId: 'TEST-9999',
+    orderId: '20260829-0001',
+    dayOrderNo: '0001',
+    dailyOrderNumber: '0001',
+    dayWiseOrderNo: '0001',
     date: new Date().toLocaleString(),
     items: [
       { name: '58mm/80mm Alignment Test', quantity: 1, price: 10.0 },

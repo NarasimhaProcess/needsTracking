@@ -1093,40 +1093,73 @@ export async function getOrders(userId) {
 }
 
 export async function getOrderById(orderId) {
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      *,
-      order_items (
-        id,
-        quantity,
-        price,
-        product_variant_combinations (
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        order_items (
           id,
-          combination_string,
-          products (
+          quantity,
+          price,
+          product_variant_combination_id,
+          product_variant_combinations (
             id,
-            product_name,
-            product_media (media_url, media_type)
+            combination_string,
+            price,
+            products (
+              id,
+              product_name,
+              product_media (media_url, media_type)
+            )
           )
         )
-      ),
-      profiles!orders_delivery_manager_id_fkey (
-        full_name,
-        mobile,
-        latest_delivery_manager_locations (
-          location
-        )
-      )
-    `)
-    .eq('id', orderId)
-    .single();
+      `)
+      .eq('id', orderId)
+      .maybeSingle();
 
-  if (error) {
-    console.error('Error fetching order by ID:', error.message);
+    if (error) {
+      console.error('Error fetching order by ID:', error.message);
+      return null;
+    }
+
+    if (!data) return null;
+
+    // Fetch buyer profile if user_id is set
+    if (data.user_id) {
+      try {
+        const { data: userProf } = await supabase
+          .from('profiles')
+          .select('id, full_name, mobile, email')
+          .eq('id', data.user_id)
+          .maybeSingle();
+        if (userProf) {
+          data.customer_profile = userProf;
+          if (!data.customer_name && userProf.full_name) data.customer_name = userProf.full_name;
+          if (!data.customer_mobile && userProf.mobile) data.customer_mobile = userProf.mobile;
+        }
+      } catch (_) {}
+    }
+
+    // Fetch delivery manager profile if assigned
+    if (data.delivery_manager_id) {
+      try {
+        const { data: dmProf } = await supabase
+          .from('profiles')
+          .select('id, full_name, mobile')
+          .eq('id', data.delivery_manager_id)
+          .maybeSingle();
+        if (dmProf) {
+          data.delivery_manager_profile = dmProf;
+        }
+      } catch (_) {}
+    }
+
+    return data;
+  } catch (err) {
+    console.error('getOrderById exception:', err);
     return null;
   }
-  return data;
 }
 
 export async function updateOrderStatus(orderId, newStatus) {
@@ -1300,13 +1333,94 @@ export async function getProductsInRange(latitude, longitude, radius) {
 }
 
 /**
+ * Calculate the exact callback URL for OAuth and Email Confirmation
+ * Works on Web, GitHub Pages subpaths, and Native Mobile deep links.
+ */
+export function getAuthRedirectUrl() {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined') {
+      const origin = window.location.origin;
+      let pathname = window.location.pathname || '';
+      // Remove specific file names like index.html if present
+      if (pathname.endsWith('.html')) {
+        pathname = pathname.substring(0, pathname.lastIndexOf('/') + 1);
+      }
+      if (!pathname.endsWith('/')) {
+        pathname = pathname + '/';
+      }
+      return `${origin}${pathname}`;
+    }
+    return 'https://narasimhaprocess.github.io/needsTracking/';
+  }
+
+  return AuthSession.makeRedirectUri({
+    scheme: 'needstracking',
+    path: 'auth/callback',
+  });
+}
+
+/**
+ * Ensures user profile exists in `profiles` table after OAuth or Email login
+ */
+export async function ensureUserProfile(user, defaultRole = 'customer') {
+  if (!user || !user.id) return null;
+  try {
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (existingProfile) {
+      return existingProfile;
+    }
+
+    const fullName =
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      user.email?.split('@')[0] ||
+      'User';
+    const role = user.user_metadata?.role || defaultRole;
+
+    const newProfile = {
+      id: user.id,
+      full_name: fullName,
+      email: user.email || '',
+      role: role,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (user.user_metadata?.mobile) {
+      newProfile.mobile = user.user_metadata.mobile;
+    }
+
+    const { data, error: insertErr } = await supabase
+      .from('profiles')
+      .upsert(newProfile)
+      .select()
+      .maybeSingle();
+
+    if (insertErr) {
+      console.warn('[ensureUserProfile] Upsert notice:', insertErr.message);
+    }
+    return data || newProfile;
+  } catch (err) {
+    console.error('[ensureUserProfile] Error:', err);
+    return null;
+  }
+}
+
+/**
  * Sign in / Sign up with Google OAuth via Supabase
  * @param {string} defaultRole - Role to assign if new profile ('customer' / 'buyer')
  */
 export async function signInWithGoogle(defaultRole = 'customer') {
   try {
+    const redirectUrl = getAuthRedirectUrl();
+    console.log('[Google Auth] Using redirect URL:', redirectUrl);
+
     if (Platform.OS === 'web') {
-      const redirectUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -1322,12 +1436,6 @@ export async function signInWithGoogle(defaultRole = 'customer') {
     }
 
     // Native Mobile (Expo Go / Standalone / Dev Build)
-    const redirectUrl = AuthSession.makeRedirectUri({
-      scheme: 'needstracking',
-      path: 'auth/callback',
-    });
-    console.log('[Google Auth] Using redirect URL:', redirectUrl);
-
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -1370,22 +1478,7 @@ export async function signInWithGoogle(defaultRole = 'customer') {
         if (sessionError) throw sessionError;
 
         if (sessionData?.user) {
-          const user = sessionData.user;
-          const { data: existingProfile } = await supabase
-            .from('profiles')
-            .select('id, role')
-            .eq('id', user.id)
-            .maybeSingle();
-
-          if (!existingProfile) {
-            await supabase.from('profiles').upsert({
-              id: user.id,
-              full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Buyer',
-              email: user.email,
-              role: defaultRole,
-              created_at: new Date().toISOString(),
-            });
-          }
+          await ensureUserProfile(sessionData.user, defaultRole);
         }
 
         return { user: sessionData.user, session: sessionData.session, success: true };

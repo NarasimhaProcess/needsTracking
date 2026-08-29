@@ -395,7 +395,27 @@ src/
 - Map visualization
 - Geofencing capabilities
 
----
+### **5. 🧾 Thermal Receipt Printing & Day-Wise Order Numbers**
+- **Dual Number System**:
+  - **Full Order Number**: Unique system identifier (e.g. `20260829-0001` or custom order ID).
+  - **Day-Wise Order Number (Daily Order / Token #)**: The daily sequence for today (e.g. `#0001`, `#1`), extracted automatically from the order sequence or database field.
+- **ESC/POS Thermal Printer Support (58mm / 80mm)**:
+  - Generates raw ESC/POS command bytes with bold, double-size store header, prominent **Day Order No: #0001**, full **Order No**, itemized rows, tax/delivery fees, and feed/cut commands.
+- **Universal Web / PDF / iframe Printing**:
+  - Renders a styled thermal receipt with a prominent top dashed **DAY ORDER NO** banner for quick kitchen and cashier identification.
+- **UI Integration**:
+  - Displays Order No and Day Order No in `OrderDetailScreen`, `OrderListScreen` (with dual search support), and `OrderConfirmationScreen`.
+
+### **6. 🔊 Web & Mobile Real-Time Voice Notifications**
+- **Browser Web Speech Synthesis API**:
+  - Seamlessly announces incoming orders and receipt printouts using the browser's built-in `window.speechSynthesis` without third-party plugins.
+- **Audible Notification Chime (Web Audio API)**:
+  - Plays a 2-tone melodic chime (`D5 -> A5`) before voice announcement so kitchen staff and cashiers instantly hear new orders.
+- **Real-Time Supabase Order Listener**:
+  - `App.js` and `DeliveryManagerDashboard.js` subscribe to `orders` table `INSERT` events via WebSockets to trigger instantaneous chime and voice alerts.
+- **Voice Format**:
+  - *"New Order Received! Day Order Number 1. Order Number 20260829-0001. Total 350 Rupees."*
+  - *"Daily Order Number 1. Order Number 20260829-0001. Table number 5. Total amount 250 Rupees."*
 
 ## 🎯 **User Types & Permissions**
 

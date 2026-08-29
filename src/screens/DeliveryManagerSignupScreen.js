@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase, signInWithGoogle } from '../services/supabase';
+import { supabase, signInWithGoogle, getAuthRedirectUrl } from '../services/supabase';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import { ActivityIndicator } from 'react-native';
@@ -72,6 +72,7 @@ export default function DeliveryManagerSignupScreen({ navigation }) {
         email: email.trim(),
         password,
         options: {
+          emailRedirectTo: getAuthRedirectUrl(),
           data: {
             full_name: name.trim(),
             name: name.trim(),

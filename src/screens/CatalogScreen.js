@@ -691,10 +691,63 @@ const CatalogScreen = ({ navigation, route }) => {
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Catalog</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Icon name="close" size={24} color="#333" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            style={{ marginRight: 12 }}
+            onPress={() => {
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Welcome' }],
+              });
+            }}
+          >
+            <Icon name="home" size={22} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Catalog</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {user && (
+            <TouchableOpacity
+              style={{ marginRight: 15 }}
+              onPress={() => {
+                Alert.alert('Logout', 'Are you sure you want to log out?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Logout',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await supabase.auth.signOut();
+                        navigation.reset({
+                          index: 0,
+                          routes: [{ name: 'Welcome' }],
+                        });
+                      } catch (err) {
+                        console.error('Logout error in CatalogScreen:', err);
+                      }
+                    },
+                  },
+                ]);
+              }}
+            >
+              <Icon name="sign-out" size={20} color="#EF4444" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Welcome' }],
+                });
+              }
+            }}
+          >
+            <Icon name="close" size={22} color="#333" />
+          </TouchableOpacity>
+        </View>
       </View>
       <FlatList
         data={filteredProducts}

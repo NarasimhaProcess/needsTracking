@@ -21,6 +21,7 @@ import {
   updateDeliveryPartnerLocation,
 } from '../services/supabase';
 import * as Location from 'expo-location';
+import { announceNewOrder } from '../services/speechService';
 
 const DeliveryManagerDashboard = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('available'); // 'available' | 'active' | 'completed'
@@ -79,6 +80,7 @@ const DeliveryManagerDashboard = ({ navigation }) => {
               console.log('[DeliveryDashboard] Realtime order change received:', payload.eventType);
               fetchAllOrders(user.id);
               if (payload.eventType === 'INSERT') {
+                announceNewOrder(payload.new);
                 Alert.alert('🛵 New Order Received!', 'A new delivery order has just been placed and is ready for pickup.');
               }
             }
@@ -207,7 +209,24 @@ const DeliveryManagerDashboard = ({ navigation }) => {
       'Are you sure you want to log out from Delivery Manager?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', onPress: () => supabase.auth.signOut() },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (locationSubscription.current) {
+                locationSubscription.current.remove();
+              }
+              await supabase.auth.signOut();
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Welcome' }],
+              });
+            } catch (err) {
+              console.error('Logout error in DeliveryManagerDashboard:', err);
+            }
+          },
+        },
       ]
     );
   };

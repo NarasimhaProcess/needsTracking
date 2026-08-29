@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert, TextInput } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
+import { printReceipt, extractOrderNumbers } from '../services/printerService';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 
@@ -38,9 +39,15 @@ const OrderListScreen = ({ navigation, route }) => {
     let filtered = orders;
 
     if (searchQuery) {
-      filtered = filtered.filter(order =>
-        order.order_number && order.order_number.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+      filtered = filtered.filter(order => {
+        const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
+        const query = searchQuery.toLowerCase().trim();
+        return (
+          (orderNumber && orderNumber.toLowerCase().includes(query)) ||
+          (dayOrderNo && dayOrderNo.toLowerCase().includes(query)) ||
+          (order.id && order.id.toLowerCase().includes(query))
+        );
+      });
     }
 
     if (selectedStatus) {
@@ -128,28 +135,43 @@ const OrderListScreen = ({ navigation, route }) => {
     );
   };
 
-  const renderOrderItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.orderItem}
-      onPress={() => navigation.navigate('OrderDetail', { orderId: item.id })}
-    >
-      <View style={styles.orderHeader}>
-        <Text style={styles.orderId}>Order No: {item.order_number}</Text>
-        <Text style={styles.orderStatus}>Status: {item.status}</Text>
-      </View>
-      <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
-      <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
-      {item.table_no && <Text style={styles.orderDate}>Table No: {item.table_no}</Text>}
-      <View style={styles.actionButtons}>
-        <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id })}>
-          <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => handleDeleteOrder(item.id)}>
-          <Icon name="trash" size={20} color="#FF3B30" style={styles.actionIcon} />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+  const renderOrderItem = ({ item }) => {
+    const { orderNumber, dayOrderNo } = extractOrderNumbers(item);
+    return (
+      <TouchableOpacity
+        style={styles.orderItem}
+        onPress={() => navigation.navigate('OrderDetail', { orderId: item.id })}
+      >
+        <View style={styles.orderHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.orderId}>Order No: {orderNumber}</Text>
+            {dayOrderNo ? (
+              <Text style={styles.dayOrderId}>Day Order No: #{dayOrderNo}</Text>
+            ) : null}
+          </View>
+          <Text style={styles.orderStatus}>Status: {item.status}</Text>
+        </View>
+        <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
+        <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
+        {item.table_no && <Text style={styles.orderDate}>Table No: {item.table_no}</Text>}
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            onPress={() => printReceipt(item)}
+            style={{ marginRight: 8 }}
+            accessibilityLabel="Print Receipt"
+          >
+            <Icon name="print" size={20} color="#10B981" style={styles.actionIcon} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id })}>
+            <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => handleDeleteOrder(item.id)}>
+            <Icon name="trash" size={20} color="#FF3B30" style={styles.actionIcon} />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   if (loading) {
     return (
@@ -162,12 +184,36 @@ const OrderListScreen = ({ navigation, route }) => {
   return (
     <View style={{flex: 1, backgroundColor: 'white'}}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Your Orders</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            style={{ marginRight: 12 }}
+            onPress={() => {
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Welcome' }],
+              });
+            }}
+          >
+            <Icon name="home" size={22} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Your Orders</Text>
+        </View>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => navigation.navigate('Invoice')} style={{ marginRight: 15 }}>
             <Icon name="file-text" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
+          <TouchableOpacity
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Welcome' }],
+                });
+              }
+            }}
+          >
             <Icon name="close" size={24} color="#333" />
           </TouchableOpacity>
         </View>
@@ -330,7 +376,13 @@ const styles = StyleSheet.create({
   orderId: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#555',
+    color: '#1E293B',
+  },
+  dayOrderId: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0284C7',
+    marginTop: 2,
   },
   orderStatus: {
     fontSize: 14,
