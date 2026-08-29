@@ -270,34 +270,41 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   };
 
   const handleMediaPick = async (mediaType) => {
-    let result;
-    if (mediaType === 'image') {
-      result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: true,
-        quality: 1,
-      });
-    } else if (mediaType === 'video') {
-      result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-        allowsMultipleSelection: true,
-        quality: 1,
-      });
-    }
-
-    if (!result.canceled) {
-      const newMedia = [];
-      for (const asset of result.assets) {
-        if (mediaType === 'video' && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
-          Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
-          continue;
-        }
-        newMedia.push({ uri: asset.uri, type: mediaType });
+    try {
+      let result;
+      if (mediaType === 'image') {
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsMultipleSelection: true,
+          quality: 1,
+        });
+      } else if (mediaType === 'video') {
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          allowsMultipleSelection: true,
+          quality: 1,
+        });
       }
-      setSelectedMedia((prevMedia) => [
-        ...prevMedia,
-        ...newMedia,
-      ]);
+
+      if (result && !result.canceled && result.assets && result.assets.length > 0) {
+        const newMedia = [];
+        for (const asset of result.assets) {
+          if (mediaType === 'video' && asset.size && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+            Alert.alert('Video Too Large', `Video file ${asset.name || 'selected'} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+            continue;
+          }
+          if (asset.uri) {
+            newMedia.push({ uri: asset.uri, type: mediaType });
+          }
+        }
+        setSelectedMedia((prevMedia) => [
+          ...prevMedia,
+          ...newMedia,
+        ]);
+      }
+    } catch (err) {
+      console.warn('Error selecting media:', err);
+      Alert.alert('Media Selection', 'Could not open file picker. Please try again.');
     }
   };
 

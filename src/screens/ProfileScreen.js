@@ -209,33 +209,41 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   const handleUpiQrUpload = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
-      return;
-    }
-
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      setLoading(true);
-      const imageUrl = result.assets[0].uri;
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const uploadedUrl = await uploadQrImage(user.id, imageUrl);
-        if (uploadedUrl) {
-          await addQrCode(user.id, uploadedUrl, 'My UPI QR', true);
-          setUpiQrCodeUrl(uploadedUrl);
-          Alert.alert('Success', 'UPI QR Code uploaded successfully.');
-        } else {
-          Alert.alert('Error', 'Failed to upload QR code.');
+    try {
+      if (Platform.OS !== 'web') {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+          return;
         }
       }
+
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: Platform.OS !== 'web',
+        aspect: [4, 3],
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setLoading(true);
+        const imageUrl = result.assets[0].uri;
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const uploadedUrl = await uploadQrImage(user.id, imageUrl);
+          if (uploadedUrl) {
+            await addQrCode(user.id, uploadedUrl, 'My UPI QR', true);
+            setUpiQrCodeUrl(uploadedUrl);
+            Alert.alert('Success', 'UPI QR Code uploaded successfully.');
+          } else {
+            Alert.alert('Error', 'Failed to upload QR code. Please try again.');
+          }
+        }
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error('Error during UPI QR upload:', err);
+      Alert.alert('Upload Failed', err.message || 'Could not pick or upload image.');
       setLoading(false);
     }
   };

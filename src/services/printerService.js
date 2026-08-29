@@ -451,8 +451,101 @@ const sendBytesViaWebBluetooth = async (uint8Bytes) => {
 };
 
 /**
+ * Browser-isolated receipt printing via hidden iframe with popup fallback for Web/GitHub Pages.
+ */
+export const printHtmlOnWeb = (html) => {
+  return new Promise((resolve) => {
+    try {
+      if (typeof document === 'undefined') {
+        resolve({ success: false, error: 'Document not available' });
+        return;
+      }
+
+      // Remove any leftover temporary print iframes
+      const existing = document.getElementById('thermal-print-iframe');
+      if (existing && existing.parentNode) {
+        existing.parentNode.removeChild(existing);
+      }
+
+      const iframe = document.createElement('iframe');
+      iframe.id = 'thermal-print-iframe';
+      iframe.setAttribute(
+        'style',
+        'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:0;visibility:hidden;z-index:-9999;'
+      );
+      document.body.appendChild(iframe);
+
+      const frameDoc = iframe.contentWindow || iframe.contentDocument;
+      const targetDoc = frameDoc.document || frameDoc;
+
+      targetDoc.open();
+      targetDoc.write(html);
+      targetDoc.close();
+
+      let printed = false;
+      const executePrint = () => {
+        if (printed) return;
+        printed = true;
+        try {
+          if (iframe.contentWindow) {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+          }
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+            resolve({ success: true, mode: 'web_iframe' });
+          }, 1200);
+        } catch (e) {
+          console.warn('[PrinterService] Iframe print failed, attempting popup fallback:', e);
+          try {
+            const printWin = window.open('', '_blank', 'width=450,height=650');
+            if (printWin) {
+              printWin.document.write(html);
+              printWin.document.close();
+              printWin.focus();
+              printWin.print();
+              setTimeout(() => {
+                try { printWin.close(); } catch (_) {}
+              }, 1200);
+              resolve({ success: true, mode: 'web_popup' });
+            } else {
+              window.print();
+              resolve({ success: true, mode: 'window_print' });
+            }
+          } catch (winErr) {
+            console.error('[PrinterService] Popup print error:', winErr);
+            resolve({ success: false, error: winErr });
+          }
+        }
+      };
+
+      if (iframe.contentWindow) {
+        iframe.contentWindow.onload = executePrint;
+        setTimeout(executePrint, 350);
+      } else {
+        executePrint();
+      }
+    } catch (err) {
+      console.error('[PrinterService] Web print initialization failed:', err);
+      try {
+        if (typeof window !== 'undefined') {
+          window.print();
+          resolve({ success: true, mode: 'window_print' });
+        } else {
+          resolve({ success: false, error: err });
+        }
+      } catch (fallbackErr) {
+        resolve({ success: false, error: fallbackErr });
+      }
+    }
+  });
+};
+
+/**
  * Universal Print Execution:
- * Dispatches to Web Bluetooth BLE or System Print (expo-print/AirPrint/PDF).
+ * Dispatches to Web Bluetooth BLE, Web Iframe Print, or System Print (expo-print/AirPrint/PDF).
  */
 export const printDataPayload = async (dataPayload) => {
   const config = await getPrinterConfig();
@@ -468,11 +561,15 @@ export const printDataPayload = async (dataPayload) => {
     }
   }
 
-  // 2. Universal printing via expo-print
+  // 2. Universal printing: Web iframe receipt or native expo-print
   try {
     const html = generateReceiptHtml(dataPayload, config);
-    await Print.printAsync({ html });
-    return { success: true, mode: 'system' };
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      return await printHtmlOnWeb(html);
+    } else {
+      await Print.printAsync({ html });
+      return { success: true, mode: 'system' };
+    }
   } catch (printErr) {
     console.error('[PrinterService] Print error:', printErr);
     throw printErr;

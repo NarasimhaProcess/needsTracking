@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Button, Image, Alert, StyleSheet, ScrollView, FlatList, Modal, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, TextInput, Button, Image, Alert, StyleSheet, ScrollView, FlatList, Modal, TouchableOpacity, Dimensions, Platform } from 'react-native';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
-import { supabase } from '../services/supabase'; // Assuming you have this setup
+import { supabase, extractFileDetails } from '../services/supabase'; // Assuming you have this setup
 import { v4 as uuidv4 } from 'uuid'; // For unique filenames
 import * as FileSystem from 'expo-file-system';
 import Icon from 'react-native-vector-icons/FontAwesome';
@@ -176,42 +176,86 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
   const uploadFile = async (file) => {
     let manipulatedFile = file;
-    if (file.mimeType.startsWith('image')) {
-      const manipResult = await ImageManipulator.manipulateAsync(
-        file.uri,
-        [],
-        { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
-      );
-      manipulatedFile = { ...file, uri: manipResult.uri };
+    const isImage = file.mimeType && file.mimeType.startsWith('image');
+    if (isImage) {
+      try {
+        const manipResult = await ImageManipulator.manipulateAsync(
+          file.uri,
+          [],
+          { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+        );
+        if (manipResult && manipResult.uri) {
+          manipulatedFile = { ...file, uri: manipResult.uri };
+        }
+      } catch (manipErr) {
+        console.warn('Image manipulation skipped:', manipErr.message);
+      }
     }
 
-    const fileExt = manipulatedFile.uri.split('.').pop();
-    const fileName = `${uuidv4()}.${fileExt}`;
-    const filePath = `damage_reports/${fileName}`;
-
-    const base64 = await FileSystem.readAsStringAsync(manipulatedFile.uri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-
-    const fileData = new Uint8Array(
-      atob(base64).split("").map((c) => c.charCodeAt(0))
+    const { extension, contentType, fileName } = extractFileDetails(
+      manipulatedFile.uri || file.name,
+      file.mimeType?.startsWith('video') ? 'video' : 'image'
     );
+    const uniqueFileName = `${uuidv4()}.${extension}`;
+    const filePath = `damage_reports/${uniqueFileName}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from('damage_photos')
-      .upload(filePath, fileData, {
-        contentType: file.mimeType,
-      });
-
-    if (uploadError) {
-      throw uploadError;
+    let fileData = null;
+    if (Platform.OS === 'web' || (typeof window !== 'undefined' && typeof fetch === 'function')) {
+      try {
+        const fileResponse = await fetch(manipulatedFile.uri);
+        fileData = await fileResponse.blob();
+      } catch (blobErr) {
+        console.warn('Web fetch blob failed:', blobErr.message);
+      }
     }
 
-    const { data } = supabase.storage
-      .from('damage_photos')
-      .getPublicUrl(filePath);
+    if (!fileData) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(manipulatedFile.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        fileData = new Uint8Array(
+          atob(base64).split("").map((c) => c.charCodeAt(0))
+        );
+      } catch (fsErr) {
+        console.error('FileSystem read failed:', fsErr.message);
+      }
+    }
 
-    return data.publicUrl;
+    if (!fileData) {
+      throw new Error('Unable to read image file data.');
+    }
+
+    let publicUrl = null;
+    const bucketsToTry = ['damage_photos', 'productsmedia', 'locationtracker'];
+    for (const bucketName of bucketsToTry) {
+      try {
+        const { error: uploadError } = await supabase.storage
+          .from(bucketName)
+          .upload(filePath, fileData, {
+            contentType: file.mimeType || contentType,
+            upsert: true,
+          });
+
+        if (!uploadError) {
+          const { data } = supabase.storage
+            .from(bucketName)
+            .getPublicUrl(filePath);
+          if (data?.publicUrl) {
+            publicUrl = data.publicUrl;
+            break;
+          }
+        }
+      } catch (bErr) {
+        console.warn(`Bucket ${bucketName} upload error:`, bErr.message);
+      }
+    }
+
+    if (!publicUrl) {
+      throw new Error('Failed to upload damage photo to storage.');
+    }
+
+    return publicUrl;
   };
 
   const handleSubmit = async () => {

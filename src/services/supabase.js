@@ -66,6 +66,46 @@ export async function createProduct(productData) {
   return data ? data[0] : null;
 }
 
+export function extractFileDetails(uri, defaultMediaType = 'image') {
+  const isVideo = defaultMediaType === 'video';
+  let extension = isVideo ? 'mp4' : 'jpg';
+  let contentType = isVideo ? 'video/mp4' : 'image/jpeg';
+
+  if (typeof uri === 'string') {
+    if (uri.startsWith('data:image/png')) {
+      extension = 'png';
+      contentType = 'image/png';
+    } else if (uri.startsWith('data:image/webp')) {
+      extension = 'webp';
+      contentType = 'image/webp';
+    } else if (uri.startsWith('data:image/gif')) {
+      extension = 'gif';
+      contentType = 'image/gif';
+    } else if (uri.startsWith('data:video/mp4')) {
+      extension = 'mp4';
+      contentType = 'video/mp4';
+    } else {
+      const cleanPath = uri.split('?')[0].split('#')[0];
+      const match = cleanPath.match(/\.([a-zA-Z0-9]{2,5})$/);
+      if (match && match[1]) {
+        const ext = match[1].toLowerCase();
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'webm'].includes(ext)) {
+          extension = ext === 'jpeg' ? 'jpg' : ext;
+          if (extension === 'png') contentType = 'image/png';
+          else if (extension === 'webp') contentType = 'image/webp';
+          else if (extension === 'gif') contentType = 'image/gif';
+          else if (extension === 'mp4') contentType = 'video/mp4';
+          else if (extension === 'mov' || extension === 'webm') contentType = `video/${extension}`;
+          else contentType = 'image/jpeg';
+        }
+      }
+    }
+  }
+
+  const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${extension}`;
+  return { extension, contentType, fileName };
+}
+
 export async function saveProductMedia(productId, mediaData, mediaType, userId, accessToken) {
   const normalizedMediaType = mediaType === 'video' ? 'video' : 'image';
   
@@ -87,25 +127,24 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
     return mediaData;
   } else {
     try {
-      const cleanUri = mediaData.split('?')[0];
-      const fileExtension = cleanUri.split('.').pop() || (mediaType === 'video' ? 'mp4' : 'jpg');
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExtension}`;
+      const { extension, contentType, fileName } = extractFileDetails(mediaData, normalizedMediaType);
       const filePath = `product_media/${productId}/${fileName}`;
       const finalEdgePath = userId ? `${userId}/${filePath}` : filePath;
-      const contentType = mediaType === 'video' ? `video/${fileExtension}` : `image/${fileExtension}`;
 
       let publicUrl = null;
       let fileData = null;
 
       // Safe binary data conversion for Web, iOS, and Android
-      if (Platform.OS === 'web') {
+      if (Platform.OS === 'web' || (typeof window !== 'undefined' && typeof fetch === 'function')) {
         try {
           const fileResponse = await fetch(mediaData);
           fileData = await fileResponse.blob();
         } catch (webBlobErr) {
           console.warn('Web blob fetch failed:', webBlobErr.message);
         }
-      } else {
+      }
+      
+      if (!fileData) {
         try {
           const fileResponse = await fetch(mediaData);
           fileData = await fileResponse.blob();
@@ -128,8 +167,13 @@ export async function saveProductMedia(productId, mediaData, mediaType, userId, 
         }
       }
 
+      if (!fileData) {
+        console.error('saveProductMedia: Unable to obtain file binary data.');
+        return null;
+      }
+
       // Primary Attempt: Try storage buckets
-      const bucketsToTry = ['productsmedia', 'locationtracker', 'chat_media', 'damage_photos'];
+      const bucketsToTry = ['productsmedia', 'locationtracker', 'chat_media', 'damage_photos', 'qr_codes'];
       for (const bucketName of bucketsToTry) {
         if (!fileData) break;
         try {
@@ -787,24 +831,36 @@ export async function deleteOrder(orderId) {
 
 export async function uploadQrImage(userId, imageUri) {
   try {
-    const cleanUri = (imageUri || '').split('?')[0];
-    const rawExt = cleanUri.split('.').pop() || 'jpg';
-    const fileExtension = rawExt.length > 5 ? 'jpg' : rawExt.toLowerCase();
-    const fileName = `${Date.now()}-${userId}.${fileExtension}`;
-    const filePath = `qr_codes/${userId}/${fileName}`;
-    const contentType = fileExtension === 'png' ? 'image/png' : 'image/jpeg';
+    const { extension, contentType, fileName } = extractFileDetails(imageUri, 'image');
+    const qrFileName = `${Date.now()}-${userId}.${extension}`;
+    const filePath = `qr_codes/${userId}/${qrFileName}`;
 
-    let fileData;
-    if (Platform.OS === 'web') {
-      const fileResponse = await fetch(imageUri);
-      fileData = await fileResponse.blob();
-    } else {
-      const base64 = await FileSystem.readAsStringAsync(imageUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      fileData = new Uint8Array(
-        atob(base64).split("").map((c) => c.charCodeAt(0))
-      );
+    let fileData = null;
+    if (Platform.OS === 'web' || (typeof window !== 'undefined' && typeof fetch === 'function')) {
+      try {
+        const fileResponse = await fetch(imageUri);
+        fileData = await fileResponse.blob();
+      } catch (webBlobErr) {
+        console.warn('Web blob fetch failed in uploadQrImage:', webBlobErr.message);
+      }
+    }
+    
+    if (!fileData) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(imageUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        fileData = new Uint8Array(
+          atob(base64).split("").map((c) => c.charCodeAt(0))
+        );
+      } catch (fsErr) {
+        console.error('FileSystem read error in uploadQrImage:', fsErr.message);
+      }
+    }
+
+    if (!fileData) {
+      console.error('uploadQrImage: Unable to obtain QR image binary data.');
+      return null;
     }
 
     let publicUrl = null;

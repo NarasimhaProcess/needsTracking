@@ -58,10 +58,17 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
   const handleScanBluetooth = async () => {
     setScanning(true);
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.bluetooth) {
-        const result = await scanAndConnectWebBluetooth();
-        setConfig(result.config);
-        Alert.alert('Connected!', `Successfully connected to ${result.deviceName}.`);
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.bluetooth) {
+          const result = await scanAndConnectWebBluetooth();
+          setConfig(result.config);
+          Alert.alert('Connected!', `Successfully connected to ${result.deviceName}.`);
+        } else {
+          Alert.alert(
+            'Web Bluetooth Notice',
+            'Direct Bluetooth pairing from the browser is only supported in Chrome, Edge, and Opera (on PC and Android) over HTTPS.\n\nYou can still print receipts directly using your browser\'s Print / PDF dialog!'
+          );
+        }
       } else {
         Alert.alert(
           'Bluetooth Pairing',
