@@ -1,16 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Button, Image, Alert, StyleSheet, ScrollView, FlatList, Modal, TouchableOpacity, Dimensions, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  Image,
+  Alert,
+  StyleSheet,
+  ScrollView,
+  FlatList,
+  Modal,
+  TouchableOpacity,
+  Dimensions,
+  Platform,
+  ActivityIndicator,
+  RefreshControl,
+} from 'react-native';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
-import { supabase, extractFileDetails } from '../services/supabase'; // Assuming you have this setup
-import { v4 as uuidv4 } from 'uuid'; // For unique filenames
+import { supabase, extractFileDetails } from '../services/supabase';
+import { v4 as uuidv4 } from 'uuid';
 import * as FileSystem from 'expo-file-system';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Video } from 'expo-av';
 import UniversalWebView from '../components/UniversalWebView';
-import * as Clipboard from 'expo-clipboard'; // Added for clipboard functionality
+import * as Clipboard from 'expo-clipboard';
+import { Buffer } from 'buffer';
 
 const { width, height } = Dimensions.get('window');
 
@@ -66,6 +82,8 @@ const FieldManagerScreen = ({ navigation, route }) => {
   const [location, setLocation] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [damageReports, setDamageReports] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
@@ -79,6 +97,19 @@ const FieldManagerScreen = ({ navigation, route }) => {
   const fetchDamageReports = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setDamageReports([]);
+        return;
+      }
+
+      let isRoleAdmin = false;
+      try {
+        const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
+        if (profile?.role === 'admin') {
+          isRoleAdmin = true;
+        }
+      } catch (_) {}
+
       let query = supabase.from('damage_reports').select(`
         *,
         damage_report_files (*)
@@ -86,18 +117,21 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
       if (areaId) {
         query = query.eq('area_id', areaId);
-      } else if (user) {
-        query = query.or(`manager_id.eq.${user.id},user_id.eq.${user.id}`);
-      } else {
-        setDamageReports([]);
-        return;
+      } else if (customerId) {
+        query = query.eq('customer_id', customerId);
+      } else if (!isRoleAdmin) {
+        query = query.eq('manager_id', user.id);
       }
 
       const { data, error } = await query.order('reported_at', { ascending: false });
 
       if (error) {
         console.error('Error fetching damage reports:', error.message);
-        setDamageReports([]);
+        const { data: fallbackData } = await supabase
+          .from('damage_reports')
+          .select(`*, damage_report_files (*)`)
+          .order('reported_at', { ascending: false });
+        setDamageReports(fallbackData || []);
         return;
       }
 
@@ -105,6 +139,9 @@ const FieldManagerScreen = ({ navigation, route }) => {
     } catch (err) {
       console.error('Error fetching damage reports:', err);
       setDamageReports([]);
+    } finally {
+      setFetching(false);
+      setRefreshing(false);
     }
   };
 
@@ -112,15 +149,25 @@ const FieldManagerScreen = ({ navigation, route }) => {
     fetchDamageReports();
 
     (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setErrorMsg('Permission to access location was denied');
-        return;
-      }
+      try {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setErrorMsg('Permission to access location was denied');
+          return;
+        }
 
-      let location = await Location.getCurrentPositionAsync({});
-      setLocation(location);
+        let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        setLocation(loc);
+      } catch (locErr) {
+        console.warn('Location initialization error:', locErr);
+      }
     })();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchDamageReports();
+  };
 
     // Optional: Network monitoring
     /*
@@ -136,53 +183,66 @@ const FieldManagerScreen = ({ navigation, route }) => {
   }, [areaId]);
 
   const pickFiles = async () => {
-    let result = await DocumentPicker.getDocumentAsync({
-      type: ['image/*', 'video/*'],
-      multiple: true,
-    });
+    try {
+      let result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'video/*'],
+        multiple: true,
+      });
 
-    if (result.canceled === false) {
-      const newFiles = [];
-      for (const asset of result.assets) {
-        if (asset.mimeType.startsWith('video') && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
-          Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
-          continue;
+      if (result.canceled === false && result.assets) {
+        const newFiles = [];
+        for (const asset of result.assets) {
+          if (asset.mimeType && asset.mimeType.startsWith('video') && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+            Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+            continue;
+          }
+          newFiles.push(asset);
         }
-        newFiles.push(asset);
+        setFiles((prevFiles) => [...prevFiles, ...newFiles]);
       }
-      setFiles(prevFiles => [...prevFiles, ...newFiles]);
+    } catch (err) {
+      console.error('Error picking files:', err);
     }
   };
 
   const takePhoto = async () => {
-    let result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false,
-      quality: 0.5, // Low quality
-    });
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
+        return;
+      }
 
-    if (!result.canceled) {
-      // ImagePicker returns a single asset, DocumentPicker returns an array of assets
-      // Normalize it to an array for consistency with `files` state
-      const newAsset = {
-        uri: result.assets[0].uri,
-        name: result.assets[0].uri.split('/').pop(), // Extract filename from URI
-        mimeType: 'image/jpeg', // Assuming JPEG for camera photos
-        size: 0, // Placeholder, actual size might not be available directly
-      };
-      setFiles(prevFiles => [...prevFiles, newAsset]);
+      let result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.6,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const newAsset = {
+          uri: asset.uri,
+          name: asset.uri.split('/').pop() || `photo_${Date.now()}.jpg`,
+          mimeType: 'image/jpeg',
+          size: asset.fileSize || 0,
+        };
+        setFiles((prevFiles) => [...prevFiles, newAsset]);
+      }
+    } catch (err) {
+      console.error('Error taking photo:', err);
     }
   };
 
   const uploadFile = async (file) => {
     let manipulatedFile = file;
-    const isImage = file.mimeType && file.mimeType.startsWith('image');
-    if (isImage) {
+    const isImage = file.mimeType ? file.mimeType.startsWith('image') : !file.uri?.match(/\.(mp4|mov|webm)$/i);
+    if (isImage && ImageManipulator?.manipulateAsync) {
       try {
         const manipResult = await ImageManipulator.manipulateAsync(
           file.uri,
           [],
-          { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+          { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG }
         );
         if (manipResult && manipResult.uri) {
           manipulatedFile = { ...file, uri: manipResult.uri };
@@ -192,7 +252,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       }
     }
 
-    const { extension, contentType, fileName } = extractFileDetails(
+    const { extension, contentType } = extractFileDetails(
       manipulatedFile.uri || file.name,
       file.mimeType?.startsWith('video') ? 'video' : 'image'
     );
@@ -214,16 +274,21 @@ const FieldManagerScreen = ({ navigation, route }) => {
         const base64 = await FileSystem.readAsStringAsync(manipulatedFile.uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
-        fileData = new Uint8Array(
-          atob(base64).split("").map((c) => c.charCodeAt(0))
-        );
+        if (typeof Buffer !== 'undefined') {
+          const buf = Buffer.from(base64, 'base64');
+          fileData = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+        } else {
+          fileData = new Uint8Array(
+            atob(base64).split('').map((c) => c.charCodeAt(0))
+          ).buffer;
+        }
       } catch (fsErr) {
         console.error('FileSystem read failed:', fsErr.message);
       }
     }
 
     if (!fileData) {
-      throw new Error('Unable to read image file data.');
+      throw new Error('Unable to read media file data.');
     }
 
     let publicUrl = null;
@@ -252,14 +317,14 @@ const FieldManagerScreen = ({ navigation, route }) => {
     }
 
     if (!publicUrl) {
-      throw new Error('Failed to upload damage photo to storage.');
+      throw new Error('Failed to upload media file to storage.');
     }
 
     return publicUrl;
   };
 
   const handleSubmit = async () => {
-    if (!description) {
+    if (!description.trim()) {
       Alert.alert('Missing Information', 'Please provide a description of the damage.');
       return;
     }
@@ -269,7 +334,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       const { data: { user } } = await supabase.auth.getUser();
 
       if (!user) {
-        Alert.alert('Authentication Error', 'User not logged in.');
+        Alert.alert('Authentication Error', 'User not logged in. Please sign in to submit a damage report.');
         setLoading(false);
         return;
       }
@@ -277,7 +342,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       let currentLoc = location;
       if (!currentLoc) {
         try {
-          currentLoc = await Location.getCurrentPositionAsync({});
+          currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           if (currentLoc) setLocation(currentLoc);
         } catch (locErr) {
           console.warn('Could not fetch location:', locErr);
@@ -287,11 +352,11 @@ const FieldManagerScreen = ({ navigation, route }) => {
       const locCoords = currentLoc?.coords || { latitude: 0, longitude: 0 };
 
       const insertPayload = {
-        user_id: user.id,
         manager_id: user.id,
-        latitude: locCoords.latitude,
-        longitude: locCoords.longitude,
-        description: description,
+        latitude: locCoords.latitude || 0,
+        longitude: locCoords.longitude || 0,
+        description: description.trim(),
+        status: 'reported',
       };
 
       if (areaId) {
@@ -301,24 +366,32 @@ const FieldManagerScreen = ({ navigation, route }) => {
         insertPayload.customer_id = customerId;
       }
 
-      const { data: reportData, error: reportError } = await supabase.from('damage_reports').insert(insertPayload).select();
+      const { data: reportData, error: reportError } = await supabase
+        .from('damage_reports')
+        .insert(insertPayload)
+        .select();
 
       if (reportError) {
         throw reportError;
       }
 
-      const newReport = reportData[0];
+      const newReport = reportData?.[0];
 
-      if (files.length > 0) {
+      if (newReport && files.length > 0) {
         for (const file of files) {
-          const fileUrl = await uploadFile(file);
-          const { data, error } = await supabase.from('damage_report_files').insert({
-            damage_report_id: newReport.id,
-            file_url: fileUrl,
-            file_type: file.mimeType,
-            file_name: file.name,
-          });
-          console.log('insert result', { data, error });
+          try {
+            const fileUrl = await uploadFile(file);
+            const fileType = file.mimeType || (file.uri?.match(/\.(mp4|mov|webm)$/i) ? 'video/mp4' : 'image/jpeg');
+            const fileName = file.name || file.uri?.split('/').pop() || 'damage_media';
+            await supabase.from('damage_report_files').insert({
+              damage_report_id: newReport.id,
+              file_url: fileUrl,
+              file_type: fileType,
+              file_name: fileName,
+            });
+          } catch (uploadErr) {
+            console.error('Error uploading file for report:', uploadErr);
+          }
         }
       }
 
@@ -326,11 +399,10 @@ const FieldManagerScreen = ({ navigation, route }) => {
       setDescription('');
       setFiles([]);
       setModalVisible(false);
-      // Refresh the list of reports
       await fetchDamageReports();
     } catch (error) {
-      console.error('Error submitting report:', error.message);
-      Alert.alert('Submission Error', `Failed to submit report: ${error.message}`);
+      console.error('Error submitting report:', error.message || error);
+      Alert.alert('Submission Error', `Failed to submit report: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -348,53 +420,63 @@ const FieldManagerScreen = ({ navigation, route }) => {
         multiple: true,
       });
 
-      if (result.canceled === false) {
+      if (result.canceled === false && result.assets) {
         for (const file of result.assets) {
-          if (file.mimeType.startsWith('video') && file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+          if (file.mimeType && file.mimeType.startsWith('video') && file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
             Alert.alert('Video Too Large', `Video file ${file.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
             continue;
           }
           const fileUrl = await uploadFile(file);
+          const fileType = file.mimeType || (file.uri?.match(/\.(mp4|mov|webm)$/i) ? 'video/mp4' : 'image/jpeg');
           await supabase.from('damage_report_files').insert({
             damage_report_id: selectedReport.id,
             file_url: fileUrl,
-            file_type: file.mimeType,
-            file_name: file.name,
+            file_type: fileType,
+            file_name: file.name || file.uri?.split('/').pop() || 'media_file',
           });
         }
 
-        // Refresh selected report
         const { data, error } = await supabase
           .from('damage_reports')
           .select(`*, damage_report_files (*)`)
           .eq('id', selectedReport.id)
           .single();
 
-        if (!error) {
+        if (!error && data) {
           setSelectedReport(data);
+          setDamageReports((prev) =>
+            prev.map((r) => (r.id === data.id ? data : r))
+          );
         }
       }
     } catch (err) {
-      console.error("Error adding new files:", err.message);
-      Alert.alert("Error", "Could not add new files.");
+      console.error('Error adding new files:', err.message);
+      Alert.alert('Error', 'Could not add new files.');
     }
   };
 
   const takePhotoForExistingReport = async () => {
     setAddFileOptionModalVisible(false);
     try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
+        return;
+      }
+
       let result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: false,
-        quality: 0.5, // Low quality
+        quality: 0.6,
       });
 
-      if (!result.canceled) {
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
         const newAsset = {
-          uri: result.assets[0].uri,
-          name: result.assets[0].uri.split('/').pop(),
+          uri: asset.uri,
+          name: asset.uri.split('/').pop() || `photo_${Date.now()}.jpg`,
           mimeType: 'image/jpeg',
-          size: 0,
+          size: asset.fileSize || 0,
         };
         const fileUrl = await uploadFile(newAsset);
         await supabase.from('damage_report_files').insert({
@@ -404,26 +486,27 @@ const FieldManagerScreen = ({ navigation, route }) => {
           file_name: newAsset.name,
         });
 
-        // Refresh selected report
         const { data, error } = await supabase
           .from('damage_reports')
           .select(`*, damage_report_files (*)`)
           .eq('id', selectedReport.id)
           .single();
 
-        if (!error) {
+        if (!error && data) {
           setSelectedReport(data);
+          setDamageReports((prev) =>
+            prev.map((r) => (r.id === data.id ? data : r))
+          );
         }
       }
     } catch (err) {
-      console.error("Error adding new files:", err.message);
-      Alert.alert("Error", "Could not add new files.");
+      console.error('Error adding photo:', err.message);
+      Alert.alert('Error', 'Could not add new photo.');
     }
   };
 
   const handleDeleteFile = async (file) => {
     try {
-      // Delete from DB
       const { error } = await supabase
         .from('damage_report_files')
         .delete()
@@ -431,28 +514,59 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
       if (error) throw error;
 
-      // Optionally: also delete from storage bucket
-      const filePath = file.file_url.split('/').pop(); // crude extraction
-      await supabase.storage.from('damage_photos').remove([`damage_reports/${filePath}`]);
+      try {
+        const filePath = file.file_url.split('/').pop();
+        await supabase.storage.from('damage_photos').remove([`damage_reports/${filePath}`]);
+      } catch (storageErr) {
+        console.warn('Storage delete notice:', storageErr);
+      }
 
-      // Refresh selected report
       const { data, error: fetchError } = await supabase
         .from('damage_reports')
         .select(`*, damage_report_files (*)`)
         .eq('id', selectedReport.id)
         .single();
 
-      if (!fetchError) {
+      if (!fetchError && data) {
         setSelectedReport(data);
-        // Also update global reports list
         setDamageReports((prev) =>
           prev.map((r) => (r.id === data.id ? data : r))
         );
       }
     } catch (err) {
-      console.error("Error deleting file:", err.message);
-      Alert.alert("Error", "Could not delete file.");
+      console.error('Error deleting file:', err.message);
+      Alert.alert('Error', 'Could not delete file.');
     }
+  };
+
+  const handleDeleteReport = (reportId) => {
+    Alert.alert(
+      'Delete Damage Report',
+      'Are you sure you want to delete this damage report and its attached media?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await supabase.from('damage_report_files').delete().eq('damage_report_id', reportId);
+              const { error } = await supabase.from('damage_reports').delete().eq('id', reportId);
+              if (error) throw error;
+              setDamageReports((prev) => prev.filter((r) => r.id !== reportId));
+              if (selectedReport?.id === reportId) {
+                setPhotoModalVisible(false);
+                setSelectedReport(null);
+              }
+              Alert.alert('Success', 'Damage report deleted.');
+            } catch (err) {
+              console.error('Error deleting report:', err.message);
+              Alert.alert('Error', 'Could not delete report.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleShowMap = (latitude, longitude) => {

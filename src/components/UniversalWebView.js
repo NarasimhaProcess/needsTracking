@@ -1,25 +1,72 @@
-import React from 'react';
+import React, { useImperativeHandle, useRef, useEffect } from 'react';
 import { Platform, View, StyleSheet } from 'react-native';
 
 let WebView;
 if (Platform.OS !== 'web') {
-  WebView = require('react-native-webview').WebView;
+  try {
+    WebView = require('react-native-webview').WebView;
+  } catch (e) {
+    console.warn('Could not require react-native-webview:', e);
+  }
 }
 
 const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props }, ref) => {
+  const iframeRef = useRef(null);
+  const nativeWebviewRef = useRef(null);
+
+  useImperativeHandle(ref, () => ({
+    postMessage: (data) => {
+      try {
+        const payload = typeof data === 'string' ? data : JSON.stringify(data);
+        if (Platform.OS === 'web') {
+          if (iframeRef.current && iframeRef.current.contentWindow) {
+            iframeRef.current.contentWindow.postMessage(payload, '*');
+          }
+        } else {
+          if (nativeWebviewRef.current && nativeWebviewRef.current.postMessage) {
+            nativeWebviewRef.current.postMessage(payload);
+          }
+        }
+      } catch (err) {
+        console.warn('UniversalWebView postMessage error:', err);
+      }
+    },
+    injectJavaScript: (script) => {
+      try {
+        if (Platform.OS === 'web') {
+          if (iframeRef.current && iframeRef.current.contentWindow) {
+            iframeRef.current.contentWindow.postMessage({ type: 'EVAL_SCRIPT', script }, '*');
+          }
+        } else {
+          if (nativeWebviewRef.current && nativeWebviewRef.current.injectJavaScript) {
+            nativeWebviewRef.current.injectJavaScript(script);
+          }
+        }
+      } catch (err) {
+        console.warn('UniversalWebView injectJavaScript error:', err);
+      }
+    },
+    reload: () => {
+      if (Platform.OS === 'web' && iframeRef.current) {
+        const src = iframeRef.current.srcdoc;
+        iframeRef.current.srcdoc = src;
+      } else if (nativeWebviewRef.current && nativeWebviewRef.current.reload) {
+        nativeWebviewRef.current.reload();
+      }
+    },
+  }));
+
   if (Platform.OS === 'web') {
-    // Web implementation using iframe
-    const htmlContent = source.html;
-    
-    // On web, we listen to the standard window message event
-    React.useEffect(() => {
+    const htmlContent = source?.html || '';
+
+    useEffect(() => {
       const handleWebMessage = (event) => {
-        if (onMessage && event.data) {
-          // Wrap the web event to match the native event structure
+        if (onMessage && event && event.data !== undefined) {
           onMessage({
             nativeEvent: {
               data: typeof event.data === 'string' ? event.data : JSON.stringify(event.data)
-            }
+            },
+            data: event.data
           });
         }
       };
@@ -29,13 +76,14 @@ const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props 
     }, [onMessage]);
 
     return (
-      <View key="web-view-container" style={[styles.container, style]}>
+      <View style={[styles.container, style]}>
         <iframe
           id="universal-webview-iframe"
-          ref={ref}
+          ref={iframeRef}
           srcDoc={htmlContent}
           style={{ width: '100%', height: '100%', border: 'none' }}
-          title="web-view"
+          title="universal-map-view"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
           {...props}
         />
       </View>
@@ -45,7 +93,7 @@ const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props 
   // Native implementation
   return (
     <WebView
-      ref={ref}
+      ref={nativeWebviewRef}
       source={source}
       onMessage={onMessage}
       style={style}
@@ -68,3 +116,4 @@ const styles = StyleSheet.create({
 });
 
 export default UniversalWebView;
+

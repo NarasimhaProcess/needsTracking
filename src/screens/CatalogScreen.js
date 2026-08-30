@@ -23,6 +23,7 @@ import ImageViewer from 'react-native-image-zoom-viewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
+import { showAlert } from '../utils/alertUtils';
 
 const { width } = Dimensions.get('window');
 
@@ -369,7 +370,7 @@ const CatalogScreen = ({ navigation, route }) => {
     const stock = combination.quantity !== undefined && combination.quantity !== null ? combination.quantity : 100; 
 
     if (change > 0 && stock > 0 && currentQuantity >= stock) {
-        Alert.alert("Stock Limit", `Sorry, you can only add up to ${stock} items.`);
+        showAlert("Stock Limit", `Sorry, you can only add up to ${stock} items.`);
         setUpdatingCart(false);
         return;
     }
@@ -396,7 +397,7 @@ const CatalogScreen = ({ navigation, route }) => {
             setCart(finalCartData);
         } catch (error) {
             console.error("Error updating cart:", error);
-            Alert.alert("Error", `There was a problem updating your cart: ${error.message}`);
+            showAlert("Error", `There was a problem updating your cart: ${error.message}`);
         } finally {
             setUpdatingCart(false);
         }
@@ -421,12 +422,12 @@ const CatalogScreen = ({ navigation, route }) => {
                     price: combination.price || product.amount || 0,
                     product_name: product.product_name,
                     product_variant_combinations: { 
-                      ...combination, 
-                      products: { 
-                        id: product.id, 
-                        product_name: product.product_name, 
-                        product_media: product.product_media 
-                      } 
+                        ...combination, 
+                        products: { 
+                          id: product.id, 
+                          product_name: product.product_name, 
+                          product_media: product.product_media 
+                        } 
                     }
                 });
             }
@@ -440,7 +441,7 @@ const CatalogScreen = ({ navigation, route }) => {
             await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
             console.error("Error updating guest cart:", error);
-            Alert.alert("Error", "There was a problem updating your cart.");
+            showAlert("Error", "There was a problem updating your cart.");
             setGuestCart(freshGuestCart); // set back to original fresh state on error
         } finally {
             setUpdatingCart(false);
@@ -458,7 +459,7 @@ const CatalogScreen = ({ navigation, route }) => {
     
     const stock = itemToUpdate.product_variant_combinations?.quantity || 100;
     if (newQuantity > stock) {
-        Alert.alert("Stock Limit", `Sorry, you can only have up to ${stock} items in your cart.`);
+        showAlert("Stock Limit", `Sorry, you can only have up to ${stock} items in your cart.`);
         return;
     }
     
@@ -476,7 +477,7 @@ const CatalogScreen = ({ navigation, route }) => {
             setCart(finalCartData);
         } catch (error) {
             console.error("Error updating cart quantity:", error);
-            Alert.alert("Error", "Could not update item quantity.");
+            showAlert("Error", "Could not update item quantity.");
         } finally {
             setUpdatingCart(false);
         }
@@ -493,7 +494,7 @@ const CatalogScreen = ({ navigation, route }) => {
             await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
         } catch (error) {
             console.error("Error updating guest cart quantity:", error);
-            Alert.alert("Error", "Could not update item quantity.");
+            showAlert("Error", "Could not update item quantity.");
             setGuestCart(guestCart);
         } finally {
             setUpdatingCart(false);
@@ -501,34 +502,47 @@ const CatalogScreen = ({ navigation, route }) => {
     }
   };
 
-  const handleRemoveItem = async (cartItemId) => {
-    if (updatingCart) return;
-    setUpdatingCart(true);
+  const handleRemoveItem = (cartItemId) => {
+    showAlert(
+      "Remove Item",
+      "Are you sure you want to remove this item from your cart?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            if (updatingCart) return;
+            setUpdatingCart(true);
 
-    if (user) {
-        try {
-            await removeCartItem(cartItemId);
-            const finalCartData = await getCart(user.id);
-            setCart(finalCartData);
-        } catch (error) {
-            console.error("Error removing item:", error);
-            Alert.alert("Error", "Could not remove item from cart.");
-        } finally {
-            setUpdatingCart(false);
-        }
-    } else {
-        const optimisticGuestCart = guestCart.filter(item => item.product_variant_combination_id !== cartItemId);
-        setGuestCart(optimisticGuestCart);
-        try {
-            await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
-        } catch (error) {
-            console.error("Error removing guest item:", error);
-            Alert.alert("Error", "Could not remove item from cart.");
-            setGuestCart(guestCart);
-        } finally {
-            setUpdatingCart(false);
-        }
-    }
+            if (user) {
+                try {
+                    await removeCartItem(cartItemId);
+                    const finalCartData = await getCart(user.id);
+                    setCart(finalCartData);
+                } catch (error) {
+                    console.error("Error removing item:", error);
+                    showAlert("Error", "Could not remove item from cart.");
+                } finally {
+                    setUpdatingCart(false);
+                }
+            } else {
+                const optimisticGuestCart = guestCart.filter(item => item.product_variant_combination_id !== cartItemId);
+                setGuestCart(optimisticGuestCart);
+                try {
+                    await AsyncStorage.setItem('guest_cart', JSON.stringify(optimisticGuestCart));
+                } catch (error) {
+                    console.error("Error removing guest item:", error);
+                    showAlert("Error", "Could not remove item from cart.");
+                    setGuestCart(guestCart);
+                } finally {
+                    setUpdatingCart(false);
+                }
+            }
+          },
+        },
+      ]
+    );
   };
 
   const openImageViewer = (product) => {
@@ -710,7 +724,7 @@ const CatalogScreen = ({ navigation, route }) => {
             <TouchableOpacity
               style={{ marginRight: 15 }}
               onPress={() => {
-                Alert.alert('Logout', 'Are you sure you want to log out?', [
+                showAlert('Logout', 'Are you sure you want to log out?', [
                   { text: 'Cancel', style: 'cancel' },
                   {
                     text: 'Logout',

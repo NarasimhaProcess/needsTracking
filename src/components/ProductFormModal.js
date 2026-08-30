@@ -14,12 +14,13 @@ import {
   Switch,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import DateTimePickerModal from 'react-native-modal-datetime-picker';
+import UniversalDateTimePicker from './UniversalDateTimePicker';
 import * as ImagePicker from 'expo-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, createProduct, saveProductMedia, createProductVariant, createVariantOption, deleteProductVariants, createProductVariantCombination } from '../services/supabase';
 import { Video } from 'expo-av';
 import VariantManager from './VariantManager';
+import { showAlert } from '../utils/alertUtils';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
@@ -290,7 +291,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         const newMedia = [];
         for (const asset of result.assets) {
           if (mediaType === 'video' && asset.size && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
-            Alert.alert('Video Too Large', `Video file ${asset.name || 'selected'} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+            showAlert('Video Too Large', `Video file ${asset.name || 'selected'} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
             continue;
           }
           if (asset.uri) {
@@ -304,7 +305,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       }
     } catch (err) {
       console.warn('Error selecting media:', err);
-      Alert.alert('Media Selection', 'Could not open file picker. Please try again.');
+      showAlert('Media Selection', 'Could not open file picker. Please try again.');
     }
   };
 
@@ -324,7 +325,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const handleSubmit = async () => {
     setLoading(true);
     if (!userId) {
-      Alert.alert("Error", "User ID is missing. Cannot create/edit product.");
+      showAlert("Error", "User ID is missing. Cannot create/edit product.");
       setLoading(false);
       return;
     }
@@ -353,7 +354,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         .select();
       if (error) {
         console.error("Error updating product:", error.message);
-        Alert.alert("Error", "Failed to update product.");
+        showAlert("Error", "Failed to update product.");
         setLoading(false);
         return;
       }
@@ -429,17 +430,17 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
         }
 
         if (mediaErrors > 0) {
-          Alert.alert("Notice", `Product saved successfully, but ${mediaErrors} image(s) could not be uploaded.`);
+          showAlert("Notice", `Product saved successfully, but ${mediaErrors} image(s) could not be uploaded.`);
         }
 
         onSubmit();
         onClose();
       } catch (e) {
         console.error("Error saving product details:", e.message);
-        Alert.alert("Error", `Failed to save product details: ${e.message}`);
+        showAlert("Error", `Failed to save product details: ${e.message}`);
       }
     } else {
-      Alert.alert("Error", "Failed to save product.");
+      showAlert("Error", "Failed to save product.");
     }
     setLoading(false);
   };
@@ -622,7 +623,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
             <TouchableOpacity onPress={() => setShowStartDatePicker(true)} style={styles.datePickerButton}>
               <Text>Start Date: {startDate.toLocaleDateString()}</Text>
             </TouchableOpacity>
-            <DateTimePickerModal
+            <UniversalDateTimePicker
               isVisible={showStartDatePicker}
               mode="date"
               onConfirm={(date) => {
@@ -636,7 +637,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
             <TouchableOpacity onPress={() => setShowEndDatePicker(true)} style={styles.datePickerButton}>
               <Text>End Date: {endDate.toLocaleDateString()}</Text>
             </TouchableOpacity>
-            <DateTimePickerModal
+            <UniversalDateTimePicker
               isVisible={showEndDatePicker}
               mode="date"
               onConfirm={(date) => {
@@ -648,9 +649,9 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
             />
 
             <TouchableOpacity onPress={() => setShowVisibleFromPicker(true)} style={styles.datePickerButton}>
-              <Text>Visible From: {visibleFrom.toLocaleTimeString()}</Text>
+              <Text>Visible From: {visibleFrom.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
             </TouchableOpacity>
-            <DateTimePickerModal
+            <UniversalDateTimePicker
               isVisible={showVisibleFromPicker}
               mode="time"
               onConfirm={(date) => {
@@ -662,9 +663,9 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
             />
 
             <TouchableOpacity onPress={() => setShowVisibleToPicker(true)} style={styles.datePickerButton}>
-              <Text>Visible To: {visibleTo.toLocaleTimeString()}</Text>
+              <Text>Visible To: {visibleTo.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
             </TouchableOpacity>
-            <DateTimePickerModal
+            <UniversalDateTimePicker
               isVisible={showVisibleToPicker}
               mode="time"
               onConfirm={(date) => {

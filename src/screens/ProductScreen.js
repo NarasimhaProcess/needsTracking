@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { supabase, getProductsWithDetails, deleteProductMedia, deleteProduct } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import { showAlert } from '../utils/alertUtils';
 // import { Video } from 'expo-av'; // Temporarily commented out
 
 import ProductFormModal from '../components/ProductFormModal';
@@ -90,7 +91,7 @@ const ProductScreen = ({ route, navigation }) => {
       }
     } catch (error) {
       console.error("ProductScreen: Error in fetching products:", error.message);
-      Alert.alert("Error", "An unexpected error occurred while fetching data.");
+      showAlert("Error", "An unexpected error occurred while fetching data.");
     } finally {
       setLoading(false);
     }
@@ -109,7 +110,7 @@ const ProductScreen = ({ route, navigation }) => {
 
   const handleDeleteProductMedia = async (mediaId, mediaUrl) => {
     return new Promise((resolve) => {
-      Alert.alert(
+      showAlert(
         "Delete Media",
         "Are you sure you want to delete this media? This action cannot be undone.",
         [
@@ -120,11 +121,11 @@ const ProductScreen = ({ route, navigation }) => {
               setLoading(true);
               const success = await deleteProductMedia(mediaId, mediaUrl);
               if (success) {
-                Alert.alert("Success", "Media deleted successfully.");
+                showAlert("Success", "Media deleted successfully.");
                 fetchProducts(userId); // Refresh the list
                 resolve(true);
               } else {
-                Alert.alert("Error", "Failed to delete media.");
+                showAlert("Error", "Failed to delete media.");
                 resolve(false);
               }
               setLoading(false);
@@ -136,7 +137,7 @@ const ProductScreen = ({ route, navigation }) => {
   };
 
   const handleDeleteProduct = (productId) => {
-    Alert.alert(
+    showAlert(
       "Delete Product",
       "Are you sure you want to delete this product and all its associated media? This action cannot be undone.",
       [
@@ -147,10 +148,10 @@ const ProductScreen = ({ route, navigation }) => {
             setLoading(true);
             const success = await deleteProduct(productId);
             if (success) {
-              Alert.alert("Success", "Product deleted successfully.");
+              showAlert("Success", "Product deleted successfully.");
               fetchProducts(userId); // Refresh the list
             } else {
-              Alert.alert("Error", "Failed to delete product.");
+              showAlert("Error", "Failed to delete product.");
             }
             setLoading(false);
           },

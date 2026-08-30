@@ -20,7 +20,7 @@ function ProductTabNavigator({ route }) {
   const user = session?.user || session;
   const userId = user?.id;
   const userMetadata = user?.user_metadata || session?.user_metadata;
-  const role = userMetadata?.role;
+  const role = userMetadata?.role || 'seller';
   const customerId = userMetadata?.customerId || route.params?.customerId;
   console.log('ProductTabNavigator: session', session);
   console.log('ProductTabNavigator: userId', userId);
