@@ -17,15 +17,16 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
 
+import { showAlert } from '../utils/alertUtils';
+
 const mergeGuestCart = async (userId) => {
   try {
     const guestCart = await getGuestCart();
     if (guestCart && guestCart.length > 0) {
       for (const item of guestCart) {
-        await addToCart(userId, item.product_variant_combination_id, item.quantity);
+        await addToCart(userId, item.product_variant_combination_id || item.id, item.quantity || 1);
       }
       await clearGuestCart();
-      Alert.alert('Cart Merged', 'Items from your guest cart have been added to your account.');
     }
   } catch (e) {
     console.warn('Error merging guest cart:', e);
@@ -46,7 +47,11 @@ export default function BuyerSignupScreen({ navigation, route }) {
 
   const navigateAfterAuth = (user) => {
     if (onAuthSuccess) {
-      onAuthSuccess(user);
+      try {
+        onAuthSuccess(user);
+      } catch (e) {
+        console.warn('onAuthSuccess error:', e);
+      }
     }
     if (redirectTo) {
       navigation.navigate(redirectTo, redirectParams || {});
@@ -57,17 +62,17 @@ export default function BuyerSignupScreen({ navigation, route }) {
 
   const handleSignup = async () => {
     if (!name.trim() || !email.trim() || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all required fields');
+      showAlert('Error', 'Please fill in all required fields');
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      showAlert('Error', 'Passwords do not match');
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+      showAlert('Error', 'Password must be at least 6 characters');
       return;
     }
 
@@ -92,7 +97,7 @@ export default function BuyerSignupScreen({ navigation, route }) {
       });
 
       if (error) {
-        Alert.alert('Signup Error', error.message);
+        showAlert('Signup Error', error.message);
       } else {
         if (data?.user) {
           const profileData = {
@@ -116,15 +121,15 @@ export default function BuyerSignupScreen({ navigation, route }) {
 
         if (data?.session) {
           if (onAuthSuccess) {
-            onAuthSuccess(data.user);
+            try { onAuthSuccess(data.user); } catch (e) {}
           }
-          Alert.alert(
+          showAlert(
             'Success',
             'Account created successfully!',
             [{ text: 'Start Shopping', onPress: () => navigateAfterAuth(data.user) }]
           );
         } else {
-          Alert.alert(
+          showAlert(
             'Account Created',
             'Your account has been created! Please log in to continue.',
             [{ text: 'OK', onPress: () => navigation.navigate('BuyerLogin', { redirectTo, redirectParams }) }]
@@ -132,7 +137,7 @@ export default function BuyerSignupScreen({ navigation, route }) {
         }
       }
     } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred');
+      showAlert('Error', 'An unexpected error occurred during signup');
       console.error('Signup error:', error);
     } finally {
       setLoading(false);
@@ -147,10 +152,10 @@ export default function BuyerSignupScreen({ navigation, route }) {
         await mergeGuestCart(res.user.id);
         navigateAfterAuth(res.user);
       } else if (res.error) {
-        Alert.alert('Google Sign-In Failed', res.error);
+        showAlert('Google Sign-In Failed', res.error);
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Google sign-up failed');
+      showAlert('Error', err.message || 'Google sign-up failed');
     } finally {
       setGoogleLoading(false);
     }

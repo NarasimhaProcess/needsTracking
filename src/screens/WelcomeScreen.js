@@ -101,7 +101,7 @@ export default function WelcomeScreen() {
             style={styles.portalCard}
             activeOpacity={0.8}
             onPress={() => {
-              if (user && role === 'buyer') {
+              if (user && (role === 'buyer' || role === 'customer')) {
                 navigation.navigate('Catalog');
               } else {
                 navigation.navigate('BuyerLogin');

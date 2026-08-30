@@ -1059,37 +1059,90 @@ export async function getCustomerDocuments(customerId) {
 
 // Order Management Functions
 export async function getOrders(userId) {
+  if (!userId) return [];
   console.log('getOrders: userId', userId);
 
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      *,
-      order_items (
-        id,
-        quantity,
-        price,
-        product_variant_combinations (
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        order_items (
           id,
-          combination_string,
-          products (
+          quantity,
+          price,
+          product_variant_combination_id,
+          product_variant_combinations (
             id,
-            product_name,
-            customer_id,
-            product_media (media_url, media_type)
+            combination_string,
+            price,
+            products (
+              id,
+              product_name,
+              customer_id,
+              product_media (media_url, media_type)
+            )
           )
         )
-      )
-    `)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
-  if (error) {
-    console.error('getOrders: Error fetching orders:', error.message);
-    return null;
+    if (!error && data) {
+      console.log('getOrders: Fetched orders data', data);
+      return data;
+    }
+    if (error) {
+      console.warn('getOrders primary query notice:', error.message);
+    }
+  } catch (err) {
+    console.warn('getOrders primary query exception:', err);
   }
-  console.log('getOrders: Fetched orders data', data);
-  return data;
+
+  // Fallback 1: Query order_items with product_variant_combinations without deep joins
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        order_items (
+          id,
+          quantity,
+          price,
+          product_variant_combination_id,
+          product_variant_combinations (
+            id,
+            combination_string,
+            price
+          )
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('getOrders fallback 1 exception:', err);
+  }
+
+  // Fallback 2: Basic orders query
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      return data;
+    }
+  } catch (err) {
+    console.error('getOrders fallback 2 exception:', err);
+  }
+
+  return [];
 }
 
 export async function getOrderById(orderId) {

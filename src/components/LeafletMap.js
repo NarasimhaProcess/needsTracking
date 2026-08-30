@@ -22,26 +22,10 @@ const SimpleLeafletMap = forwardRef(({
   // Send commands to existing map instead of reloading
   const sendMessageToWebView = useCallback((message) => {
     if (webViewRef.current) {
-      if (Platform.OS === 'web') {
-        try {
-          if (webViewRef.current.contentWindow) {
-            webViewRef.current.contentWindow.eval(message);
-          }
-        } catch (error) {
-          console.error('Error executing command on web iframe:', error);
-        }
-      } else {
-        const script = `
-          try {
-            ${message}
-          } catch (error) {
-            console.error('Error executing command:', error);
-          }
-          true;
-        `;
-        if (webViewRef.current.injectJavaScript) {
-          webViewRef.current.injectJavaScript(script);
-        }
+      if (webViewRef.current.injectJavaScript) {
+        webViewRef.current.injectJavaScript(message);
+      } else if (webViewRef.current.postMessage) {
+        webViewRef.current.postMessage(message);
       }
     }
   }, []);
@@ -256,6 +240,12 @@ const SimpleLeafletMap = forwardRef(({
         duration: 0.5
       });
     }
+
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'EVAL_SCRIPT' && e.data.script) {
+        try { eval(e.data.script); } catch(err) { console.error('EVAL_SCRIPT error in LeafletMap:', err); }
+      }
+    });
 
     window.mapFunctions = {
       centerOnLocation,

@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -14,15 +13,15 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, addToCart, signInWithGoogle } from '../services/supabase';
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
+import { showAlert } from '../utils/alertUtils';
 
 const mergeGuestCart = async (userId) => {
   const guestCart = await getGuestCart();
   if (guestCart && guestCart.length > 0) {
     for (const item of guestCart) {
-      await addToCart(userId, item.product_variant_combination_id, item.quantity);
+      await addToCart(userId, item.product_variant_combination_id || item.id, item.quantity || 1);
     }
     await clearGuestCart();
-    Alert.alert('Cart Merged', 'The items from your guest cart have been added to your account.');
   }
 };
 
@@ -39,9 +38,8 @@ export default function BuyerAuthScreen({ navigation, route }) {
       const res = await signInWithGoogle('customer');
       if (res.success && res.user) {
         await mergeGuestCart(res.user.id);
-        Alert.alert('Welcome!', `Logged in successfully as ${res.user.user_metadata?.full_name || res.user.email}`);
         if (route.params?.onAuthSuccess) {
-          route.params.onAuthSuccess(res.user);
+          try { route.params.onAuthSuccess(res.user); } catch (e) {}
         }
         if (route.params?.redirectTo) {
           navigation.navigate(route.params.redirectTo, route.params.redirectParams || {});
@@ -49,10 +47,10 @@ export default function BuyerAuthScreen({ navigation, route }) {
           navigation.navigate('Catalog');
         }
       } else if (res.error) {
-        Alert.alert('Google Sign-In Failed', res.error);
+        showAlert('Google Sign-In Failed', res.error);
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to sign in with Google');
+      showAlert('Error', err.message || 'Failed to sign in with Google');
     } finally {
       setGoogleLoading(false);
     }
@@ -60,7 +58,7 @@ export default function BuyerAuthScreen({ navigation, route }) {
 
   const handleSendOtp = async () => {
     if (!mobileNumber) {
-      Alert.alert('Error', 'Please enter your mobile number.');
+      showAlert('Error', 'Please enter your mobile number.');
       return;
     }
 
@@ -73,12 +71,12 @@ export default function BuyerAuthScreen({ navigation, route }) {
       const day = String(today.getDate()).padStart(2, '0');
       const dummyOtp = `${year}${month}${day}`;
 
-      Alert.alert('Dummy OTP Generated', `For development, use OTP: ${dummyOtp}`);
+      showAlert('Dummy OTP Generated', `For development, use OTP: ${dummyOtp}`);
       setOtpSent(true); // Proceed to show OTP input field
       // --- DEVELOPMENT DUMMY OTP GENERATION END ---
 
     } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred.');
+      showAlert('Error', 'An unexpected error occurred.');
       console.error('Send OTP error:', error);
     } finally {
       setLoading(false);
@@ -87,7 +85,7 @@ export default function BuyerAuthScreen({ navigation, route }) {
 
   const handleVerifyOtp = async () => {
     if (!mobileNumber || !otp) {
-      Alert.alert('Error', 'Please enter both mobile number and OTP.');
+      showAlert('Error', 'Please enter both mobile number and OTP.');
       return;
     }
 
@@ -101,18 +99,13 @@ export default function BuyerAuthScreen({ navigation, route }) {
       const bypassOtp = `${year}${month}${day}`;
 
       if (otp === bypassOtp) {
-        Alert.alert(
-          'Development Login',
-          'This is a guest login for development. A new profile will not be created.'
-        );
-
         const { data: guestAuthData, error: guestAuthError } = await supabase.auth.signInWithPassword({
           email: 'guest@example.com',
           password: 'guestpassword',
         });
 
         if (guestAuthError) {
-          Alert.alert('Guest Login Error', `Failed to log in as guest: ${guestAuthError.message}`);
+          showAlert('Guest Login Error', `Failed to log in as guest: ${guestAuthError.message}`);
           setLoading(false);
           return;
         }
@@ -129,7 +122,11 @@ export default function BuyerAuthScreen({ navigation, route }) {
         }
 
         setLoading(false);
-        navigation.goBack();
+        if (route.params?.redirectTo) {
+          navigation.navigate(route.params.redirectTo, route.params.redirectParams || {});
+        } else {
+          navigation.goBack();
+        }
         return;
       }
       // --- DEVELOPMENT BYPASS END ---
@@ -141,10 +138,8 @@ export default function BuyerAuthScreen({ navigation, route }) {
       });
 
       if (error) {
-        Alert.alert('Error verifying OTP', error.message);
+        showAlert('Error verifying OTP', error.message);
       } else {
-        Alert.alert('Success', 'Mobile number verified. You are now logged in.');
-
         await mergeGuestCart(data.user.id);
 
         const userId = data.user.id;
@@ -168,7 +163,7 @@ export default function BuyerAuthScreen({ navigation, route }) {
             .insert({ id: userId, role: userRole, mobile: mobileNumber });
         }
         if (route.params?.onAuthSuccess) {
-          route.params.onAuthSuccess(data.user);
+          try { route.params.onAuthSuccess(data.user); } catch (e) {}
         }
         if (route.params?.redirectTo) {
           navigation.navigate(route.params.redirectTo, route.params.redirectParams || {});
@@ -177,7 +172,7 @@ export default function BuyerAuthScreen({ navigation, route }) {
         }
       }
     } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred.');
+      showAlert('Error', 'An unexpected error occurred.');
       console.error('Verify OTP error:', error);
     } finally {
       setLoading(false);

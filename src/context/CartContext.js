@@ -39,27 +39,6 @@ export const CartProvider = ({ children }) => {
           } catch (cartErr) {
             console.warn('Cart fetch error in CartContext:', cartErr);
           }
-
-          // Listen for real-time changes to the cart
-          try {
-            const subscription = supabase
-              .channel('public:cart_items')
-              .on('postgres_changes', { event: '*', schema: 'public', table: 'cart_items' }, (payload) => {
-                console.log('Cart change received!', payload);
-                if (isMounted) {
-                  getCart(user.id).then(newCart => {
-                    if (isMounted) setCart(newCart);
-                  }).catch(console.warn);
-                }
-              })
-              .subscribe();
-
-            return () => {
-              supabase.removeChannel(subscription);
-            };
-          } catch (chanErr) {
-            console.warn('Channel subscription error in CartContext:', chanErr);
-          }
         } else {
           if (isMounted) {
             setCart(null);
@@ -96,6 +75,25 @@ export const CartProvider = ({ children }) => {
       authListener?.subscription?.unsubscribe?.();
     };
   }, []);
+
+  // Listen for real-time changes to the cart
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channelName = `cart_realtime:${user.id}:${Date.now()}`;
+    const subscription = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cart_items' }, () => {
+        getCart(user.id).then((newCart) => {
+          if (newCart) setCart(newCart);
+        }).catch(console.warn);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [user?.id]);
 
   // Functions to interact with the cart (these will call supabase.js functions)
   const updateItemQuantity = async (cartItemId, quantity) => {

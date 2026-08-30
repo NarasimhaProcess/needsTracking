@@ -17,15 +17,16 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
 
+import { showAlert } from '../utils/alertUtils';
+
 const mergeGuestCart = async (userId) => {
   try {
     const guestCart = await getGuestCart();
     if (guestCart && guestCart.length > 0) {
       for (const item of guestCart) {
-        await addToCart(userId, item.product_variant_combination_id, item.quantity);
+        await addToCart(userId, item.product_variant_combination_id || item.id, item.quantity || 1);
       }
       await clearGuestCart();
-      Alert.alert('Cart Merged', 'Items from your guest cart have been added to your account.');
     }
   } catch (e) {
     console.warn('Error merging guest cart:', e);
@@ -43,7 +44,11 @@ export default function BuyerLoginScreen({ navigation, route }) {
 
   const navigateAfterAuth = (user) => {
     if (onAuthSuccess) {
-      onAuthSuccess(user);
+      try {
+        onAuthSuccess(user);
+      } catch (e) {
+        console.warn('onAuthSuccess error:', e);
+      }
     }
     if (redirectTo) {
       navigation.navigate(redirectTo, redirectParams || {});
@@ -53,8 +58,8 @@ export default function BuyerLoginScreen({ navigation, route }) {
   };
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please fill in both email and password');
+    if (!email.trim() || !password) {
+      showAlert('Error', 'Please fill in both email and password');
       return;
     }
 
@@ -66,7 +71,7 @@ export default function BuyerLoginScreen({ navigation, route }) {
       });
 
       if (error) {
-        Alert.alert('Login Error', error.message);
+        showAlert('Login Error', error.message);
       } else if (data?.user) {
         // Ensure profile exists with customer role
         const { data: profile } = await supabase
@@ -89,7 +94,7 @@ export default function BuyerLoginScreen({ navigation, route }) {
         navigateAfterAuth(data.user);
       }
     } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred');
+      showAlert('Error', 'An unexpected error occurred during login');
       console.error('Login error:', error);
     } finally {
       setLoading(false);
@@ -104,27 +109,27 @@ export default function BuyerLoginScreen({ navigation, route }) {
         await mergeGuestCart(res.user.id);
         navigateAfterAuth(res.user);
       } else if (res.error) {
-        Alert.alert('Google Sign-In Failed', res.error);
+        showAlert('Google Sign-In Failed', res.error);
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Google sign-in failed');
+      showAlert('Error', err.message || 'Google sign-in failed');
     } finally {
       setGoogleLoading(false);
     }
   };
 
   const handleForgotPassword = () => {
-    if (!email) {
-      Alert.alert('Error', 'Please enter your email first');
+    if (!email.trim()) {
+      showAlert('Error', 'Please enter your email first');
       return;
     }
 
     supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: getAuthRedirectUrl(),
     }).then(() => {
-      Alert.alert('Success', 'Password reset email sent. Please check your inbox.');
+      showAlert('Success', 'Password reset email sent. Please check your inbox.');
     }).catch((error) => {
-      Alert.alert('Error', error.message);
+      showAlert('Error', error.message);
     });
   };
 

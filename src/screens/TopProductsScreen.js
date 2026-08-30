@@ -142,7 +142,7 @@ const TopProductsScreen = ({ navigation, route }) => {
       setCart(cartData);
       setIsProductDetailModalVisible(false);
       Alert.alert('Success', 'Item added to cart!');
-      if (role === 'buyer') {
+      if (role === 'buyer' || role === 'customer') {
         navigation.goBack();
       } else {
         setIsCartModalVisible(true);

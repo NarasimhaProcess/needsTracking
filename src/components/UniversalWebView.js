@@ -56,29 +56,30 @@ const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props 
     },
   }));
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const handleWebMessage = (event) => {
+      if (onMessage && event && event.data !== undefined) {
+        onMessage({
+          nativeEvent: {
+            data: typeof event.data === 'string' ? event.data : JSON.stringify(event.data),
+          },
+          data: event.data,
+        });
+      }
+    };
+
+    window.addEventListener('message', handleWebMessage);
+    return () => window.removeEventListener('message', handleWebMessage);
+  }, [onMessage]);
+
   if (Platform.OS === 'web') {
     const htmlContent = source?.html || '';
-
-    useEffect(() => {
-      const handleWebMessage = (event) => {
-        if (onMessage && event && event.data !== undefined) {
-          onMessage({
-            nativeEvent: {
-              data: typeof event.data === 'string' ? event.data : JSON.stringify(event.data)
-            },
-            data: event.data
-          });
-        }
-      };
-
-      window.addEventListener('message', handleWebMessage);
-      return () => window.removeEventListener('message', handleWebMessage);
-    }, [onMessage]);
 
     return (
       <View style={[styles.container, style]}>
         <iframe
-          id="universal-webview-iframe"
           ref={iframeRef}
           srcDoc={htmlContent}
           style={{ width: '100%', height: '100%', border: 'none' }}

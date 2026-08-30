@@ -1,12 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, Alert, TextInput } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
 import { printReceipt, extractOrderNumbers } from '../services/printerService';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
+import { showAlert } from '../utils/alertUtils';
 
 const OrderListScreen = ({ navigation, route }) => {
   const [orders, setOrders] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
   const [sectionedOrders, setSectionedOrders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState(null);
@@ -16,24 +18,51 @@ const OrderListScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     setLoading(true);
-    const { customerId } = route.params || {};
-    const { data: { user } } = await supabase.auth.getUser();
-    const targetUserId = customerId || user?.id;
+    try {
+      const { customerId } = route.params || {};
+      const { data: { user } = {} } = await supabase.auth.getUser();
+      setCurrentUser(user || null);
+      const targetUserId = customerId || user?.id;
 
-    if (targetUserId) {
-      const fetchedOrders = await getOrders(targetUserId);
-      if (fetchedOrders) {
-        setOrders(fetchedOrders);
+      if (targetUserId) {
+        const fetchedOrders = await getOrders(targetUserId);
+        if (fetchedOrders && Array.isArray(fetchedOrders)) {
+          setOrders(fetchedOrders);
+        } else {
+          setOrders([]);
+        }
+      } else {
+        setOrders([]);
       }
+    } catch (err) {
+      console.warn('Error in fetchOrders:', err);
+      setOrders([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [route.params]);
 
   useEffect(() => {
     fetchOrders();
-  }, [route.params, route.params?.customerId]);
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setCurrentUser(session.user);
+        fetchOrders();
+      } else {
+        setCurrentUser(null);
+        if (!route.params?.customerId) {
+          setOrders([]);
+        }
+      }
+    });
+
+    return () => {
+      authListener?.subscription?.unsubscribe?.();
+    };
+  }, [fetchOrders, route.params]);
 
   useEffect(() => {
     let filtered = orders;
@@ -110,7 +139,7 @@ const OrderListScreen = ({ navigation, route }) => {
   };
 
   const handleDeleteOrder = async (orderId) => {
-    Alert.alert(
+    showAlert(
       'Delete Order',
       'Are you sure you want to delete this order? This action cannot be undone.',
       [
@@ -120,18 +149,18 @@ const OrderListScreen = ({ navigation, route }) => {
         },
         {
           text: 'Delete',
+          style: 'destructive',
           onPress: async () => {
             const success = await deleteOrder(orderId);
             if (success) {
-              Alert.alert('Success', 'Order deleted successfully.');
-              fetchOrders(); // Refresh the list
+              showAlert('Success', 'Order deleted successfully.');
+              fetchOrders();
             } else {
-              Alert.alert('Error', 'Failed to delete order.');
+              showAlert('Error', 'Failed to delete order.');
             }
           },
         },
-      ],
-      { cancelable: true }
+      ]
     );
   };
 
@@ -176,13 +205,15 @@ const OrderListScreen = ({ navigation, route }) => {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#0000ff" />
+        <ActivityIndicator size="large" color="#007AFF" />
       </View>
     );
   }
 
+  const isGuest = !currentUser && !route.params?.customerId;
+
   return (
-    <View style={{flex: 1, backgroundColor: 'white'}}>
+    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity
@@ -200,7 +231,7 @@ const OrderListScreen = ({ navigation, route }) => {
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => navigation.navigate('Invoice')} style={{ marginRight: 15 }}>
-            <Icon name="file-text" size={24} color="#007AFF" />
+            <Icon name="file-text" size={22} color="#007AFF" />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => {
@@ -214,57 +245,102 @@ const OrderListScreen = ({ navigation, route }) => {
               }
             }}
           >
-            <Icon name="close" size={24} color="#333" />
+            <Icon name="close" size={22} color="#333" />
           </TouchableOpacity>
         </View>
       </View>
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by Order No..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        <View style={styles.statusFilterContainer}>
-          {['All', 'pending', 'processing', 'shipped', 'delivered', 'completed', 'cancelled'].map(status => (
-            <TouchableOpacity
-              key={status}
-              style={[styles.statusButton, selectedStatus === (status === 'All' ? null : status) && styles.selectedStatusButton]}
-              onPress={() => setSelectedStatus(status === 'All' ? null : status)}
-            >
-              <Text style={styles.statusButtonText}>{status}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <TouchableOpacity style={styles.datePickerButton} onPress={showDatePicker}>
-          <Text style={styles.datePickerButtonText}>
-            {selectedDate ? new Date(selectedDate).toLocaleDateString() : 'Select Date'}
+
+      {isGuest ? (
+        <View style={styles.notLoggedInContainer}>
+          <View style={styles.notLoggedInIconBox}>
+            <Icon name="shopping-bag" size={48} color="#007AFF" />
+          </View>
+          <Text style={styles.notLoggedInTitle}>Sign In to View Orders</Text>
+          <Text style={styles.notLoggedInSubtitle}>
+            Please sign in to your buyer account to view your active and previous orders.
           </Text>
-        </TouchableOpacity>
-        <DateTimePickerModal
-          isVisible={isDatePickerVisible}
-          mode="date"
-          onConfirm={handleConfirmDate}
-          onCancel={hideDatePicker}
-        />
-      </View>
-      <View style={styles.totalAmountContainer}>
-        <Text style={styles.totalAmountText}>Total Amount: ₹{totalAmount.toFixed(2)}</Text>
-      </View>
-      {sectionedOrders.length === 0 ? (
-        <Text style={styles.noOrdersText}>No orders found.</Text>
+          <TouchableOpacity
+            style={styles.signInButton}
+            onPress={() => navigation.navigate('BuyerLogin', { redirectTo: 'OrderList' })}
+          >
+            <Icon name="sign-in" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+            <Text style={styles.signInButtonText}>Sign In / Sign Up</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
-        <SectionList
-          sections={sectionedOrders}
-          keyExtractor={(item) => item.id}
-          renderItem={renderOrderItem}
-          renderSectionHeader={({ section: { title } }) => (
-            <Text style={styles.sectionHeader}>{title}</Text>
+        <>
+          <View style={styles.searchContainer}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by Order No..."
+              placeholderTextColor="#94a3b8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            <View style={styles.statusFilterContainer}>
+              {['All', 'pending', 'processing', 'shipped', 'delivered', 'completed', 'cancelled'].map(status => (
+                <TouchableOpacity
+                  key={status}
+                  style={[styles.statusButton, selectedStatus === (status === 'All' ? null : status) && styles.selectedStatusButton]}
+                  onPress={() => setSelectedStatus(status === 'All' ? null : status)}
+                >
+                  <Text style={[styles.statusButtonText, selectedStatus === (status === 'All' ? null : status) && styles.selectedStatusButtonText]}>
+                    {status}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity style={styles.datePickerButton} onPress={showDatePicker}>
+              <Icon name="calendar" size={14} color="#007AFF" style={{ marginRight: 8 }} />
+              <Text style={styles.datePickerButtonText}>
+                {selectedDate ? new Date(selectedDate).toLocaleDateString() : 'Filter by Date'}
+              </Text>
+              {selectedDate && (
+                <TouchableOpacity onPress={() => setSelectedDate(null)} style={{ marginLeft: 8 }}>
+                  <Icon name="times-circle" size={16} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+            <DateTimePickerModal
+              isVisible={isDatePickerVisible}
+              mode="date"
+              onConfirm={handleConfirmDate}
+              onCancel={hideDatePicker}
+            />
+          </View>
+
+          {sectionedOrders.length > 0 && (
+            <View style={styles.totalAmountContainer}>
+              <Text style={styles.totalAmountText}>Total Orders Value: ₹{totalAmount.toFixed(2)}</Text>
+            </View>
           )}
-          onRefresh={handleRefresh}
-          refreshing={refreshing}
-          contentContainerStyle={styles.listContent}
-        />
+
+          {sectionedOrders.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Icon name="inbox" size={54} color="#cbd5e1" style={{ marginBottom: 12 }} />
+              <Text style={styles.noOrdersText}>No orders found.</Text>
+              <Text style={styles.noOrdersSubtext}>Looks like you haven't placed any orders matching this filter.</Text>
+              <TouchableOpacity
+                style={styles.browseButton}
+                onPress={() => navigation.navigate('Catalog')}
+              >
+                <Text style={styles.browseButtonText}>Browse Catalog</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <SectionList
+              sections={sectionedOrders}
+              keyExtractor={(item) => item.id}
+              renderItem={renderOrderItem}
+              renderSectionHeader={({ section: { title } }) => (
+                <Text style={styles.sectionHeader}>{title}</Text>
+              )}
+              onRefresh={handleRefresh}
+              refreshing={refreshing}
+              contentContainerStyle={styles.listContent}
+            />
+          )}
+        </>
       )}
     </View>
   );
@@ -275,103 +351,129 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
+    padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
+    color: '#0F172A',
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   searchContainer: {
-    padding: 10,
-    backgroundColor: '#f0f0f0',
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   searchInput: {
-    backgroundColor: 'white',
-    paddingHorizontal: 15,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 5,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#E2E8F0',
     marginBottom: 10,
+    fontSize: 14,
+    color: '#0F172A',
   },
   statusFilterContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   statusButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 15,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#ddd',
-    margin: 4,
+    borderColor: '#E2E8F0',
+    margin: 3,
+    backgroundColor: '#F8FAFC',
   },
   selectedStatusButton: {
     backgroundColor: '#007AFF',
     borderColor: '#007AFF',
   },
   statusButtonText: {
-    color: '#333',
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  selectedStatusButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   datePickerButton: {
-    backgroundColor: 'white',
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
     padding: 10,
-    borderRadius: 5,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#E2E8F0',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   datePickerButtonText: {
-    fontSize: 16,
+    fontSize: 14,
+    color: '#1E293B',
+    fontWeight: '500',
   },
   totalAmountContainer: {
     padding: 10,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: '#EFF6FF',
     alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DBEAFE',
   },
   totalAmountText: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E40AF',
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
   listContent: {
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
   sectionHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    backgroundColor: '#f0f0f0',
+    fontSize: 15,
+    fontWeight: '700',
+    backgroundColor: '#F1F5F9',
     paddingVertical: 8,
-    paddingHorizontal: 15,
+    paddingHorizontal: 16,
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   orderItem: {
     backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
-    marginHorizontal: 10,
+    padding: 16,
+    borderRadius: 12,
+    marginVertical: 6,
+    marginHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 6,
   },
   orderId: {
     fontSize: 16,
@@ -385,32 +487,110 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   orderStatus: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#007AFF',
-    fontWeight: '600',
+    fontWeight: '700',
+    textTransform: 'capitalize',
   },
   orderAmount: {
-    fontSize: 16,
-    color: '#333',
-    marginBottom: 5,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
   },
   orderDate: {
     fontSize: 12,
-    color: '#888',
+    color: '#64748B',
   },
   actionButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 8,
   },
   actionIcon: {
-    marginLeft: 15,
+    marginLeft: 18,
+  },
+  notLoggedInContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  notLoggedInIconBox: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  notLoggedInTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  notLoggedInSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  signInButton: {
+    flexDirection: 'row',
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  signInButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    marginTop: 40,
   },
   noOrdersText: {
-    textAlign: 'center',
-    marginTop: 50,
     fontSize: 18,
-    color: '#777',
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  noOrdersSubtext: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  browseButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  browseButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });
 

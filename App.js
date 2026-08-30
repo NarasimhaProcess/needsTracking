@@ -69,11 +69,8 @@ export default function App() {
         const role = profile?.role || user.user_metadata?.role || 'customer';
 
         const currentRoute = navigationRef.current?.getCurrentRoute()?.name;
-        const authScreens = [
+        const rootAuthScreens = [
           'Welcome',
-          'BuyerAuth',
-          'BuyerLogin',
-          'BuyerSignup',
           'Login',
           'Signup',
           'SellerLogin',
@@ -81,7 +78,7 @@ export default function App() {
           'DeliveryManagerSignup',
         ];
 
-        if (!currentRoute || authScreens.includes(currentRoute)) {
+        if (!currentRoute || rootAuthScreens.includes(currentRoute)) {
           if (role === 'delivery_manager') {
             navigationRef.current?.navigate('DeliveryManagerDashboard');
           } else if (role === 'seller') {
@@ -360,7 +357,7 @@ export default function App() {
     <CartProvider>
       <NavigationContainer ref={navigationRef}>
         <StatusBar style="auto" />
-        <Stack.Navigator key={session ? 'app' : 'auth'} screenOptions={{ headerShown: false }}>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
           <Stack.Screen name="SellersMap" component={SellersMapScreen} />
           <Stack.Screen name="Catalog" component={CatalogScreen} />

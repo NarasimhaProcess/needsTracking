@@ -832,12 +832,12 @@ export default function SellersMapScreen() {
         <div id="mapid"></div>
         <script>
             try {
-                var map = L.map("mapid", { zoomControl: false }).setView([${initialLat}, ${initialLon}], ${initialZoom});
-                L.control.zoom({ position: "bottomright" }).addTo(map);
+                var map = L.map('mapid', { zoomControl: false }).setView([${initialLat}, ${initialLon}], ${initialZoom});
+                L.control.zoom({ position: 'bottomright' }).addTo(map);
 
                 // Reliable standard OpenStreetMap tile layer
-                L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                    attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
                     maxZoom: 19
                 }).addTo(map);
 
@@ -848,24 +848,24 @@ export default function SellersMapScreen() {
 
                 function postToParent(data) {
                     try {
-                        var json = typeof data === "string" ? data : JSON.stringify(data);
+                        var json = typeof data === 'string' ? data : JSON.stringify(data);
                         if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
                             window.ReactNativeWebView.postMessage(json);
                         }
                         if (window.parent && window.parent !== window) {
-                            window.parent.postMessage(json, "*");
+                            window.parent.postMessage(json, '*');
                         }
                     } catch (e) {
-                        console.error("postToParent error:", e);
+                        console.error('postToParent error:', e);
                     }
                 }
 
                 function viewProducts(sellerId, name) {
-                    postToParent({ type: "viewProducts", sellerId: sellerId, name: name });
+                    postToParent({ type: 'viewProducts', sellerId: sellerId, name: name });
                 }
 
                 function getDirections(latitude, longitude, name) {
-                    postToParent({ type: "getDirections", latitude: latitude, longitude: longitude, name: name });
+                    postToParent({ type: 'getDirections', latitude: latitude, longitude: longitude, name: name });
                 }
 
                 window.updateMapData = function(sellersData, userLoc) {
@@ -886,14 +886,14 @@ export default function SellersMapScreen() {
                         if (userLoc && userLoc.latitude && userLoc.longitude) {
                             boundsPoints.push([userLoc.latitude, userLoc.longitude]);
                             var userIcon = L.divIcon({
-                                className: "user-pulse-container",
-                                html: "<div class=\"user-pulse-marker\"></div>",
+                                className: 'user-pulse-container',
+                                html: '<div class="user-pulse-marker"></div>',
                                 iconSize: [20, 20],
                                 iconAnchor: [10, 10]
                             });
                             window.userMarker = L.marker([userLoc.latitude, userLoc.longitude], { icon: userIcon })
                                 .addTo(window.map)
-                                .bindPopup("<b>You are here</b>");
+                                .bindPopup('<b>You are here</b>');
                         }
 
                         window.sellerMarkers = {};
@@ -903,35 +903,35 @@ export default function SellersMapScreen() {
                                 boundsPoints.push([seller.latitude, seller.longitude]);
 
                                 var sellerIcon = L.divIcon({
-                                    className: "seller-icon-wrapper",
-                                    html: "<div class=\"seller-pin\"><i class=\"fas fa-store\"></i></div>",
+                                    className: 'seller-icon-wrapper',
+                                    html: '<div class="seller-pin"><i class="fas fa-store"></i></div>',
                                     iconSize: [40, 40],
                                     iconAnchor: [20, 40],
                                     popupAnchor: [0, -40]
                                 });
 
-                                var safeName = (seller.full_name || "Seller Store").replace(/'/g, "\\'");
+                                var safeName = (seller.full_name || 'Seller Store').replace(/"/g, '&quot;');
                                 var popupHtml =
-                                    "<div class=\"popup-header\">" +
-                                        "<i class=\"fas fa-store\" style=\"color:#007AFF; font-size:18px;\"></i>" +
-                                        "<h4 class=\"popup-title\">" + (seller.full_name || "Seller Store") + "</h4>" +
-                                    "</div>" +
-                                    "<div class=\"popup-tag\">" + (seller.hasExactCoordinates === false ? "Store • Location Approximate" : "Verified Store") + "</div>" +
-                                    (seller.city ? "<div class=\"popup-info-row\"><i class=\"fas fa-map-marker-alt\" style=\"color:#64748B;\"></i> " + seller.city + "</div>" : "") +
-                                    (seller.mobile ? "<div class=\"popup-info-row\"><i class=\"fas fa-phone\" style=\"color:#64748B;\"></i> " + seller.mobile + "</div>" : "") +
-                                    (seller.productCount > 0 ? "<div class=\"popup-info-row\"><i class=\"fas fa-box-open\" style=\"color:#10B981;\"></i> <b>" + seller.productCount + " Products</b> available</div>" : "") +
-                                    "<button class=\"popup-btn-primary\" onclick=\"viewProducts('" + seller.id + "', '" + safeName + "')\">" +
-                                        "<i class=\"fas fa-shopping-bag\"></i> Browse Store" +
-                                    "</button>" +
-                                    "<button class=\"popup-btn-secondary\" onclick=\"getDirections(" + seller.latitude + ", " + seller.longitude + ", '" + safeName + "')\">" +
-                                        "<i class=\"fas fa-directions\"></i> Directions" +
-                                    "</button>";
+                                    '<div class="popup-header">' +
+                                        '<i class="fas fa-store" style="color:#007AFF; font-size:18px;"></i>' +
+                                        '<h4 class="popup-title">' + (seller.full_name || 'Seller Store') + '</h4>' +
+                                    '</div>' +
+                                    '<div class="popup-tag">' + (seller.hasExactCoordinates === false ? 'Store • Location Approximate' : 'Verified Store') + '</div>' +
+                                    (seller.city ? '<div class="popup-info-row"><i class="fas fa-map-marker-alt" style="color:#64748B;"></i> ' + seller.city + '</div>' : '') +
+                                    (seller.mobile ? '<div class="popup-info-row"><i class="fas fa-phone" style="color:#64748B;"></i> ' + seller.mobile + '</div>' : '') +
+                                    (seller.productCount > 0 ? '<div class="popup-info-row"><i class="fas fa-box-open" style="color:#10B981;"></i> <b>' + seller.productCount + ' Products</b> available</div>' : '') +
+                                    '<button class="popup-btn-primary" data-action="viewProducts" data-seller-id="' + seller.id + '" data-seller-name="' + safeName + '">' +
+                                        '<i class="fas fa-shopping-bag"></i> Browse Store' +
+                                    '</button>' +
+                                    '<button class="popup-btn-secondary" data-action="getDirections" data-lat="' + seller.latitude + '" data-lng="' + seller.longitude + '" data-seller-name="' + safeName + '">' +
+                                        '<i class="fas fa-directions"></i> Directions' +
+                                    '</button>';
 
                                 var marker = L.marker([seller.latitude, seller.longitude], { icon: sellerIcon })
-                                    .bindPopup(popupHtml, { className: "custom-popup" });
+                                    .bindPopup(popupHtml, { className: 'custom-popup' });
 
-                                marker.on("click", function() {
-                                    postToParent({ type: "sellerClicked", seller: seller });
+                                marker.on('click', function() {
+                                    postToParent({ type: 'sellerClicked', seller: seller });
                                 });
 
                                 window.markerLayerGroup.addLayer(marker);
@@ -956,37 +956,54 @@ export default function SellersMapScreen() {
                             window.map.invalidateSize();
                         }, 250);
                     } catch (e) {
-                        console.error("updateMapData error:", e);
+                        console.error('updateMapData error:', e);
                     }
                 };
+
+                // Event delegation for popup buttons
+                document.addEventListener('click', function(e) {
+                    var btn = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
+                    if (!btn) return;
+                    var action = btn.getAttribute('data-action');
+                    if (action === 'viewProducts') {
+                        var sellerId = btn.getAttribute('data-seller-id');
+                        var name = btn.getAttribute('data-seller-name');
+                        viewProducts(sellerId, name);
+                    } else if (action === 'getDirections') {
+                        var lat = parseFloat(btn.getAttribute('data-lat'));
+                        var lng = parseFloat(btn.getAttribute('data-lng'));
+                        var name = btn.getAttribute('data-seller-name');
+                        getDirections(lat, lng, name);
+                    }
+                });
 
                 // Listen for incoming commands from parent window / React Native
                 function handleIncomingMessage(event) {
                     try {
                         var data = event.data !== undefined ? event.data : event;
-                        if (typeof data === "string") {
+                        if (typeof data === 'string') {
                             try { data = JSON.parse(data); } catch(e) { return; }
                         }
                         if (!data) return;
 
-                        if (data.type === "UPDATE_DATA") {
+                        if (data.type === 'UPDATE_DATA') {
                             window.updateMapData(data.sellers, data.userLocation);
-                        } else if (data.type === "SET_VIEW") {
+                        } else if (data.type === 'SET_VIEW') {
                             if (window.map && data.latitude && data.longitude) {
                                 window.map.setView([data.latitude, data.longitude], data.zoom || 14, { animate: true });
                             }
-                        } else if (data.type === "OPEN_SELLER") {
+                        } else if (data.type === 'OPEN_SELLER') {
                             if (window.sellerMarkers && window.sellerMarkers[data.sellerId]) {
                                 window.sellerMarkers[data.sellerId].openPopup();
                             }
                         }
                     } catch (err) {
-                        console.error("handleIncomingMessage error:", err);
+                        console.error('handleIncomingMessage error:', err);
                     }
                 }
 
-                window.addEventListener("message", handleIncomingMessage);
-                document.addEventListener("message", handleIncomingMessage);
+                window.addEventListener('message', handleIncomingMessage);
+                document.addEventListener('message', handleIncomingMessage);
 
                 // Initial render with embedded sellers data
                 var initialSellers = ${JSON.stringify(sellers)};
@@ -996,7 +1013,7 @@ export default function SellersMapScreen() {
                 }
 
                 // Notify parent that map is ready
-                postToParent({ type: "mapReady" });
+                postToParent({ type: 'mapReady' });
 
                 window.onload = function() {
                     setTimeout(function() {
@@ -1004,7 +1021,7 @@ export default function SellersMapScreen() {
                     }, 350);
                 };
             } catch (mapErr) {
-                console.error("Leaflet initialization error:", mapErr);
+                console.error('Leaflet initialization error:', mapErr);
             }
         </script>
     </body>
