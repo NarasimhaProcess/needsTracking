@@ -23,6 +23,7 @@ import { FontAwesome as Icon } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { useNavigation } from "@react-navigation/native";
 import { useCart } from "../context/CartContext";
+import { showAlert } from "../utils/alertUtils";
 
 const { width } = Dimensions.get("window");
 
@@ -601,7 +602,7 @@ export default function SellersMapScreen() {
           zoom: 14,
         });
       } else {
-        Alert.alert(
+        showAlert(
           "Location Notice",
           "Could not obtain current GPS position. Please check location permissions and GPS toggle."
         );
@@ -610,7 +611,7 @@ export default function SellersMapScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert("Logout", "Are you sure you want to log out?", [
+    showAlert("Logout", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Logout",

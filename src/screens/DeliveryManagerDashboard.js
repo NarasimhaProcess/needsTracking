@@ -22,6 +22,7 @@ import {
 } from '../services/supabase';
 import * as Location from 'expo-location';
 import { announceNewOrder } from '../services/speechService';
+import { showAlert } from '../utils/alertUtils';
 
 const DeliveryManagerDashboard = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('available'); // 'available' | 'active' | 'completed'
@@ -81,7 +82,7 @@ const DeliveryManagerDashboard = ({ navigation }) => {
               fetchAllOrders(user.id);
               if (payload.eventType === 'INSERT') {
                 announceNewOrder(payload.new);
-                Alert.alert('🛵 New Order Received!', 'A new delivery order has just been placed and is ready for pickup.');
+                showAlert('🛵 New Order Received!', 'A new delivery order has just been placed and is ready for pickup.');
               }
             }
           )
@@ -144,14 +145,14 @@ const DeliveryManagerDashboard = ({ navigation }) => {
     try {
       const updated = await acceptDeliveryOrder(orderItem.id, user.id);
       if (updated) {
-        Alert.alert('🛵 Order Accepted!', `You have claimed Order #${orderItem.order_number || orderItem.id.substring(0, 8)}. It is now in your Active Deliveries.`);
+        showAlert('🛵 Order Accepted!', `You have claimed Order #${orderItem.order_number || orderItem.id.substring(0, 8)}. It is now in your Active Deliveries.`);
         await fetchAllOrders(user.id);
         setActiveTab('active');
       } else {
-        Alert.alert('Error', 'Failed to accept order. It may have already been claimed.');
+        showAlert('Error', 'Failed to accept order. It may have already been claimed.');
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Could not accept order.');
+      showAlert('Error', err.message || 'Could not accept order.');
     } finally {
       setActionLoading(prev => ({ ...prev, [orderItem.id]: false }));
     }
@@ -162,13 +163,13 @@ const DeliveryManagerDashboard = ({ navigation }) => {
     try {
       const res = await updateOrderStatus(orderId, newStatus);
       if (res) {
-        Alert.alert('Status Updated', `Order status changed to: ${statusLabel}`);
+        showAlert('Status Updated', `Order status changed to: ${statusLabel}`);
         await fetchAllOrders(user.id);
       } else {
-        Alert.alert('Error', 'Could not update status.');
+        showAlert('Error', 'Could not update status.');
       }
     } catch (e) {
-      Alert.alert('Error', e.message || 'Update failed');
+      showAlert('Error', e.message || 'Update failed');
     } finally {
       setActionLoading(prev => ({ ...prev, [orderId]: false }));
     }
@@ -191,20 +192,20 @@ const DeliveryManagerDashboard = ({ navigation }) => {
       const query = encodeURIComponent(addressStr);
       Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
     } else {
-      Alert.alert('No Location', 'No GPS location or address provided for this order.');
+      showAlert('No Location', 'No GPS location or address provided for this order.');
     }
   };
 
   const handleCallCustomer = (phone) => {
     if (!phone) {
-      Alert.alert('No Phone', 'No customer phone number available.');
+      showAlert('No Phone', 'No customer phone number available.');
       return;
     }
     Linking.openURL(`tel:${phone}`);
   };
 
   const handleLogout = () => {
-    Alert.alert(
+    showAlert(
       'Logout',
       'Are you sure you want to log out from Delivery Manager?',
       [

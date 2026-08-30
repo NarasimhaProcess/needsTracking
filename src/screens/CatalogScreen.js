@@ -38,10 +38,25 @@ const isImageMedia = (media) => {
   return true;
 };
 
+export const CATALOG_CATEGORIES = [
+  { id: 'all', label: 'All Items', icon: 'th-large' },
+  { id: 'grocery', label: 'Grocery', icon: 'shopping-basket' },
+  { id: 'fruits_vegetables', label: 'Fruits & Veg', icon: 'lemon-o' },
+  { id: 'dairy_bakery', label: 'Dairy & Bakery', icon: 'birthday-cake' },
+  { id: 'snacks_beverages', label: 'Snacks & Drinks', icon: 'coffee' },
+  { id: 'clothing', label: 'Clothing', icon: 'tag' },
+  { id: 'electronics', label: 'Electronics', icon: 'laptop' },
+  { id: 'beauty_personal_care', label: 'Beauty & Care', icon: 'heart' },
+  { id: 'home_kitchen', label: 'Home & Kitchen', icon: 'home' },
+  { id: 'pharmacy', label: 'Pharmacy', icon: 'medkit' },
+  { id: 'other', label: 'Other', icon: 'cube' },
+];
+
 const CatalogScreen = ({ navigation, route }) => {
   const { userId: sellerId, customerId } = route?.params || {};
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
   const [guestCart, setGuestCart] = useState([]);
@@ -170,20 +185,61 @@ const CatalogScreen = ({ navigation, route }) => {
     return { totalItems, totalPrice };
   }, [cart, guestCart, user]);
 
-  const filteredProducts = useMemo(() => {
-    if (!searchQuery.trim()) return products;
-    const query = searchQuery.toLowerCase().trim();
-    return products.filter((product) => {
-      const nameMatch = (product?.product_name || '').toLowerCase().includes(query);
-      const descMatch = (product?.description || '').toLowerCase().includes(query);
-      const typeMatch = (product?.product_type || '').toLowerCase().includes(query);
-      const variantMatch = (product?.product_variant_combinations || []).some(
-        combo => (combo?.combination_string || '').toLowerCase().includes(query) ||
-                 (combo?.sku || '').toLowerCase().includes(query)
-      );
-      return nameMatch || descMatch || typeMatch || variantMatch;
+  const getCategoryLabel = useCallback((productType) => {
+    if (!productType) return 'General';
+    const cat = CATALOG_CATEGORIES.find(c => c.id === productType.toLowerCase());
+    return cat ? cat.label : productType.charAt(0).toUpperCase() + productType.slice(1);
+  }, []);
+
+  const categoryCounts = useMemo(() => {
+    const counts = { all: products.length };
+    products.forEach((p) => {
+      const cat = (p?.product_type || 'other').toLowerCase();
+      counts[cat] = (counts[cat] || 0) + 1;
     });
-  }, [products, searchQuery]);
+    return counts;
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    let result = products;
+
+    if (selectedCategory && selectedCategory !== 'all') {
+      result = result.filter((product) => {
+        const pType = (product?.product_type || 'other').toLowerCase();
+        return pType === selectedCategory.toLowerCase();
+      });
+    }
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter((product) => {
+        const nameMatch = (product?.product_name || '').toLowerCase().includes(query);
+        const descMatch = (product?.description || '').toLowerCase().includes(query);
+        const typeMatch = (product?.product_type || '').toLowerCase().includes(query);
+        const unitMatch = (product?.unit || '').toLowerCase().includes(query);
+
+        const catObj = CATALOG_CATEGORIES.find(c => c.id === (product?.product_type || '').toLowerCase());
+        const catLabelMatch = catObj ? catObj.label.toLowerCase().includes(query) : false;
+
+        const variantMatch = (product?.product_variant_combinations || []).some(
+          combo => (combo?.combination_string || '').toLowerCase().includes(query) ||
+                   (combo?.sku || '').toLowerCase().includes(query)
+        );
+
+        const variantOptionMatch = (product?.product_variants || []).some(
+          v => (v.name || '').toLowerCase().includes(query) ||
+               (v.variant_options || []).some(opt => {
+                 const val = typeof opt === 'string' ? opt : (opt?.value || opt?.name || '');
+                 return val.toLowerCase().includes(query);
+               })
+        );
+
+        return nameMatch || descMatch || typeMatch || unitMatch || catLabelMatch || variantMatch || variantOptionMatch;
+      });
+    }
+
+    return result;
+  }, [products, searchQuery, selectedCategory]);
 
   useFocusEffect(
     useCallback(() => {
@@ -602,11 +658,18 @@ const CatalogScreen = ({ navigation, route }) => {
           )}
         </TouchableOpacity>
         <View style={styles.productDetails}>
+          {item.product_type ? (
+            <View style={styles.cardCategoryTag}>
+              <Text style={styles.cardCategoryTagText}>{getCategoryLabel(item.product_type)}</Text>
+            </View>
+          ) : null}
           <TouchableOpacity onPress={() => openProductModal(item)}>
             <Text style={styles.productName} numberOfLines={2}>{item.product_name || ''}</Text>
           </TouchableOpacity>
           <Text style={styles.productPrice}>{getPriceDisplay(item)}</Text>
-          <Text style={styles.stockText}>In Stock: {totalStock}</Text>
+          <Text style={styles.stockText}>
+            In Stock: {totalStock} {item.unit || ''}
+          </Text>
         </View>
 
         {isMultiVariant ? (
@@ -763,6 +826,51 @@ const CatalogScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Category Horizontal Filter Bar */}
+      <View style={styles.categoryBarWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryScrollContainer}
+        >
+          {CATALOG_CATEGORIES.map((cat) => {
+            const isSelected = selectedCategory === cat.id;
+            const count = categoryCounts[cat.id] || 0;
+            if (cat.id !== 'all' && count === 0 && !isSelected) return null;
+
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[
+                  styles.categoryChip,
+                  isSelected && styles.categoryChipSelected
+                ]}
+                onPress={() => {
+                  setSelectedCategory(cat.id === selectedCategory ? 'all' : cat.id);
+                }}
+                activeOpacity={0.7}
+              >
+                <Icon
+                  name={cat.icon}
+                  size={12}
+                  color={isSelected ? '#FFFFFF' : '#475569'}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.categoryChipText,
+                    isSelected && styles.categoryChipTextSelected
+                  ]}
+                >
+                  {cat.label} {count > 0 ? `(${count})` : ''}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
       <FlatList
         data={filteredProducts}
         renderItem={renderProduct}
@@ -772,19 +880,25 @@ const CatalogScreen = ({ navigation, route }) => {
           styles.container,
           { paddingBottom: cartTotals.totalItems > 0 ? 155 : 95 }
         ]}
-        extraData={{ cart, guestCart, updatingCart, searchQuery }}
+        extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory }}
         ListEmptyComponent={
           !loading && (
             <View style={styles.emptySearchContainer}>
               <Icon name="search" size={40} color="#ccc" style={{ marginBottom: 12 }} />
               <Text style={styles.emptySearchTitle}>
-                {searchQuery.trim()
-                  ? `No products found matching "${searchQuery}"`
+                {searchQuery.trim() || selectedCategory !== 'all'
+                  ? `No products found matching ${searchQuery.trim() ? `"${searchQuery}"` : ''} ${selectedCategory !== 'all' ? `in category "${getCategoryLabel(selectedCategory)}"` : ''}`
                   : 'No products available in catalog'}
               </Text>
-              {searchQuery.trim().length > 0 && (
-                <TouchableOpacity style={styles.clearSearchBtn} onPress={() => setSearchQuery('')}>
-                  <Text style={styles.clearSearchBtnText}>Clear Search</Text>
+              {(searchQuery.trim().length > 0 || selectedCategory !== 'all') && (
+                <TouchableOpacity
+                  style={styles.clearSearchBtn}
+                  onPress={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('all');
+                  }}
+                >
+                  <Text style={styles.clearSearchBtnText}>Reset Filters</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -828,6 +942,21 @@ const CatalogScreen = ({ navigation, route }) => {
               </View>
 
               <View style={styles.swiggyHeaderSection}>
+                <View style={styles.swiggyMetaBadgesRow}>
+                  {selectedProduct?.product_type ? (
+                    <View style={styles.swiggyCategoryBadge}>
+                      <Icon name="tag" size={11} color="#007AFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.swiggyCategoryBadgeText}>
+                        {getCategoryLabel(selectedProduct.product_type)}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {selectedProduct?.unit ? (
+                    <View style={styles.swiggyUnitBadge}>
+                      <Text style={styles.swiggyUnitBadgeText}>Unit: {selectedProduct.unit}</Text>
+                    </View>
+                  ) : null}
+                </View>
                 <Text style={styles.swiggyProductName}>{selectedProduct?.product_name || ''}</Text>
                 {selectedProduct?.description ? (
                   <Text style={styles.swiggyProductDesc}>{selectedProduct.description}</Text>
@@ -1733,7 +1862,85 @@ const styles = StyleSheet.create({
   labelText: {
     fontSize: 12,
     color: '#888',
-  }
+  },
+  categoryBarWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingVertical: 10,
+  },
+  categoryScrollContainer: {
+    paddingHorizontal: 12,
+    gap: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  categoryChipSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  categoryChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  categoryChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  cardCategoryTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  cardCategoryTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  swiggyMetaBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  swiggyCategoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  swiggyCategoryBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  swiggyUnitBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  swiggyUnitBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
 });
 
 export default CatalogScreen;

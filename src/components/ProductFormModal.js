@@ -24,6 +24,19 @@ import { showAlert } from '../utils/alertUtils';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
+export const PRODUCT_CATEGORIES = [
+  { label: 'Grocery & Essentials', value: 'grocery' },
+  { label: 'Fruits & Vegetables', value: 'fruits_vegetables' },
+  { label: 'Dairy & Bakery', value: 'dairy_bakery' },
+  { label: 'Snacks & Beverages', value: 'snacks_beverages' },
+  { label: 'Clothing & Fashion', value: 'clothing' },
+  { label: 'Electronics & Gadgets', value: 'electronics' },
+  { label: 'Beauty & Personal Care', value: 'beauty_personal_care' },
+  { label: 'Home & Kitchen', value: 'home_kitchen' },
+  { label: 'Pharmacy & Health', value: 'pharmacy' },
+  { label: 'Other / General', value: 'other' },
+];
+
 const generateVariantCombinations = (variants, basePrice = 0) => {
   const activeVariants = (variants || [])
     .map(v => {
@@ -32,8 +45,12 @@ const generateVariantCombinations = (variants, basePrice = 0) => {
         .map(o => ({
           ...o,
           value: (typeof o === 'string' ? o : o?.value || '').trim(),
-          price: typeof o === 'object' && o?.price !== undefined && o?.price !== '' ? o.price : undefined,
-          quantity: typeof o === 'object' && o?.quantity !== undefined && o?.quantity !== '' ? o.quantity : undefined,
+          price: typeof o === 'object' && o?.price !== undefined && o?.price !== '' && o?.price !== null
+            ? (parseFloat(o.price) || 0)
+            : undefined,
+          quantity: typeof o === 'object' && o?.quantity !== undefined && o?.quantity !== '' && o?.quantity !== null
+            ? (parseInt(o.quantity, 10) || 100)
+            : undefined,
         }))
         .filter(o => o.value.length > 0);
       return { ...v, name, variant_options: validOptions };
@@ -51,16 +68,16 @@ const generateVariantCombinations = (variants, basePrice = 0) => {
       combinations.push({
         combination_string: currentParts.join(', '),
         sku: currentSku,
-        price: lastPrice !== undefined && lastPrice !== '' ? (parseFloat(lastPrice) || basePrice) : basePrice,
-        quantity: lastQuantity !== undefined && lastQuantity !== '' ? (parseInt(lastQuantity, 10) || 100) : 100,
+        price: lastPrice !== undefined && lastPrice !== null ? (parseFloat(lastPrice) || 0) : basePrice,
+        quantity: lastQuantity !== undefined && lastQuantity !== null ? (parseInt(lastQuantity, 10) || 100) : 100,
       });
       return;
     }
 
     const variant = activeVariants[index];
     for (const option of variant.variant_options) {
-      const optPrice = option.price !== undefined && option.price !== '' ? option.price : lastPrice;
-      const optQty = option.quantity !== undefined && option.quantity !== '' ? option.quantity : lastQuantity;
+      const optPrice = (option.price !== undefined && option.price !== '' && option.price !== null) ? option.price : lastPrice;
+      const optQty = (option.quantity !== undefined && option.quantity !== '' && option.quantity !== null) ? option.quantity : lastQuantity;
       generate(
         index + 1,
         [...currentParts, `${variant.name}:${option.value}`],
@@ -79,7 +96,7 @@ const syncVariantCombinations = (variants, currentCombos = [], baseAmount = 0) =
   const basePrice = parseFloat(baseAmount) || 0;
   const generated = generateVariantCombinations(variants, basePrice);
 
-  const hasActiveVariants = (variants || []).some(
+  const hasActiveVariants = (variants || []) .some(
     v => (v.name || '').trim() && (v.variant_options || []).some(o => ((typeof o === 'string' ? o : o?.value) || '').trim())
   );
 
@@ -88,7 +105,7 @@ const syncVariantCombinations = (variants, currentCombos = [], baseAmount = 0) =
     return [{
       combination_string: 'Default',
       sku: existingDefault?.sku || '',
-      price: existingDefault?.price !== undefined ? existingDefault.price : basePrice,
+      price: basePrice,
       quantity: existingDefault?.quantity !== undefined ? existingDefault.quantity : 100,
     }];
   }
@@ -99,16 +116,13 @@ const syncVariantCombinations = (variants, currentCombos = [], baseAmount = 0) =
       return oldCombo.combination_string.replace(/\s/g, '').toLowerCase() === newCombo.combination_string.replace(/\s/g, '').toLowerCase();
     });
 
-    if (match) {
-      return {
-        ...newCombo,
-        id: match.id,
-        price: match.price !== undefined && match.price !== '' ? match.price : newCombo.price,
-        quantity: match.quantity !== undefined && match.quantity !== '' ? match.quantity : newCombo.quantity,
-        sku: match.sku || newCombo.sku,
-      };
-    }
-    return newCombo;
+    return {
+      ...newCombo,
+      id: match?.id,
+      price: (newCombo.price !== undefined && newCombo.price !== null) ? newCombo.price : (match?.price !== undefined ? match.price : basePrice),
+      quantity: (newCombo.quantity !== undefined && newCombo.quantity !== null) ? newCombo.quantity : (match?.quantity !== undefined ? match.quantity : 100),
+      sku: match?.sku || newCombo.sku || '',
+    };
   });
 };
 
@@ -483,28 +497,30 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               onChangeText={handleAmountChange}
               keyboardType="numeric"
             />
-            <Text style={styles.label}>Product Type</Text>
+            <Text style={styles.label}>Product Category</Text>
             <Picker
               selectedValue={productType}
               style={styles.picker}
-              onValueChange={(itemValue, itemIndex) => setProductType(itemValue)}
+              onValueChange={(itemValue) => setProductType(itemValue)}
             >
-              <Picker.Item label="Grocery" value="grocery" />
-              <Picker.Item label="Electronics" value="electronics" />
-              <Picker.Item label="Clothing" value="clothing" />
-              <Picker.Item label="Other" value="other" />
+              {PRODUCT_CATEGORIES.map((cat) => (
+                <Picker.Item key={cat.value} label={cat.label} value={cat.value} />
+              ))}
             </Picker>
             <Text style={styles.label}>Unit</Text>
             <Picker
               selectedValue={unit}
               style={styles.picker}
-              onValueChange={(itemValue, itemIndex) => setUnit(itemValue)}
+              onValueChange={(itemValue) => setUnit(itemValue)}
             >
-              <Picker.Item label="Grams" value="grams" />
-              <Picker.Item label="Kg" value="kg" />
-              <Picker.Item label="Pcs" value="pcs" />
-              <Picker.Item label="Litre" value="l" />
-              <Picker.Item label="ml" value="ml" />
+              <Picker.Item label="Pcs (Pieces)" value="pcs" />
+              <Picker.Item label="Kg (Kilograms)" value="kg" />
+              <Picker.Item label="Grams (g)" value="grams" />
+              <Picker.Item label="Litre (L)" value="l" />
+              <Picker.Item label="ml (Millilitres)" value="ml" />
+              <Picker.Item label="Pack / Box" value="pack" />
+              <Picker.Item label="Dozen" value="dozen" />
+              <Picker.Item label="Meter (m)" value="meter" />
             </Picker>
 
             {(!productVariants || productVariants.length === 0 || !productVariants.some(v => (v.name || '').trim())) && (

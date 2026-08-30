@@ -15,6 +15,7 @@ import { FontAwesome as Icon } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../services/supabase';
+import { showAlert } from '../utils/alertUtils';
 
 const { width } = Dimensions.get('window');
 
@@ -38,7 +39,7 @@ export default function WelcomeScreen() {
   }, [user, role, navigation]);
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to log out?', [
+    showAlert('Logout', 'Are you sure you want to log out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',

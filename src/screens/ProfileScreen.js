@@ -19,6 +19,7 @@ import LeafletMap from '../components/LeafletMap'; // Assuming you have this com
 import QRCode from 'react-native-qrcode-svg';
 import * as ImagePicker from 'expo-image-picker';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
+import { showAlert } from '../utils/alertUtils';
 
 const ProfileScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
@@ -74,7 +75,7 @@ const ProfileScreen = ({ navigation }) => {
 
       if (error) {
         console.error('Error fetching profile:', error.message);
-        Alert.alert('Error', 'Failed to fetch profile.');
+        showAlert('Error', 'Failed to fetch profile.');
       } else if (data) {
         setProfile(data);
         setName(user.user_metadata?.name || '');
@@ -124,7 +125,7 @@ const ProfileScreen = ({ navigation }) => {
 
       if (error) {
         console.error('Error updating profile:', error.message);
-        Alert.alert('Error', 'Failed to update profile.');
+        showAlert('Error', 'Failed to update profile.');
       } else {
         // Also update user_metadata for name and email if they are editable
         const { error: userUpdateError } = await supabase.auth.updateUser({
@@ -134,9 +135,9 @@ const ProfileScreen = ({ navigation }) => {
 
         if (userUpdateError) {
           console.error('Error updating user metadata:', userUpdateError.message);
-          Alert.alert('Error', 'Profile updated, but failed to update user name/email.');
+          showAlert('Error', 'Profile updated, but failed to update user name/email.');
         } else {
-          Alert.alert('Success', 'Profile updated successfully!');
+          showAlert('Success', 'Profile updated successfully!');
           fetchProfile(); // Re-fetch to ensure UI is up-to-date
         }
       }
@@ -145,7 +146,7 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to log out?', [
+    showAlert('Logout', 'Are you sure you want to log out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
@@ -156,7 +157,7 @@ const ProfileScreen = ({ navigation }) => {
             const { error } = await supabase.auth.signOut();
             setLoading(false);
             if (error) {
-              Alert.alert('Error', 'Failed to log out: ' + error.message);
+              showAlert('Error', 'Failed to log out: ' + error.message);
             } else {
               navigation.reset({
                 index: 0,
@@ -176,7 +177,7 @@ const ProfileScreen = ({ navigation }) => {
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Permission to access location was denied. Using default location.');
+        showAlert('Permission Denied', 'Permission to access location was denied. Using default location.');
         setMapInitialRegion({ latitude: 28.6139, longitude: 77.2090 });
         setMarkerLocation({ latitude: 28.6139, longitude: 77.2090 });
         setShowLocationPicker(true);
@@ -211,7 +212,7 @@ const ProfileScreen = ({ navigation }) => {
       setShowLocationPicker(true);
     } catch (error) {
       console.error('Error in openLocationPicker:', error);
-      Alert.alert('Error', 'An unexpected error occurred while opening the location picker.');
+      showAlert('Error', 'An unexpected error occurred while opening the location picker.');
     }
   };
 
@@ -221,7 +222,7 @@ const ProfileScreen = ({ navigation }) => {
       setLongitude(markerLocation.longitude);
       setShowLocationPicker(false);
     } else {
-      Alert.alert('No Location Selected', 'Please select a location on the map.');
+      showAlert('No Location Selected', 'Please select a location on the map.');
     }
   };
 
@@ -230,7 +231,7 @@ const ProfileScreen = ({ navigation }) => {
       if (Platform.OS !== 'web') {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+          showAlert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
           return;
         }
       }
@@ -251,16 +252,16 @@ const ProfileScreen = ({ navigation }) => {
           if (uploadedUrl) {
             await addQrCode(user.id, uploadedUrl, 'My UPI QR', true);
             setUpiQrCodeUrl(uploadedUrl);
-            Alert.alert('Success', 'UPI QR Code uploaded successfully.');
+            showAlert('Success', 'UPI QR Code uploaded successfully.');
           } else {
-            Alert.alert('Error', 'Failed to upload QR code. Please try again.');
+            showAlert('Error', 'Failed to upload QR code. Please try again.');
           }
         }
         setLoading(false);
       }
     } catch (err) {
       console.error('Error during UPI QR upload:', err);
-      Alert.alert('Upload Failed', err.message || 'Could not pick or upload image.');
+      showAlert('Upload Failed', err.message || 'Could not pick or upload image.');
       setLoading(false);
     }
   };
