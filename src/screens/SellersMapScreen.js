@@ -240,8 +240,8 @@ export default function SellersMapScreen() {
             null;
 
           const storeSettings = extractStoreSettings(p.media_urls);
-          const isStoreActive = storeSettings.is_store_active !== false;
-          const isMapActive = storeSettings.is_map_active !== false;
+          const isStoreActive = storeSettings.is_store_active === true;
+          const isMapActive = storeSettings.is_map_active === true;
 
           return {
             id: p.id,
@@ -388,6 +388,16 @@ export default function SellersMapScreen() {
     return null;
   }, []);
 
+  // Active sellers for interactive map (only sellers where is_map_active === true)
+  const mapActiveSellers = useMemo(() => {
+    return sellers.filter((s) => s.is_map_active === true);
+  }, [sellers]);
+
+  // Active sellers for store directory list (only sellers where is_store_active === true)
+  const storeActiveSellers = useMemo(() => {
+    return sellers.filter((s) => s.is_store_active === true);
+  }, [sellers]);
+
   // Initialize data
   const initData = useCallback(async () => {
     try {
@@ -395,19 +405,23 @@ export default function SellersMapScreen() {
       const fetchedSellers = await fetchSellersData();
 
       if (fetchedSellers && fetchedSellers.length > 0) {
-        setSelectedSeller(fetchedSellers[0]);
+        const firstActive = fetchedSellers.find((s) => s.is_store_active === true || s.is_map_active === true) || fetchedSellers[0];
+        setSelectedSeller(firstActive);
       }
 
       // Non-blocking location fetch
       fetchLocationData().then((coords) => {
         if (coords && fetchedSellers && fetchedSellers.length > 0) {
-          const sorted = [...fetchedSellers].sort((a, b) => {
+          const mapActive = fetchedSellers.filter((s) => s.is_map_active === true);
+          const sorted = [...mapActive].sort((a, b) => {
             return (
               getRawDistanceKm(coords.latitude, coords.longitude, a.latitude, a.longitude) -
               getRawDistanceKm(coords.latitude, coords.longitude, b.latitude, b.longitude)
             );
           });
-          setSelectedSeller(sorted[0]);
+          if (sorted.length > 0) {
+            setSelectedSeller(sorted[0]);
+          }
           sendMapMessage({
             type: "UPDATE_DATA",
             sellers: sorted,
@@ -432,20 +446,20 @@ export default function SellersMapScreen() {
     initData();
   }, [initData]);
 
-  // Keep map synchronized whenever sellers or userLocation updates
+  // Keep map synchronized whenever mapActiveSellers or userLocation updates
   useEffect(() => {
-    if (sellers.length > 0 || userLocation) {
+    if (mapActiveSellers.length > 0 || userLocation) {
       sendMapMessage({
         type: "UPDATE_DATA",
-        sellers: sellers,
+        sellers: mapActiveSellers,
         userLocation: userLocation,
       });
     }
-  }, [sellers, userLocation, sendMapMessage]);
+  }, [mapActiveSellers, userLocation, sendMapMessage]);
 
-  // Filtered sellers for Directory List
+  // Filtered sellers for Directory List (strictly store-active sellers by default)
   const displayedSellers = useMemo(() => {
-    let list = [...sellers];
+    let list = [...storeActiveSellers];
 
     // Filter by search query
     if (searchQuery.trim().length > 0) {
@@ -481,7 +495,7 @@ export default function SellersMapScreen() {
     }
 
     return list;
-  }, [sellers, searchQuery, activeFilter, userLocation]);
+  }, [storeActiveSellers, searchQuery, activeFilter, userLocation]);
 
   // Search area and sellers
   const fetchSuggestions = async (text) => {
@@ -495,9 +509,9 @@ export default function SellersMapScreen() {
 
       const results = [];
 
-      // 1. Search matching local sellers & stores
+      // 1. Search matching local sellers & stores (only active stores)
       try {
-        const matchedSellers = sellers.filter((s) => {
+        const matchedSellers = storeActiveSellers.filter((s) => {
           const name = (s.full_name || "").toLowerCase();
           const city = (s.city || "").toLowerCase();
           const address = (s.address || "").toLowerCase();
@@ -548,19 +562,17 @@ export default function SellersMapScreen() {
                 type: "area",
                 latitude: parseFloat(item.lat),
                 longitude: parseFloat(item.lon),
-                data: item,
               });
             }
           });
         }
-      } catch (nomErr) {
-        console.warn("Nominatim search notice:", nomErr.message);
+      } catch (osmErr) {
+        // Silent fallback on geocoding network errors
       }
 
       setSuggestions(results);
     } catch (err) {
-      console.warn("Error in fetchSuggestions:", err);
-      setSuggestions([]);
+      console.warn("fetchSuggestions error:", err);
     } finally {
       setSearchLoading(false);
     }
@@ -578,9 +590,8 @@ export default function SellersMapScreen() {
 
   const handleSelectSuggestion = (item) => {
     try {
-      if (!item) return;
-      setSearchQuery(item.title || "");
       setSuggestions([]);
+      setSearchQuery(item.title);
 
       if (item.latitude && item.longitude) {
         sendMapMessage({
@@ -597,8 +608,8 @@ export default function SellersMapScreen() {
             sellerId: item.data.id,
           });
         } else {
-          // Find nearest seller to this selected area
-          const sorted = [...sellers].sort((a, b) => {
+          // Find nearest active seller to this selected area
+          const sorted = [...mapActiveSellers].sort((a, b) => {
             return (
               getRawDistanceKm(item.latitude, item.longitude, a.latitude, a.longitude) -
               getRawDistanceKm(item.latitude, item.longitude, b.latitude, b.longitude)
@@ -625,10 +636,10 @@ export default function SellersMapScreen() {
           longitude: userLocation.longitude,
           zoom: 13,
         });
-      } else if (sellers.length > 0) {
+      } else if (mapActiveSellers.length > 0) {
         sendMapMessage({
           type: "UPDATE_DATA",
-          sellers: sellers,
+          sellers: mapActiveSellers,
           userLocation: userLocation,
         });
       }
@@ -647,7 +658,7 @@ export default function SellersMapScreen() {
         setUserLocation(loc.coords);
         sendMapMessage({
           type: "UPDATE_DATA",
-          sellers: sellers,
+          sellers: mapActiveSellers,
           userLocation: loc.coords,
         });
         sendMapMessage({
@@ -731,10 +742,10 @@ export default function SellersMapScreen() {
       if (!raw) return;
 
       if (raw.type === "mapReady") {
-        if (sellers.length > 0 || userLocation) {
+        if (mapActiveSellers.length > 0 || userLocation) {
           sendMapMessage({
             type: "UPDATE_DATA",
-            sellers: sellers,
+            sellers: mapActiveSellers,
             userLocation: userLocation,
           });
         }
@@ -755,9 +766,9 @@ export default function SellersMapScreen() {
   };
 
   // Generate Leaflet Map HTML
-  const initialLat = userLocation?.latitude || (sellers.length > 0 ? sellers[0].latitude : DEFAULT_LAT);
-  const initialLon = userLocation?.longitude || (sellers.length > 0 ? sellers[0].longitude : DEFAULT_LON);
-  const initialZoom = userLocation ? 13 : (sellers.length > 0 ? 12 : 5);
+  const initialLat = userLocation?.latitude || (mapActiveSellers.length > 0 ? mapActiveSellers[0].latitude : DEFAULT_LAT);
+  const initialLon = userLocation?.longitude || (mapActiveSellers.length > 0 ? mapActiveSellers[0].longitude : DEFAULT_LON);
+  const initialZoom = userLocation ? 13 : (mapActiveSellers.length > 0 ? 12 : 5);
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -1282,7 +1293,7 @@ export default function SellersMapScreen() {
                 document.addEventListener('message', handleIncomingMessage);
 
                 // Initial render with embedded sellers data
-                var initialSellers = ${JSON.stringify(sellers)};
+                var initialSellers = ${JSON.stringify(mapActiveSellers)};
                 var initialUserLoc = ${JSON.stringify(userLocation)};
                 if (initialSellers.length > 0 || initialUserLoc) {
                     window.updateMapData(initialSellers, initialUserLoc);
@@ -1520,7 +1531,7 @@ export default function SellersMapScreen() {
         onPress={() => setActiveFilter("all")}
       >
         <Text style={[styles.chipText, activeFilter === "all" && styles.chipTextActive]}>
-          All Stores ({sellers.length})
+          All Stores ({storeActiveSellers.length})
         </Text>
       </TouchableOpacity>
 

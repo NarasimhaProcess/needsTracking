@@ -904,23 +904,6 @@ const CatalogScreen = ({ navigation, route }) => {
                   <Text style={styles.clearSearchBtnText}>Reset Filters</Text>
                 </TouchableOpacity>
               )}
-              {sellerId && (!searchQuery.trim() && selectedCategory === 'all') && (
-                <TouchableOpacity
-                  style={[styles.clearSearchBtn, { backgroundColor: '#059669', borderColor: '#059669', marginTop: 10 }]}
-                  onPress={async () => {
-                    try {
-                      await setSellerProductsActiveStatus(sellerId, true);
-                      const prods = await getActiveProductsWithDetails(sellerId);
-                      setProducts(prods || []);
-                      showAlert('Catalog Activated', 'Store products have been set to active!');
-                    } catch (e) {
-                      console.error('Error activating catalog products:', e);
-                    }
-                  }}
-                >
-                  <Text style={[styles.clearSearchBtnText, { color: '#FFFFFF' }]}>✨ Activate Store Products</Text>
-                </TouchableOpacity>
-              )}
             </View>
           )
         }

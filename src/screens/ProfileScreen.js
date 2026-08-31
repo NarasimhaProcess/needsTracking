@@ -76,19 +76,20 @@ const ProfileScreen = ({ navigation }) => {
   const videoCount = mediaList.filter((m) => m.type === 'video').length;
 
   // Store & Product Active Visibility Controls (Seller & AppAdmin)
-  const [isStoreActive, setIsStoreActive] = useState(true);
-  const [isMapActive, setIsMapActive] = useState(true);
-  const [isProductViewActive, setIsProductViewActive] = useState(true);
+  // By default, sellers are inactive (false) until explicitly activated
+  const [isStoreActive, setIsStoreActive] = useState(false);
+  const [isMapActive, setIsMapActive] = useState(false);
+  const [isProductViewActive, setIsProductViewActive] = useState(false);
   const [sellerProducts, setSellerProducts] = useState([]);
   const [productStats, setProductStats] = useState({ total: 0, active: 0 });
   const [togglingStatus, setTogglingStatus] = useState(false);
 
-  // AppAdmin Multi-User Controls State
+  // AppAdmin / Superadmin Multi-User Controls State
   const [adminSellersList, setAdminSellersList] = useState([]);
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [adminLoading, setAdminLoading] = useState(false);
-  const [adminGlobalStoreActive, setAdminGlobalStoreActive] = useState(true);
-  const [adminGlobalProductsActive, setAdminGlobalProductsActive] = useState(true);
+  const [adminGlobalStoreActive, setAdminGlobalStoreActive] = useState(false);
+  const [adminGlobalProductsActive, setAdminGlobalProductsActive] = useState(false);
 
   useEffect(() => {
     fetchProfile();
@@ -141,14 +142,14 @@ const ProfileScreen = ({ navigation }) => {
         if (uId) {
           if (!prodMap[uId]) prodMap[uId] = { total: 0, active: 0 };
           prodMap[uId].total += 1;
-          if (p.is_active !== false) prodMap[uId].active += 1;
+          if (p.is_active === true) prodMap[uId].active += 1;
         }
       });
 
       const sellers = (profs || [])
         .filter((p) => {
           const r = (p.role || '').toLowerCase();
-          return r === 'seller' || r === 'admin' || r === 'appadmin' || (prodMap[p.id] && prodMap[p.id].total > 0);
+          return r === 'seller' || r === 'admin' || r === 'superadmin' || r === 'appadmin' || r === 'app_admin' || (prodMap[p.id] && prodMap[p.id].total > 0);
         })
         .map((p) => {
           const st = extractStoreSettings(p.media_urls);
@@ -161,9 +162,9 @@ const ProfileScreen = ({ navigation }) => {
             role: p.role || 'seller',
             city: p.city || p.address_line_1 || 'Local Store',
             media_urls: p.media_urls,
-            is_store_active: st.is_store_active,
-            is_map_active: st.is_map_active,
-            is_product_active: pStat.total > 0 ? pStat.active > 0 : st.is_product_active,
+            is_store_active: st.is_store_active === true,
+            is_map_active: st.is_map_active === true,
+            is_product_active: pStat.total > 0 ? pStat.active > 0 : st.is_product_active === true,
             productCount: pStat.total,
             activeProductCount: pStat.active,
           };
@@ -252,7 +253,7 @@ const ProfileScreen = ({ navigation }) => {
             .eq('user_id', user.id);
           if (prods && Array.isArray(prods)) {
             setSellerProducts(prods);
-            const activeCount = prods.filter((p) => p.is_active !== false).length;
+            const activeCount = prods.filter((p) => p.is_active === true).length;
             setProductStats({ total: prods.length, active: activeCount });
             if (prods.length > 0) {
               setIsProductViewActive(activeCount > 0);
@@ -262,9 +263,9 @@ const ProfileScreen = ({ navigation }) => {
           console.warn('Error loading seller products in profile:', prodErr.message);
         }
 
-        // If user is Admin or AppAdmin, fetch all sellers list
-        const currentRole = (data?.role || user.user_metadata?.role || '').toLowerCase();
-        if (currentRole === 'admin' || currentRole === 'appadmin') {
+        // If user is Admin or Superadmin, fetch all sellers list
+        const currentRole = (data?.role || data?.user_type || user.user_metadata?.role || user.user_metadata?.user_type || '').toLowerCase();
+        if (currentRole === 'admin' || currentRole === 'superadmin' || currentRole === 'appadmin' || currentRole === 'app_admin') {
           fetchAdminSellersList();
         }
 
@@ -490,45 +491,54 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
-  // AppAdmin: Toggle single seller's store active status
+  // AppAdmin / Superadmin: Toggle single seller's store active status
   const handleAdminToggleSellerStore = async (sellerId, newVal) => {
     setAdminSellersList((prev) =>
-      prev.map((s) => (s.id === sellerId ? { ...s, is_store_active: newVal } : s))
+      prev.map((s) => (s.id === sellerId ? { ...s, is_store_active: newVal === true } : s))
     );
     try {
       const targetSeller = adminSellersList.find((s) => s.id === sellerId);
       const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
-        is_store_active: newVal,
-        is_map_active: targetSeller?.is_map_active !== false,
-        is_product_active: targetSeller?.is_product_active !== false,
+        is_store_active: newVal === true,
+        is_map_active: targetSeller?.is_map_active === true,
+        is_product_active: targetSeller?.is_product_active === true,
       });
       await supabase
         .from('profiles')
         .update({ media_urls: updatedMedia })
         .eq('id', sellerId);
       showAlert(
-        'AppAdmin Action',
-        `Store status for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active' : 'Inactive'}.`
+        'Admin Action',
+        `Store status for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active (Open)' : 'Inactive (Closed)'}.`
       );
     } catch (err) {
       console.error('Error updating seller store by admin:', err);
     }
   };
 
-  // AppAdmin: Toggle single seller's products active status
+  // AppAdmin / Superadmin: Toggle single seller's products active status
   const handleAdminToggleSellerProducts = async (sellerId, newVal) => {
     setAdminSellersList((prev) =>
       prev.map((s) =>
         s.id === sellerId
-          ? { ...s, is_product_active: newVal, activeProductCount: newVal ? s.productCount : 0 }
+          ? { ...s, is_product_active: newVal === true, activeProductCount: newVal ? s.productCount : 0 }
           : s
       )
     );
     try {
       await setSellerProductsActiveStatus(sellerId, newVal);
       const targetSeller = adminSellersList.find((s) => s.id === sellerId);
+      const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
+        is_store_active: targetSeller?.is_store_active === true,
+        is_map_active: targetSeller?.is_map_active === true,
+        is_product_active: newVal === true,
+      });
+      await supabase
+        .from('profiles')
+        .update({ media_urls: updatedMedia })
+        .eq('id', sellerId);
       showAlert(
-        'AppAdmin Action',
+        'Admin Action',
         `All products for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active' : 'Inactive'}.`
       );
     } catch (err) {
@@ -536,61 +546,72 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
-  // AppAdmin: Toggle single seller's map visibility
+  // AppAdmin / Superadmin: Toggle single seller's map visibility
   const handleAdminToggleSellerMap = async (sellerId, newVal) => {
     setAdminSellersList((prev) =>
-      prev.map((s) => (s.id === sellerId ? { ...s, is_map_active: newVal } : s))
+      prev.map((s) => (s.id === sellerId ? { ...s, is_map_active: newVal === true } : s))
     );
     try {
       const targetSeller = adminSellersList.find((s) => s.id === sellerId);
       const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
-        is_store_active: targetSeller?.is_store_active !== false,
-        is_map_active: newVal,
-        is_product_active: targetSeller?.is_product_active !== false,
+        is_store_active: targetSeller?.is_store_active === true,
+        is_map_active: newVal === true,
+        is_product_active: targetSeller?.is_product_active === true,
       });
       await supabase
         .from('profiles')
         .update({ media_urls: updatedMedia })
         .eq('id', sellerId);
       showAlert(
-        'AppAdmin Action',
-        `Map visibility for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Shown' : 'Hidden'}.`
+        'Admin Action',
+        `Map visibility for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Shown on Map' : 'Hidden from Map'}.`
       );
     } catch (err) {
       console.error('Error updating seller map by admin:', err);
     }
   };
 
-  // AppAdmin: Global Activate / Deactivate All Stores
+  // AppAdmin / Superadmin: Global Activate / Deactivate All Stores
   const handleAdminGlobalToggleStores = async (newVal) => {
-    setAdminGlobalStoreActive(newVal);
+    setAdminGlobalStoreActive(newVal === true);
     setAdminSellersList((prev) =>
-      prev.map((s) => ({ ...s, is_store_active: newVal }))
+      prev.map((s) => ({ ...s, is_store_active: newVal === true, is_map_active: newVal === true }))
     );
     try {
+      for (const s of adminSellersList) {
+        const updatedMedia = embedStoreSettings(s.media_urls || [], {
+          is_store_active: newVal === true,
+          is_map_active: newVal === true,
+          is_product_active: s.is_product_active === true,
+        });
+        await supabase
+          .from('profiles')
+          .update({ media_urls: updatedMedia })
+          .eq('id', s.id);
+      }
       showAlert(
-        'AppAdmin Action',
-        `All stores across the platform set to ${newVal ? 'ACTIVE (Open)' : 'INACTIVE (Closed)'}.`
+        'Admin Action',
+        `All stores across the platform set to ${newVal ? 'ACTIVE (Visible on Map & Directory)' : 'INACTIVE (Hidden)'}.`
       );
     } catch (e) {
       console.error('Error in global store toggle:', e);
     }
   };
 
-  // AppAdmin: Global Activate / Deactivate All Products
+  // AppAdmin / Superadmin: Global Activate / Deactivate All Products
   const handleAdminGlobalToggleProducts = async (newVal) => {
-    setAdminGlobalProductsActive(newVal);
+    setAdminGlobalProductsActive(newVal === true);
     setAdminSellersList((prev) =>
       prev.map((s) => ({
         ...s,
-        is_product_active: newVal,
+        is_product_active: newVal === true,
         activeProductCount: newVal ? s.productCount : 0,
       }))
     );
     try {
-      await setAllProductsActiveStatus(newVal);
+      await setAllProductsActiveStatus(newVal === true);
       showAlert(
-        'AppAdmin Action',
+        'Admin Action',
         `All products across all sellers set to ${newVal ? 'ACTIVE' : 'INACTIVE'}.`
       );
     } catch (e) {
@@ -1008,34 +1029,42 @@ const ProfileScreen = ({ navigation }) => {
 
   let photoIndexCounter = 0;
 
-  const userRole = (profile?.role || '').toLowerCase();
-  const isAdmin = userRole === 'admin' || userRole === 'appadmin';
+  const userRole = (
+    profile?.role ||
+    profile?.user_type ||
+    user?.user_metadata?.role ||
+    user?.user_metadata?.user_type ||
+    ''
+  ).toLowerCase().trim();
+  const isAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'appadmin' || userRole === 'app_admin';
   const isSeller = userRole === 'seller' || isAdmin || (sellerProducts && sellerProducts.length > 0);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.profileHeaderBox}>
         <Text style={styles.title}>Profile</Text>
-        {profile?.role && (
+        {(profile?.role || profile?.user_type || isAdmin) && (
           <View style={[
             styles.profileRoleBadge,
-            profile.role === 'seller' ? styles.roleBadgeSeller :
-            profile.role === 'delivery_manager' ? styles.roleBadgeDelivery :
+            isAdmin ? styles.roleBadgeAdmin :
+            userRole === 'seller' ? styles.roleBadgeSeller :
+            userRole === 'delivery_manager' ? styles.roleBadgeDelivery :
             styles.roleBadgeCustomer
           ]}>
             <Icon
-              name={profile.role === 'seller' ? 'home' : profile.role === 'delivery_manager' ? 'truck' : 'user'}
+              name={isAdmin ? 'shield' : userRole === 'seller' ? 'home' : userRole === 'delivery_manager' ? 'truck' : 'user'}
               size={12}
-              color={profile.role === 'seller' ? '#059669' : profile.role === 'delivery_manager' ? '#7C3AED' : '#0284C7'}
+              color={isAdmin ? '#D97706' : userRole === 'seller' ? '#059669' : userRole === 'delivery_manager' ? '#7C3AED' : '#0284C7'}
               style={{ marginRight: 5 }}
             />
             <Text style={[
               styles.profileRoleBadgeText,
-              profile.role === 'seller' ? styles.roleBadgeTextSeller :
-              profile.role === 'delivery_manager' ? styles.roleBadgeTextDelivery :
+              isAdmin ? styles.roleBadgeTextAdmin :
+              userRole === 'seller' ? styles.roleBadgeTextSeller :
+              userRole === 'delivery_manager' ? styles.roleBadgeTextDelivery :
               styles.roleBadgeTextCustomer
             ]}>
-              {profile.role === 'seller' ? 'Seller Account' : profile.role === 'delivery_manager' ? 'Delivery Partner' : 'Customer / Buyer'}
+              {isAdmin ? (userRole === 'superadmin' ? 'Superadmin' : 'App Admin') : userRole === 'seller' ? 'Seller Account' : userRole === 'delivery_manager' ? 'Delivery Partner' : 'Customer / Buyer'}
             </Text>
           </View>
         )}
@@ -1166,7 +1195,7 @@ const ProfileScreen = ({ navigation }) => {
         </View>
       )}
 
-      {/* APP ADMIN: Global Master Controls & All Users Store Management */}
+      {/* APP ADMIN / SUPERADMIN: Global Master Controls & Multi-Seller Store Management */}
       {isAdmin && (
         <View style={styles.adminMasterCard}>
           <View style={styles.adminHeaderRow}>
@@ -1175,9 +1204,9 @@ const ProfileScreen = ({ navigation }) => {
                 <Icon name="shield" size={18} color="#D97706" />
               </View>
               <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={styles.adminCardTitle}>App Admin: Store & Map Controls</Text>
+                <Text style={styles.adminCardTitle}>Superadmin & Admin: Seller Controls</Text>
                 <Text style={styles.adminCardSub}>
-                  Activate or deactivate stores, maps, and product views for all users
+                  Only Superadmin or Admin can activate/deactivate sellers for Map & Directory (Default Inactive)
                 </Text>
               </View>
             </View>
@@ -1262,7 +1291,7 @@ const ProfileScreen = ({ navigation }) => {
                         <View
                           style={[
                             styles.miniStatusTag,
-                            seller.is_store_active !== false
+                            seller.is_store_active === true
                               ? styles.miniStatusTagActive
                               : styles.miniStatusTagInactive,
                           ]}
@@ -1272,13 +1301,13 @@ const ProfileScreen = ({ navigation }) => {
                               styles.miniStatusTagText,
                               {
                                 color:
-                                  seller.is_store_active !== false
+                                  seller.is_store_active === true
                                     ? '#059669'
                                     : '#DC2626',
                               },
                             ]}
                           >
-                            {seller.is_store_active !== false ? 'Active' : 'Inactive'}
+                            {seller.is_store_active === true ? 'Active' : 'Inactive'}
                           </Text>
                         </View>
                       </View>
@@ -1295,10 +1324,10 @@ const ProfileScreen = ({ navigation }) => {
                       <View style={styles.adminToggleMiniRow}>
                         <Text style={styles.adminToggleMiniLabel}>Store:</Text>
                         <Switch
-                          value={seller.is_store_active !== false}
+                          value={seller.is_store_active === true}
                           onValueChange={(val) => handleAdminToggleSellerStore(seller.id, val)}
                           trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
-                          thumbColor={seller.is_store_active !== false ? '#10B981' : '#F1F5F9'}
+                          thumbColor={seller.is_store_active === true ? '#10B981' : '#F1F5F9'}
                           style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
                         />
                       </View>
@@ -1306,10 +1335,10 @@ const ProfileScreen = ({ navigation }) => {
                       <View style={styles.adminToggleMiniRow}>
                         <Text style={styles.adminToggleMiniLabel}>Products:</Text>
                         <Switch
-                          value={seller.is_product_active !== false}
+                          value={seller.is_product_active === true}
                           onValueChange={(val) => handleAdminToggleSellerProducts(seller.id, val)}
                           trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                          thumbColor={seller.is_product_active !== false ? '#007AFF' : '#F1F5F9'}
+                          thumbColor={seller.is_product_active === true ? '#007AFF' : '#F1F5F9'}
                           style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
                         />
                       </View>
@@ -1317,10 +1346,10 @@ const ProfileScreen = ({ navigation }) => {
                       <View style={styles.adminToggleMiniRow}>
                         <Text style={styles.adminToggleMiniLabel}>Map Pin:</Text>
                         <Switch
-                          value={seller.is_map_active !== false}
+                          value={seller.is_map_active === true}
                           onValueChange={(val) => handleAdminToggleSellerMap(seller.id, val)}
                           trackColor={{ false: '#CBD5E1', true: '#C084FC' }}
-                          thumbColor={seller.is_map_active !== false ? '#8B5CF6' : '#F1F5F9'}
+                          thumbColor={seller.is_map_active === true ? '#8B5CF6' : '#F1F5F9'}
                           style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
                         />
                       </View>
@@ -1831,6 +1860,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     borderWidth: 1,
   },
+  roleBadgeAdmin: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
   roleBadgeSeller: {
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
@@ -1846,6 +1879,9 @@ const styles = StyleSheet.create({
   profileRoleBadgeText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  roleBadgeTextAdmin: {
+    color: '#B45309',
   },
   roleBadgeTextSeller: {
     color: '#059669',

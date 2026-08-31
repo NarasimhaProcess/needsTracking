@@ -31,9 +31,10 @@ export default function AuthScreen({ navigation, route }) {
       onAuthSuccess(user);
     }
 
-    if (role === 'seller') {
+    const r = (role || '').toLowerCase();
+    if (r === 'seller' || r === 'admin' || r === 'superadmin' || r === 'appadmin' || r === 'app_admin') {
       navigation.dispatch(StackActions.replace('ProductTabs', { session: { user } }));
-    } else if (role === 'delivery_partner' || role === 'delivery_manager') {
+    } else if (r === 'delivery_partner' || r === 'delivery_manager') {
       navigation.dispatch(StackActions.replace('DeliveryManagerDashboard'));
     } else {
       // Buyer / Customer default
@@ -62,23 +63,21 @@ export default function AuthScreen({ navigation, route }) {
 
       const user = data.user;
 
-      // Fetch user role from profiles table (no longer checking customers table)
-      let role = user?.user_metadata?.role;
+      // Fetch user role from profiles table (source of truth)
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
 
-      if (!role) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        role = profile?.role || 'buyer';
-      }
+      const role = profile?.role || user?.user_metadata?.role || 'buyer';
 
       // Ensure user metadata is updated with role
-      await supabase.auth.updateUser({
-        data: { role }
-      });
+      try {
+        await supabase.auth.updateUser({
+          data: { role }
+        });
+      } catch (_) {}
 
       Alert.alert('Welcome Back', `Logged in successfully as ${role.toUpperCase().replace('_', ' ')}`);
       redirectUserByRole(role, user);

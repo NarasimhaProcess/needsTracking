@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase, signInWithGoogle, getAuthRedirectUrl } from '../services/supabase';
+import { supabase, signInWithGoogle, getAuthRedirectUrl, isUserAdminOrSuperadmin } from '../services/supabase';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
@@ -28,16 +28,25 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
     try {
       const res = await signInWithGoogle('delivery_manager');
       if (res.success && res.user) {
-        // Ensure profile has delivery_manager role
-        await supabase
+        const { data: existingProfile } = await supabase
           .from('profiles')
-          .upsert({
-            id: res.user.id,
-            role: 'delivery_manager',
-            full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Delivery Partner',
-            email: res.user.email,
-            updated_at: new Date().toISOString(),
-          });
+          .select('id, role')
+          .eq('id', res.user.id)
+          .maybeSingle();
+
+        const isExistingAdmin = isUserAdminOrSuperadmin(existingProfile, res.user);
+
+        if (!existingProfile) {
+          await supabase
+            .from('profiles')
+            .upsert({
+              id: res.user.id,
+              role: 'delivery_manager',
+              full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Delivery Partner',
+              email: res.user.email,
+              updated_at: new Date().toISOString(),
+            });
+        }
 
         if (onAuthSuccess) {
           onAuthSuccess(res.user);
@@ -82,8 +91,10 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
           console.error("Error checking profile existence:", profileError.message);
         }
 
-        if (!profileData || profileData.role !== 'delivery_manager') {
-          // If metadata indicates delivery_manager role or new profile, ensure profile exists
+        const isExistingAdmin = isUserAdminOrSuperadmin(profileData, data.user);
+
+        if (!profileData) {
+          // If new profile, create profile
           try {
             const { data: newProfile } = await supabase
               .from('profiles')
@@ -99,6 +110,21 @@ export default function DeliveryManagerLoginScreen({ navigation, route }) {
             profileData = newProfile;
           } catch (upsertErr) {
             console.error("Error upserting delivery profile:", upsertErr);
+          }
+        } else if (!isExistingAdmin && profileData.role !== 'delivery_manager') {
+          try {
+            const { data: updatedProfile } = await supabase
+              .from('profiles')
+              .update({
+                role: 'delivery_manager',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', data.user.id)
+              .select()
+              .maybeSingle();
+            if (updatedProfile) profileData = updatedProfile;
+          } catch (updateErr) {
+            console.error("Error updating delivery profile role:", updateErr);
           }
         }
 

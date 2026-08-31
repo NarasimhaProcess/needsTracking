@@ -120,12 +120,13 @@ export default function WelcomeScreen() {
               <Text style={styles.portalDesc}>Shop Local Stores</Text>
             </TouchableOpacity>
 
-            {/* Seller Portal */}
+            {/* Seller / Admin Portal */}
             <TouchableOpacity
               style={styles.portalCard}
               activeOpacity={0.8}
               onPress={() => {
-                if (user && (role === 'seller' || role === 'admin')) {
+                const r = (role || '').toLowerCase();
+                if (user && (r === 'seller' || r === 'admin' || r === 'superadmin' || r === 'appadmin' || r === 'app_admin')) {
                   navigation.navigate('ProductTabs');
                 } else {
                   navigation.navigate('SellerLogin');
@@ -135,8 +136,8 @@ export default function WelcomeScreen() {
               <View style={[styles.portalIconBox, { backgroundColor: '#ECFDF5' }]}>
                 <Icon name="home" size={22} color="#10B981" />
               </View>
-              <Text style={styles.portalTitle}>Seller</Text>
-              <Text style={styles.portalDesc}>Manage Inventory</Text>
+              <Text style={styles.portalTitle}>Seller / Admin</Text>
+              <Text style={styles.portalDesc}>Manage Inventory & Stores</Text>
             </TouchableOpacity>
 
             {/* Delivery Portal */}

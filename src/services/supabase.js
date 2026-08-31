@@ -1817,7 +1817,27 @@ export async function setAllProductsActiveStatus(isActive) {
 }
 
 /**
- * Helper to parse store settings from media_urls or object
+ * Helper to check if a user or profile is Admin or Superadmin
+ */
+export function isUserAdminOrSuperadmin(profile, user) {
+  const role = (
+    profile?.role ||
+    profile?.user_type ||
+    user?.user_metadata?.role ||
+    user?.user_metadata?.user_type ||
+    ''
+  ).toLowerCase().trim();
+  return (
+    role === 'admin' ||
+    role === 'superadmin' ||
+    role === 'appadmin' ||
+    role === 'app_admin'
+  );
+}
+
+/**
+ * Helper to parse store settings from media_urls or object.
+ * By default, sellers are INACTIVE (false) for map and store directory until explicitly activated by admin/superadmin.
  */
 export function extractStoreSettings(mediaUrls) {
   let list = [];
@@ -1832,9 +1852,9 @@ export function extractStoreSettings(mediaUrls) {
   }
   const settingsItem = list.find((m) => m && m.type === 'store_settings');
   return {
-    is_store_active: settingsItem?.store_active !== false,
-    is_map_active: settingsItem?.map_active !== false,
-    is_product_active: settingsItem?.product_active !== false,
+    is_store_active: settingsItem ? settingsItem.store_active === true : false,
+    is_map_active: settingsItem ? settingsItem.map_active === true : false,
+    is_product_active: settingsItem ? settingsItem.product_active === true : false,
   };
 }
 
@@ -1842,15 +1862,26 @@ export function extractStoreSettings(mediaUrls) {
  * Helper to embed store settings into media_urls array without losing media photos/videos
  */
 export function embedStoreSettings(existingMediaList, storeSettings) {
-  const cleanMedia = (existingMediaList || []).filter(
+  let list = [];
+  if (typeof existingMediaList === 'string') {
+    try {
+      list = JSON.parse(existingMediaList);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(existingMediaList)) {
+    list = existingMediaList;
+  }
+  const cleanMedia = (list || []).filter(
     (m) => m && m.type !== 'store_settings'
   );
   cleanMedia.push({
     type: 'store_settings',
-    store_active: storeSettings.is_store_active !== false,
-    map_active: storeSettings.is_map_active !== false,
-    product_active: storeSettings.is_product_active !== false,
+    store_active: storeSettings?.is_store_active === true,
+    map_active: storeSettings?.is_map_active === true,
+    product_active: storeSettings?.is_product_active === true,
     updated_at: new Date().toISOString(),
   });
   return cleanMedia;
 }
+

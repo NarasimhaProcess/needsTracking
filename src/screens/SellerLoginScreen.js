@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase, signInWithGoogle, getAuthRedirectUrl } from '../services/supabase';
+import { supabase, signInWithGoogle, getAuthRedirectUrl, isUserAdminOrSuperadmin } from '../services/supabase';
 import { StackActions } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
@@ -32,19 +32,29 @@ export default function SellerLoginScreen({ navigation, route }) {
       }
       const res = await signInWithGoogle('seller');
       if (res.success && res.user) {
-        await supabase
+        const { data: existingProfile } = await supabase
           .from('profiles')
-          .upsert({
-            id: res.user.id,
-            role: 'seller',
-            full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Seller',
-            email: res.user.email,
-            updated_at: new Date().toISOString(),
-          });
+          .select('id, role')
+          .eq('id', res.user.id)
+          .maybeSingle();
 
-        try {
-          await supabase.auth.updateUser({ data: { role: 'seller' } });
-        } catch (_) {}
+        const isExistingAdmin = isUserAdminOrSuperadmin(existingProfile, res.user);
+
+        if (!existingProfile) {
+          await supabase
+            .from('profiles')
+            .upsert({
+              id: res.user.id,
+              role: 'seller',
+              full_name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || 'Seller',
+              email: res.user.email,
+              updated_at: new Date().toISOString(),
+            });
+
+          try {
+            await supabase.auth.updateUser({ data: { role: 'seller' } });
+          } catch (_) {}
+        }
 
         if (onAuthSuccess) {
           onAuthSuccess(res.user);
@@ -89,6 +99,8 @@ export default function SellerLoginScreen({ navigation, route }) {
           console.error("Error checking seller profile:", profileError.message);
         }
 
+        const isExistingAdmin = isUserAdminOrSuperadmin(profileData, data.user);
+
         if (!profileData) {
           try {
             const { data: newProfile } = await supabase
@@ -107,7 +119,7 @@ export default function SellerLoginScreen({ navigation, route }) {
           } catch (upsertErr) {
             console.error("Error upserting profile:", upsertErr);
           }
-        } else if (profileData.role !== 'seller' && profileData.role !== 'admin') {
+        } else if (!isExistingAdmin && profileData.role !== 'seller') {
           try {
             const { data: updatedProfile } = await supabase
               .from('profiles')
