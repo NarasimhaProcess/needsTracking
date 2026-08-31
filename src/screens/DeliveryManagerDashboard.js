@@ -548,7 +548,10 @@ const DeliveryManagerDashboard = ({ navigation }) => {
                 : renderCompletedOrderItem
           }
           keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={styles.listContainer}
+          style={{ flex: 1, width: '100%' }}
+          showsVerticalScrollIndicator={true}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[styles.listContainer, { flexGrow: 1, paddingBottom: 60 }]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#007AFF']} />
           }

@@ -21,7 +21,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
+import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase, setSellerProductsActiveStatus } from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
 
@@ -766,7 +766,7 @@ const CatalogScreen = ({ navigation, route }) => {
   const cartItems = user ? cart?.cart_items : guestCart;
 
   return (
-    <View style={{flex: 1, backgroundColor: 'white'}}>
+    <View style={{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity
@@ -876,9 +876,12 @@ const CatalogScreen = ({ navigation, route }) => {
         renderItem={renderProduct}
         keyExtractor={(item) => item.id.toString()}
         numColumns={2}
+        style={{ flex: 1, width: '100%' }}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.container,
-          { paddingBottom: cartTotals.totalItems > 0 ? 155 : 95 }
+          { flexGrow: 1, paddingBottom: cartTotals.totalItems > 0 ? 155 : 95 }
         ]}
         extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory }}
         ListEmptyComponent={
@@ -899,6 +902,23 @@ const CatalogScreen = ({ navigation, route }) => {
                   }}
                 >
                   <Text style={styles.clearSearchBtnText}>Reset Filters</Text>
+                </TouchableOpacity>
+              )}
+              {sellerId && (!searchQuery.trim() && selectedCategory === 'all') && (
+                <TouchableOpacity
+                  style={[styles.clearSearchBtn, { backgroundColor: '#059669', borderColor: '#059669', marginTop: 10 }]}
+                  onPress={async () => {
+                    try {
+                      await setSellerProductsActiveStatus(sellerId, true);
+                      const prods = await getActiveProductsWithDetails(sellerId);
+                      setProducts(prods || []);
+                      showAlert('Catalog Activated', 'Store products have been set to active!');
+                    } catch (e) {
+                      console.error('Error activating catalog products:', e);
+                    }
+                  }}
+                >
+                  <Text style={[styles.clearSearchBtnText, { color: '#FFFFFF' }]}>✨ Activate Store Products</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -922,53 +942,52 @@ const CatalogScreen = ({ navigation, route }) => {
                 <Icon name="times-circle" size={30} color="#333" />
               </TouchableOpacity>
               
-              <View style={styles.swiperContainer}>
-                {selectedProduct?.product_media && selectedProduct.product_media.length > 0 && selectedProduct.product_media.some(m => isImageMedia(m) && (m?.media_url || m?.uri)) ? (
-                  <Swiper showsButtons={false} loop={false}>
-                    {selectedProduct.product_media
-                      .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
-                      .map((media, index) => (
-                        <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
-                          <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
-                        </TouchableOpacity>
-                      ))}
-                  </Swiper>
-                ) : (
-                  <View style={styles.modalProductImagePlaceholder}>
-                    <Icon name="shopping-bag" size={48} color="#94a3b8" />
-                    <Text style={styles.modalPlaceholderText}>{selectedProduct?.product_name || 'Product'}</Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.swiggyHeaderSection}>
-                <View style={styles.swiggyMetaBadgesRow}>
-                  {selectedProduct?.product_type ? (
-                    <View style={styles.swiggyCategoryBadge}>
-                      <Icon name="tag" size={11} color="#007AFF" style={{ marginRight: 4 }} />
-                      <Text style={styles.swiggyCategoryBadgeText}>
-                        {getCategoryLabel(selectedProduct.product_type)}
-                      </Text>
-                    </View>
-                  ) : null}
-                  {selectedProduct?.unit ? (
-                    <View style={styles.swiggyUnitBadge}>
-                      <Text style={styles.swiggyUnitBadgeText}>Unit: {selectedProduct.unit}</Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Text style={styles.swiggyProductName}>{selectedProduct?.product_name || ''}</Text>
-                {selectedProduct?.description ? (
-                  <Text style={styles.swiggyProductDesc}>{selectedProduct.description}</Text>
-                ) : null}
-              </View>
-              
               <ScrollView
                 style={{ flex: 1, width: '100%' }}
-                contentContainerStyle={{ paddingBottom: 24 }}
+                contentContainerStyle={{ paddingBottom: 30 }}
                 showsVerticalScrollIndicator={true}
                 keyboardShouldPersistTaps="handled"
               >
+                <View style={styles.swiperContainer}>
+                  {selectedProduct?.product_media && selectedProduct.product_media.length > 0 && selectedProduct.product_media.some(m => isImageMedia(m) && (m?.media_url || m?.uri)) ? (
+                    <Swiper showsButtons={false} loop={false}>
+                      {selectedProduct.product_media
+                        .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
+                        .map((media, index) => (
+                          <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
+                            <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
+                          </TouchableOpacity>
+                        ))}
+                    </Swiper>
+                  ) : (
+                    <View style={styles.modalProductImagePlaceholder}>
+                      <Icon name="shopping-bag" size={48} color="#94a3b8" />
+                      <Text style={styles.modalPlaceholderText}>{selectedProduct?.product_name || 'Product'}</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.swiggyHeaderSection}>
+                  <View style={styles.swiggyMetaBadgesRow}>
+                    {selectedProduct?.product_type ? (
+                      <View style={styles.swiggyCategoryBadge}>
+                        <Icon name="tag" size={11} color="#007AFF" style={{ marginRight: 4 }} />
+                        <Text style={styles.swiggyCategoryBadgeText}>
+                          {getCategoryLabel(selectedProduct.product_type)}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {selectedProduct?.unit ? (
+                      <View style={styles.swiggyUnitBadge}>
+                        <Text style={styles.swiggyUnitBadgeText}>Unit: {selectedProduct.unit}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.swiggyProductName}>{selectedProduct?.product_name || ''}</Text>
+                  {selectedProduct?.description ? (
+                    <Text style={styles.swiggyProductDesc}>{selectedProduct.description}</Text>
+                  ) : null}
+                </View>
                 {(() => {
                   const combos = getProductCombinations(selectedProduct);
                   const isMultiCombo = combos.length > 1;
@@ -1433,8 +1452,8 @@ const styles = StyleSheet.create({
     borderRadius: Platform.OS === 'web' ? 16 : 0,
     width: '100%',
     maxWidth: 600,
-    height: Platform.OS === 'web' ? '85vh' : '80%',
-    maxHeight: Platform.OS === 'web' ? '85vh' : '80%',
+    height: Platform.OS === 'web' ? '85%' : '80%',
+    maxHeight: Platform.OS === 'web' ? '85%' : '80%',
     overflow: 'hidden',
   },
   productModalContent: {
@@ -1606,8 +1625,8 @@ const styles = StyleSheet.create({
     borderRadius: Platform.OS === 'web' ? 20 : 0,
     width: '100%',
     maxWidth: 720,
-    height: Platform.OS === 'web' ? '90vh' : '92%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '92%',
+    height: Platform.OS === 'web' ? '90%' : '92%',
+    maxHeight: Platform.OS === 'web' ? '90%' : '92%',
     paddingTop: 16,
     overflow: 'hidden',
     display: 'flex',

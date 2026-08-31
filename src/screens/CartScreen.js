@@ -155,7 +155,7 @@ const CartScreen = ({ navigation }) => {
   }
 
   return (
-    <View style={{flex: 1, backgroundColor: 'white'}}>
+    <View style={{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Your Cart</Text>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -166,7 +166,10 @@ const CartScreen = ({ navigation }) => {
         data={cart.cart_items}
         renderItem={renderCartItem}
         keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={styles.container}
+        style={{ flex: 1, width: '100%' }}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.container, { flexGrow: 1, paddingBottom: 40 }]}
       />
       <TouchableOpacity style={styles.checkoutButton} onPress={() => {
         let customerIdToPass = null;

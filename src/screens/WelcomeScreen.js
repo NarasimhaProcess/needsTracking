@@ -62,115 +62,121 @@ export default function WelcomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
-      
-      {/* Upper Brand / Logo Section */}
-      <View style={styles.brandContainer}>
-        <View style={styles.logoIconBox}>
-          <Icon name="map-marker" size={54} color="#007AFF" />
-        </View>
-        <Text style={styles.appName}>Needs Tracker</Text>
-        <Text style={styles.tagline}>
-          Your Hyperlocal Logistics & Marketplace Platform
-        </Text>
-        <Text style={styles.description}>
-          Find verified local stores near you, purchase products with ease, and track your orders or deliveries in real-time.
-        </Text>
-      </View>
-
-      {/* Action Buttons Section */}
-      <View style={styles.actionsContainer}>
-        {/* Main call-to-action: Sellers Map */}
-        <TouchableOpacity
-          style={styles.mainMapButton}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('SellersMap')}
-        >
-          <View style={styles.mainButtonContent}>
-            <Icon name="map" size={20} color="#FFFFFF" style={styles.buttonIcon} />
-            <Text style={styles.mainButtonText}>Browse Sellers Map</Text>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Upper Brand / Logo Section */}
+        <View style={styles.brandContainer}>
+          <View style={styles.logoIconBox}>
+            <Icon name="map-marker" size={54} color="#007AFF" />
           </View>
-          <Icon name="chevron-right" size={14} color="#FFFFFF" />
-        </TouchableOpacity>
-
-        {/* Portal Separator */}
-        <Text style={styles.sectionHeader}>Portals & Access</Text>
-
-        <View style={styles.portalsGrid}>
-          {/* Buyer Portal */}
-          <TouchableOpacity
-            style={styles.portalCard}
-            activeOpacity={0.8}
-            onPress={() => {
-              if (user && (role === 'buyer' || role === 'customer')) {
-                navigation.navigate('Catalog');
-              } else {
-                navigation.navigate('BuyerLogin');
-              }
-            }}
-          >
-            <View style={[styles.portalIconBox, { backgroundColor: '#EFF6FF' }]}>
-              <Icon name="shopping-cart" size={24} color="#007AFF" />
-            </View>
-            <Text style={styles.portalTitle}>Buyer</Text>
-            <Text style={styles.portalDesc}>Shop Local Stores</Text>
-          </TouchableOpacity>
-
-          {/* Seller Portal */}
-          <TouchableOpacity
-            style={styles.portalCard}
-            activeOpacity={0.8}
-            onPress={() => {
-              if (user && (role === 'seller' || role === 'admin')) {
-                navigation.navigate('ProductTabs');
-              } else {
-                navigation.navigate('SellerLogin');
-              }
-            }}
-          >
-            <View style={[styles.portalIconBox, { backgroundColor: '#ECFDF5' }]}>
-              <Icon name="home" size={22} color="#10B981" />
-            </View>
-            <Text style={styles.portalTitle}>Seller</Text>
-            <Text style={styles.portalDesc}>Manage Inventory</Text>
-          </TouchableOpacity>
-
-          {/* Delivery Portal */}
-          <TouchableOpacity
-            style={styles.portalCard}
-            activeOpacity={0.8}
-            onPress={() => {
-              if (user && role === 'delivery_manager') {
-                navigation.navigate('DeliveryManagerDashboard');
-              } else {
-                navigation.navigate('DeliveryManagerLogin');
-              }
-            }}
-          >
-            <View style={[styles.portalIconBox, { backgroundColor: '#FAF5FF' }]}>
-              <Icon name="truck" size={22} color="#8B5CF6" />
-            </View>
-            <Text style={styles.portalTitle}>Delivery</Text>
-            <Text style={styles.portalDesc}>Track & Deliver</Text>
-          </TouchableOpacity>
+          <Text style={styles.appName}>Needs Tracker</Text>
+          <Text style={styles.tagline}>
+            Your Hyperlocal Logistics & Marketplace Platform
+          </Text>
+          <Text style={styles.description}>
+            Find verified local stores near you, purchase products with ease, and track your orders or deliveries in real-time.
+          </Text>
         </View>
-      </View>
 
-      {/* Footer Info / Logout */}
-      <View style={styles.footer}>
-        {user ? (
-          <View style={styles.userFooterInfo}>
-            <Text style={styles.signedInText} numberOfLines={1}>
-              Signed in as: <Text style={styles.userEmailText}>{user.email || user.phone}</Text>
-            </Text>
-            <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-              <Icon name="sign-out" size={14} color="#EF4444" />
-              <Text style={styles.logoutText}>Logout</Text>
+        {/* Action Buttons Section */}
+        <View style={styles.actionsContainer}>
+          {/* Main call-to-action: Sellers Map */}
+          <TouchableOpacity
+            style={styles.mainMapButton}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('SellersMap')}
+          >
+            <View style={styles.mainButtonContent}>
+              <Icon name="map" size={20} color="#FFFFFF" style={styles.buttonIcon} />
+              <Text style={styles.mainButtonText}>Browse Sellers Map</Text>
+            </View>
+            <Icon name="chevron-right" size={14} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          {/* Portal Separator */}
+          <Text style={styles.sectionHeader}>Portals & Access</Text>
+
+          <View style={styles.portalsGrid}>
+            {/* Buyer Portal */}
+            <TouchableOpacity
+              style={styles.portalCard}
+              activeOpacity={0.8}
+              onPress={() => {
+                if (user && (role === 'buyer' || role === 'customer')) {
+                  navigation.navigate('Catalog');
+                } else {
+                  navigation.navigate('BuyerLogin');
+                }
+              }}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: '#EFF6FF' }]}>
+                <Icon name="shopping-cart" size={24} color="#007AFF" />
+              </View>
+              <Text style={styles.portalTitle}>Buyer</Text>
+              <Text style={styles.portalDesc}>Shop Local Stores</Text>
+            </TouchableOpacity>
+
+            {/* Seller Portal */}
+            <TouchableOpacity
+              style={styles.portalCard}
+              activeOpacity={0.8}
+              onPress={() => {
+                if (user && (role === 'seller' || role === 'admin')) {
+                  navigation.navigate('ProductTabs');
+                } else {
+                  navigation.navigate('SellerLogin');
+                }
+              }}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: '#ECFDF5' }]}>
+                <Icon name="home" size={22} color="#10B981" />
+              </View>
+              <Text style={styles.portalTitle}>Seller</Text>
+              <Text style={styles.portalDesc}>Manage Inventory</Text>
+            </TouchableOpacity>
+
+            {/* Delivery Portal */}
+            <TouchableOpacity
+              style={styles.portalCard}
+              activeOpacity={0.8}
+              onPress={() => {
+                if (user && role === 'delivery_manager') {
+                  navigation.navigate('DeliveryManagerDashboard');
+                } else {
+                  navigation.navigate('DeliveryManagerLogin');
+                }
+              }}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: '#FAF5FF' }]}>
+                <Icon name="truck" size={22} color="#8B5CF6" />
+              </View>
+              <Text style={styles.portalTitle}>Delivery</Text>
+              <Text style={styles.portalDesc}>Track & Deliver</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <Text style={styles.footerVersion}>Version 1.0.0</Text>
-        )}
-      </View>
+        </View>
+
+        {/* Footer Info / Logout */}
+        <View style={styles.footer}>
+          {user ? (
+            <View style={styles.userFooterInfo}>
+              <Text style={styles.signedInText} numberOfLines={1}>
+                Signed in as: <Text style={styles.userEmailText}>{user.email || user.phone}</Text>
+              </Text>
+              <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                <Icon name="sign-out" size={14} color="#EF4444" />
+                <Text style={styles.logoutText}>Logout</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={styles.footerVersion}>Version 1.0.0</Text>
+          )}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -179,12 +185,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'space-between',
+    paddingBottom: 30,
   },
   brandContainer: {
     alignItems: 'center',
     paddingHorizontal: 24,
-    marginTop: Platform.OS === 'ios' ? 40 : 60,
+    marginTop: Platform.OS === 'ios' ? 24 : 36,
   },
   logoIconBox: {
     width: 96,

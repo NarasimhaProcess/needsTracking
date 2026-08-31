@@ -337,7 +337,9 @@ const OrderListScreen = ({ navigation, route }) => {
               )}
               onRefresh={handleRefresh}
               refreshing={refreshing}
-              contentContainerStyle={styles.listContent}
+              style={{ flex: 1 }}
+              showsVerticalScrollIndicator={true}
+              contentContainerStyle={[styles.listContent, { flexGrow: 1, paddingBottom: 40 }]}
             />
           )}
         </>

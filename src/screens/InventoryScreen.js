@@ -182,6 +182,10 @@ const InventoryScreen = ({ route }) => {
           <FlatList
             data={inventory}
             keyExtractor={(item) => item.id.toString()}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 40 }}
+            showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => (
               <TouchableOpacity 
                 style={[styles.itemContainer, selectedItem?.id === item.id && styles.selectedItemContainer]} 

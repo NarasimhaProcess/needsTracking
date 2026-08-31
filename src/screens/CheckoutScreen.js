@@ -347,14 +347,19 @@ const CheckoutScreen = ({ navigation, route }) => {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: 'white' }}>
+    <View style={{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Checkout</Text>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Icon name="close" size={24} color="#333" />
         </TouchableOpacity>
       </View>
-      <ScrollView style={styles.container}>
+      <ScrollView
+        style={[styles.container, { flex: 1, width: '100%' }]}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: 60 }}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Guest Sign-In Notice Banner */}
         {!currentUser && (
           <View style={styles.guestBanner}>

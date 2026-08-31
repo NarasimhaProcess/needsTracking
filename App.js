@@ -360,9 +360,9 @@ export default function App() {
     <CartProvider>
       <NavigationContainer ref={navigationRef}>
         <StatusBar style="auto" />
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
+        <Stack.Navigator initialRouteName="SellersMap" screenOptions={{ headerShown: false }}>
           <Stack.Screen name="SellersMap" component={SellersMapScreen} />
+          <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
           <Stack.Screen name="Catalog" component={CatalogScreen} />
           <Stack.Screen name="BuyerAuth" component={BuyerAuthScreen} />
           <Stack.Screen name="BuyerLogin" component={BuyerLoginScreen} />

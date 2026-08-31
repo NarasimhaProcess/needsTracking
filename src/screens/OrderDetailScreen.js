@@ -396,7 +396,12 @@ const OrderDetailScreen = ({ navigation, route }) => {
         </View>
       </View>
 
-      <ScrollView style={styles.container}>
+      <ScrollView
+        style={[styles.container, { flex: 1, width: '100%' }]}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: 60 }}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Live Tracking Map if Delivery Partner is Assigned */}
         {isDeliveryAssigned && (
           <View style={styles.trackingCard}>

@@ -1774,4 +1774,83 @@ export function subscribeToLiveDelivery(orderId, partnerId, onLocationUpdate) {
     supabase.removeChannel(channel);
   };
 }
- 
+
+/**
+ * Set active status for all products of a given seller
+ */
+export async function setSellerProductsActiveStatus(userId, isActive) {
+  try {
+    if (!userId) return false;
+    const { error } = await supabase
+      .from('products')
+      .update({ is_active: isActive })
+      .eq('user_id', userId);
+    if (error) {
+      console.error('Error updating seller products active status:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('Exception updating seller products active status:', e);
+    return false;
+  }
+}
+
+/**
+ * Set active status for all products across the entire platform (AppAdmin)
+ */
+export async function setAllProductsActiveStatus(isActive) {
+  try {
+    const { error } = await supabase
+      .from('products')
+      .update({ is_active: isActive })
+      .not('id', 'is', null);
+    if (error) {
+      console.error('Error updating all products active status:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('Exception updating all products active status:', e);
+    return false;
+  }
+}
+
+/**
+ * Helper to parse store settings from media_urls or object
+ */
+export function extractStoreSettings(mediaUrls) {
+  let list = [];
+  if (typeof mediaUrls === 'string') {
+    try {
+      list = JSON.parse(mediaUrls);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(mediaUrls)) {
+    list = mediaUrls;
+  }
+  const settingsItem = list.find((m) => m && m.type === 'store_settings');
+  return {
+    is_store_active: settingsItem?.store_active !== false,
+    is_map_active: settingsItem?.map_active !== false,
+    is_product_active: settingsItem?.product_active !== false,
+  };
+}
+
+/**
+ * Helper to embed store settings into media_urls array without losing media photos/videos
+ */
+export function embedStoreSettings(existingMediaList, storeSettings) {
+  const cleanMedia = (existingMediaList || []).filter(
+    (m) => m && m.type !== 'store_settings'
+  );
+  cleanMedia.push({
+    type: 'store_settings',
+    store_active: storeSettings.is_store_active !== false,
+    map_active: storeSettings.is_map_active !== false,
+    product_active: storeSettings.is_product_active !== false,
+    updated_at: new Date().toISOString(),
+  });
+  return cleanMedia;
+}

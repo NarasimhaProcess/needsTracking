@@ -253,13 +253,16 @@ const TopProductsScreen = ({ navigation, route }) => {
   const modalMediaList = (selectedProduct?.product_media || []).filter(m => m && (m.media_url || m.uri));
 
   return (
-    <View style={{flex: 1}}>
+    <View style={{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }}>
       <FlatList
         data={products}
         renderItem={renderProduct}
         keyExtractor={(item) => item.id.toString()}
         numColumns={2}
-        contentContainerStyle={styles.container}
+        style={{ flex: 1, width: '100%' }}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.container, { flexGrow: 1, paddingBottom: 60 }]}
       />
 
       {/* Product Detail Modal */}

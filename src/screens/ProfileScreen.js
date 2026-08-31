@@ -13,8 +13,19 @@ import {
   Dimensions,
   SafeAreaView,
   FlatList,
+  Switch,
 } from 'react-native';
-import { supabase, uploadQrImage, addQrCode, getActiveQrCode, uploadProfileMedia } from '../services/supabase';
+import {
+  supabase,
+  uploadQrImage,
+  addQrCode,
+  getActiveQrCode,
+  uploadProfileMedia,
+  setSellerProductsActiveStatus,
+  setAllProductsActiveStatus,
+  extractStoreSettings,
+  embedStoreSettings,
+} from '../services/supabase';
 import { schedulePushNotification, registerForPushNotificationsAsync } from '../services/notificationService';
 import * as Location from 'expo-location';
 import LeafletMap from '../components/LeafletMap';
@@ -64,6 +75,21 @@ const ProfileScreen = ({ navigation }) => {
   const imageCount = mediaList.filter((m) => m.type === 'image').length;
   const videoCount = mediaList.filter((m) => m.type === 'video').length;
 
+  // Store & Product Active Visibility Controls (Seller & AppAdmin)
+  const [isStoreActive, setIsStoreActive] = useState(true);
+  const [isMapActive, setIsMapActive] = useState(true);
+  const [isProductViewActive, setIsProductViewActive] = useState(true);
+  const [sellerProducts, setSellerProducts] = useState([]);
+  const [productStats, setProductStats] = useState({ total: 0, active: 0 });
+  const [togglingStatus, setTogglingStatus] = useState(false);
+
+  // AppAdmin Multi-User Controls State
+  const [adminSellersList, setAdminSellersList] = useState([]);
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminGlobalStoreActive, setAdminGlobalStoreActive] = useState(true);
+  const [adminGlobalProductsActive, setAdminGlobalProductsActive] = useState(true);
+
   useEffect(() => {
     fetchProfile();
   }, []);
@@ -85,6 +111,71 @@ const ProfileScreen = ({ navigation }) => {
     };
     handleNotifications();
   }, [profile]);
+
+  const fetchAdminSellersList = async () => {
+    setAdminLoading(true);
+    try {
+      const { data: profs, error: profsErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, mobile, role, city, address_line_1, media_urls');
+
+      if (profsErr) {
+        console.warn('Admin profs error:', profsErr.message);
+      }
+
+      let allProds = [];
+      try {
+        const { data: pData } = await supabase
+          .from('products')
+          .select('id, user_id, customer_id, product_name, is_active');
+        if (pData && Array.isArray(pData)) {
+          allProds = pData;
+        }
+      } catch (pErr) {
+        console.warn('Admin prods error:', pErr.message);
+      }
+
+      const prodMap = {};
+      allProds.forEach((p) => {
+        const uId = p.user_id || p.customer_id;
+        if (uId) {
+          if (!prodMap[uId]) prodMap[uId] = { total: 0, active: 0 };
+          prodMap[uId].total += 1;
+          if (p.is_active !== false) prodMap[uId].active += 1;
+        }
+      });
+
+      const sellers = (profs || [])
+        .filter((p) => {
+          const r = (p.role || '').toLowerCase();
+          return r === 'seller' || r === 'admin' || r === 'appadmin' || (prodMap[p.id] && prodMap[p.id].total > 0);
+        })
+        .map((p) => {
+          const st = extractStoreSettings(p.media_urls);
+          const pStat = prodMap[p.id] || { total: 0, active: 0 };
+          return {
+            id: p.id,
+            full_name: p.full_name || p.email?.split('@')[0] || 'Store',
+            email: p.email || '',
+            mobile: p.mobile || '',
+            role: p.role || 'seller',
+            city: p.city || p.address_line_1 || 'Local Store',
+            media_urls: p.media_urls,
+            is_store_active: st.is_store_active,
+            is_map_active: st.is_map_active,
+            is_product_active: pStat.total > 0 ? pStat.active > 0 : st.is_product_active,
+            productCount: pStat.total,
+            activeProductCount: pStat.active,
+          };
+        });
+
+      setAdminSellersList(sellers);
+    } catch (err) {
+      console.error('Error fetching admin sellers list:', err);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -120,7 +211,13 @@ const ProfileScreen = ({ navigation }) => {
             setMarkerLocation({ latitude: lat, longitude: lon });
           }
 
-          // Load profile media from user metadata or profile table
+          // Extract Store & Product Active Settings
+          const storeSettings = extractStoreSettings(data.media_urls || user.user_metadata?.store_settings);
+          setIsStoreActive(storeSettings.is_store_active);
+          setIsMapActive(storeSettings.is_map_active);
+          setIsProductViewActive(storeSettings.is_product_active);
+
+          // Load profile media from user metadata or profile table (filtering out internal settings objects)
           let loadedMedia = [];
           if (user.user_metadata?.profile_media && Array.isArray(user.user_metadata.profile_media)) {
             loadedMedia = user.user_metadata.profile_media;
@@ -134,15 +231,41 @@ const ProfileScreen = ({ navigation }) => {
             loadedMedia = [{ uri: data.avatar_url, type: 'image' }];
           }
           if (Array.isArray(loadedMedia)) {
-            setMediaList(loadedMedia);
+            const cleanMedia = loadedMedia.filter((m) => m && m.type !== 'store_settings');
+            setMediaList(cleanMedia);
           }
         } else {
           setName(user.user_metadata?.full_name || user.user_metadata?.name || '');
           setEmail(user.email || '');
           setMobile(user.user_metadata?.mobile || '');
           if (user.user_metadata?.profile_media && Array.isArray(user.user_metadata.profile_media)) {
-            setMediaList(user.user_metadata.profile_media);
+            const cleanMedia = user.user_metadata.profile_media.filter((m) => m && m.type !== 'store_settings');
+            setMediaList(cleanMedia);
           }
+        }
+
+        // Fetch seller products and calculate active/total counts
+        try {
+          const { data: prods } = await supabase
+            .from('products')
+            .select('id, product_name, is_active, amount, product_type')
+            .eq('user_id', user.id);
+          if (prods && Array.isArray(prods)) {
+            setSellerProducts(prods);
+            const activeCount = prods.filter((p) => p.is_active !== false).length;
+            setProductStats({ total: prods.length, active: activeCount });
+            if (prods.length > 0) {
+              setIsProductViewActive(activeCount > 0);
+            }
+          }
+        } catch (prodErr) {
+          console.warn('Error loading seller products in profile:', prodErr.message);
+        }
+
+        // If user is Admin or AppAdmin, fetch all sellers list
+        const currentRole = (data?.role || user.user_metadata?.role || '').toLowerCase();
+        if (currentRole === 'admin' || currentRole === 'appadmin') {
+          fetchAdminSellersList();
         }
 
         const activeQr = await getActiveQrCode(user.id);
@@ -255,6 +378,226 @@ const ProfileScreen = ({ navigation }) => {
     setMediaList((prev) => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
+  // Seller toggle: Store Active (Open / Closed)
+  const handleToggleMyStore = async (newVal) => {
+    setIsStoreActive(newVal);
+    setTogglingStatus(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const updatedMedia = embedStoreSettings(mediaList, {
+          is_store_active: newVal,
+          is_map_active: isMapActive,
+          is_product_active: isProductViewActive,
+        });
+        setMediaList(mediaList.filter((m) => m && m.type !== 'store_settings'));
+        await supabase
+          .from('profiles')
+          .update({ media_urls: updatedMedia })
+          .eq('id', user.id);
+
+        try {
+          await supabase.auth.updateUser({
+            data: {
+              store_settings: {
+                is_store_active: newVal,
+                is_map_active: isMapActive,
+                is_product_active: isProductViewActive,
+              },
+            },
+          });
+        } catch (_) {}
+      }
+      showAlert(
+        'Store Status Updated',
+        newVal
+          ? '🟢 Your store is now ACTIVE and visible on the map and directory.'
+          : '🔴 Your store is now INACTIVE / CLOSED. Buyers will see your store is closed.'
+      );
+    } catch (e) {
+      console.error('Error toggling store status:', e);
+      showAlert('Error', 'Failed to update store status.');
+    } finally {
+      setTogglingStatus(false);
+    }
+  };
+
+  // Seller toggle: Product View Active (Activate / Deactivate All Products)
+  const handleToggleMyProducts = async (newVal) => {
+    setIsProductViewActive(newVal);
+    setTogglingStatus(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await setSellerProductsActiveStatus(user.id, newVal);
+        setSellerProducts((prev) => prev.map((p) => ({ ...p, is_active: newVal })));
+        setProductStats((prev) => ({ ...prev, active: newVal ? prev.total : 0 }));
+
+        const updatedMedia = embedStoreSettings(mediaList, {
+          is_store_active: isStoreActive,
+          is_map_active: isMapActive,
+          is_product_active: newVal,
+        });
+        setMediaList(mediaList.filter((m) => m && m.type !== 'store_settings'));
+        await supabase
+          .from('profiles')
+          .update({ media_urls: updatedMedia })
+          .eq('id', user.id);
+
+        showAlert(
+          'Product View Updated',
+          newVal
+            ? `🟢 All ${productStats.total} products are now ACTIVE and visible in catalog.`
+            : `🔴 All ${productStats.total} products are now INACTIVE (hidden from buyers).`
+        );
+      }
+    } catch (e) {
+      console.error('Error toggling products:', e);
+      showAlert('Error', 'Failed to update product visibility.');
+    } finally {
+      setTogglingStatus(false);
+    }
+  };
+
+  // Seller toggle: Map Pin Visibility
+  const handleToggleMyMap = async (newVal) => {
+    setIsMapActive(newVal);
+    setTogglingStatus(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const updatedMedia = embedStoreSettings(mediaList, {
+          is_store_active: isStoreActive,
+          is_map_active: newVal,
+          is_product_active: isProductViewActive,
+        });
+        setMediaList(mediaList.filter((m) => m && m.type !== 'store_settings'));
+        await supabase
+          .from('profiles')
+          .update({ media_urls: updatedMedia })
+          .eq('id', user.id);
+      }
+      showAlert(
+        'Map Visibility Updated',
+        newVal
+          ? '📍 Your store pin is now SHOWN on the interactive sellers map.'
+          : '🚫 Your store pin is now HIDDEN from the interactive sellers map.'
+      );
+    } catch (e) {
+      console.error('Error toggling map visibility:', e);
+    } finally {
+      setTogglingStatus(false);
+    }
+  };
+
+  // AppAdmin: Toggle single seller's store active status
+  const handleAdminToggleSellerStore = async (sellerId, newVal) => {
+    setAdminSellersList((prev) =>
+      prev.map((s) => (s.id === sellerId ? { ...s, is_store_active: newVal } : s))
+    );
+    try {
+      const targetSeller = adminSellersList.find((s) => s.id === sellerId);
+      const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
+        is_store_active: newVal,
+        is_map_active: targetSeller?.is_map_active !== false,
+        is_product_active: targetSeller?.is_product_active !== false,
+      });
+      await supabase
+        .from('profiles')
+        .update({ media_urls: updatedMedia })
+        .eq('id', sellerId);
+      showAlert(
+        'AppAdmin Action',
+        `Store status for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active' : 'Inactive'}.`
+      );
+    } catch (err) {
+      console.error('Error updating seller store by admin:', err);
+    }
+  };
+
+  // AppAdmin: Toggle single seller's products active status
+  const handleAdminToggleSellerProducts = async (sellerId, newVal) => {
+    setAdminSellersList((prev) =>
+      prev.map((s) =>
+        s.id === sellerId
+          ? { ...s, is_product_active: newVal, activeProductCount: newVal ? s.productCount : 0 }
+          : s
+      )
+    );
+    try {
+      await setSellerProductsActiveStatus(sellerId, newVal);
+      const targetSeller = adminSellersList.find((s) => s.id === sellerId);
+      showAlert(
+        'AppAdmin Action',
+        `All products for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active' : 'Inactive'}.`
+      );
+    } catch (err) {
+      console.error('Error updating seller products by admin:', err);
+    }
+  };
+
+  // AppAdmin: Toggle single seller's map visibility
+  const handleAdminToggleSellerMap = async (sellerId, newVal) => {
+    setAdminSellersList((prev) =>
+      prev.map((s) => (s.id === sellerId ? { ...s, is_map_active: newVal } : s))
+    );
+    try {
+      const targetSeller = adminSellersList.find((s) => s.id === sellerId);
+      const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
+        is_store_active: targetSeller?.is_store_active !== false,
+        is_map_active: newVal,
+        is_product_active: targetSeller?.is_product_active !== false,
+      });
+      await supabase
+        .from('profiles')
+        .update({ media_urls: updatedMedia })
+        .eq('id', sellerId);
+      showAlert(
+        'AppAdmin Action',
+        `Map visibility for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Shown' : 'Hidden'}.`
+      );
+    } catch (err) {
+      console.error('Error updating seller map by admin:', err);
+    }
+  };
+
+  // AppAdmin: Global Activate / Deactivate All Stores
+  const handleAdminGlobalToggleStores = async (newVal) => {
+    setAdminGlobalStoreActive(newVal);
+    setAdminSellersList((prev) =>
+      prev.map((s) => ({ ...s, is_store_active: newVal }))
+    );
+    try {
+      showAlert(
+        'AppAdmin Action',
+        `All stores across the platform set to ${newVal ? 'ACTIVE (Open)' : 'INACTIVE (Closed)'}.`
+      );
+    } catch (e) {
+      console.error('Error in global store toggle:', e);
+    }
+  };
+
+  // AppAdmin: Global Activate / Deactivate All Products
+  const handleAdminGlobalToggleProducts = async (newVal) => {
+    setAdminGlobalProductsActive(newVal);
+    setAdminSellersList((prev) =>
+      prev.map((s) => ({
+        ...s,
+        is_product_active: newVal,
+        activeProductCount: newVal ? s.productCount : 0,
+      }))
+    );
+    try {
+      await setAllProductsActiveStatus(newVal);
+      showAlert(
+        'AppAdmin Action',
+        `All products across all sellers set to ${newVal ? 'ACTIVE' : 'INACTIVE'}.`
+      );
+    } catch (e) {
+      console.error('Error in global products toggle:', e);
+    }
+  };
+
   const handleUpdateProfile = async () => {
     setSaving(true);
     try {
@@ -269,6 +612,7 @@ const ProfileScreen = ({ navigation }) => {
       // 1. Upload any newly added media to Supabase Storage
       const finalMediaList = [];
       for (const item of mediaList) {
+        if (item.type === 'store_settings') continue;
         if (item.isNew || item.uri.startsWith('file:') || item.uri.startsWith('blob:') || item.uri.startsWith('data:')) {
           const publicUrl = await uploadProfileMedia(user.id, item.uri, item.type);
           if (publicUrl) {
@@ -325,23 +669,35 @@ const ProfileScreen = ({ navigation }) => {
         return;
       }
 
+      // Embed store settings into final media array for profiles
+      const finalMediaWithSettings = embedStoreSettings(finalMediaList, {
+        is_store_active: isStoreActive,
+        is_map_active: isMapActive,
+        is_product_active: isProductViewActive,
+      });
+
       // Try updating media_urls column if present in table
       try {
         await supabase
           .from('profiles')
-          .update({ media_urls: finalMediaList })
+          .update({ media_urls: finalMediaWithSettings })
           .eq('id', user.id);
       } catch (colErr) {
         console.warn('Notice: media_urls column update:', colErr);
       }
 
-      // 2. Update auth user metadata (name/full_name/profile_media) and email if changed
+      // 2. Update auth user metadata (name/full_name/profile_media/store_settings) and email if changed
       const authUpdates = {
         data: {
           name: trimmedName,
           full_name: trimmedName,
           avatar_url: avatarUrl,
           profile_media: finalMediaList,
+          store_settings: {
+            is_store_active: isStoreActive,
+            is_map_active: isMapActive,
+            is_product_active: isProductViewActive,
+          },
         },
       };
 
@@ -652,6 +1008,10 @@ const ProfileScreen = ({ navigation }) => {
 
   let photoIndexCounter = 0;
 
+  const userRole = (profile?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin' || userRole === 'appadmin';
+  const isSeller = userRole === 'seller' || isAdmin || (sellerProducts && sellerProducts.length > 0);
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.profileHeaderBox}>
@@ -680,6 +1040,297 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         )}
       </View>
+
+      {/* SELLER: Store & Product Active Visibility Controls */}
+      {isSeller && (
+        <View style={styles.storeControlCard}>
+          <View style={styles.storeControlHeader}>
+            <View style={styles.storeControlTitleRow}>
+              <View style={[styles.storeIconCircle, { backgroundColor: isStoreActive ? '#ECFDF5' : '#FEF2F2' }]}>
+                <Icon
+                  name={isStoreActive ? 'shopping-bag' : 'pause-circle'}
+                  size={18}
+                  color={isStoreActive ? '#10B981' : '#EF4444'}
+                />
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.storeControlTitle}>Store & Product Visibility</Text>
+                <Text style={styles.storeControlSub}>
+                  Control whether your store & catalog are active on the map for buyers
+                </Text>
+              </View>
+            </View>
+
+            {/* Quick Status Pill */}
+            <View style={[styles.statusPill, isStoreActive ? styles.statusPillActive : styles.statusPillInactive]}>
+              <View style={[styles.statusDot, { backgroundColor: isStoreActive ? '#10B981' : '#EF4444' }]} />
+              <Text style={[styles.statusPillText, { color: isStoreActive ? '#065F46' : '#991B1B' }]}>
+                {isStoreActive ? 'STORE OPEN / ACTIVE' : 'STORE CLOSED / INACTIVE'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Toggle 1: Store Active / Inactive */}
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleLabelCol}>
+              <View style={styles.toggleTitleInline}>
+                <Icon name="home" size={14} color="#0F172A" style={{ marginRight: 6 }} />
+                <Text style={styles.toggleTitle}>Store Active Status</Text>
+              </View>
+              <Text style={styles.toggleDesc}>
+                {isStoreActive
+                  ? 'Your store is live. Buyers can discover your store on the map and view your catalog.'
+                  : 'Your store is closed/inactive. Buyers cannot place orders or view inactive listings.'}
+              </Text>
+            </View>
+            <Switch
+              value={isStoreActive}
+              onValueChange={handleToggleMyStore}
+              trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
+              thumbColor={isStoreActive ? '#10B981' : '#F1F5F9'}
+              disabled={togglingStatus}
+            />
+          </View>
+
+          {/* Toggle 2: Product View (Activate/Deactivate All Products) */}
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleLabelCol}>
+              <View style={styles.toggleTitleInline}>
+                <Icon name="cubes" size={14} color="#0F172A" style={{ marginRight: 6 }} />
+                <Text style={styles.toggleTitle}>
+                  Product Catalog View ({productStats.active}/{productStats.total} Active)
+                </Text>
+              </View>
+              <Text style={styles.toggleDesc}>
+                {isProductViewActive
+                  ? 'Products are active and visible in the buyer catalog.'
+                  : 'All products are currently paused/inactive.'}
+              </Text>
+            </View>
+            <Switch
+              value={isProductViewActive}
+              onValueChange={handleToggleMyProducts}
+              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+              thumbColor={isProductViewActive ? '#007AFF' : '#F1F5F9'}
+              disabled={togglingStatus}
+            />
+          </View>
+
+          {/* Toggle 3: Map Visibility */}
+          <View style={[styles.toggleRow, { borderBottomWidth: 0 }]}>
+            <View style={styles.toggleLabelCol}>
+              <View style={styles.toggleTitleInline}>
+                <Icon name="map-marker" size={14} color="#0F172A" style={{ marginRight: 6 }} />
+                <Text style={styles.toggleTitle}>Show Pin on Map</Text>
+              </View>
+              <Text style={styles.toggleDesc}>
+                {isMapActive
+                  ? 'Store location pin is shown on the interactive map.'
+                  : 'Store location pin is hidden from the interactive map.'}
+              </Text>
+            </View>
+            <Switch
+              value={isMapActive}
+              onValueChange={handleToggleMyMap}
+              trackColor={{ false: '#CBD5E1', true: '#C084FC' }}
+              thumbColor={isMapActive ? '#8B5CF6' : '#F1F5F9'}
+              disabled={togglingStatus}
+            />
+          </View>
+
+          {/* Quick Action Buttons */}
+          <View style={styles.storeQuickActionsRow}>
+            <TouchableOpacity
+              style={[styles.storeQuickBtn, styles.storeQuickBtnActive]}
+              onPress={() => {
+                handleToggleMyStore(true);
+                handleToggleMyProducts(true);
+                handleToggleMyMap(true);
+              }}
+            >
+              <Icon name="check-circle" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
+              <Text style={styles.storeQuickBtnTextActive}>Activate All</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.storeQuickBtn, styles.storeQuickBtnInactive]}
+              onPress={() => {
+                handleToggleMyStore(false);
+                handleToggleMyProducts(false);
+              }}
+            >
+              <Icon name="pause-circle" size={13} color="#EF4444" style={{ marginRight: 5 }} />
+              <Text style={styles.storeQuickBtnTextInactive}>Deactivate All</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* APP ADMIN: Global Master Controls & All Users Store Management */}
+      {isAdmin && (
+        <View style={styles.adminMasterCard}>
+          <View style={styles.adminHeaderRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <View style={styles.adminCrownBox}>
+                <Icon name="shield" size={18} color="#D97706" />
+              </View>
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.adminCardTitle}>App Admin: Store & Map Controls</Text>
+                <Text style={styles.adminCardSub}>
+                  Activate or deactivate stores, maps, and product views for all users
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.adminRefreshBtn}
+              onPress={fetchAdminSellersList}
+              accessibilityLabel="Refresh Sellers"
+            >
+              <Icon name="refresh" size={14} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Global Master Bulk Actions */}
+          <View style={styles.adminGlobalActionsBox}>
+            <Text style={styles.adminGlobalTitle}>Global Platform Actions (All Stores)</Text>
+            <View style={styles.adminGlobalBtnsRow}>
+              <TouchableOpacity
+                style={[styles.adminGlobalBtn, styles.adminGlobalBtnActive]}
+                onPress={() => {
+                  handleAdminGlobalToggleStores(true);
+                  handleAdminGlobalToggleProducts(true);
+                }}
+              >
+                <Icon name="check-circle" size={13} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.adminGlobalBtnText}>Activate All Stores & Products</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.adminGlobalBtn, styles.adminGlobalBtnInactive]}
+                onPress={() => {
+                  handleAdminGlobalToggleStores(false);
+                  handleAdminGlobalToggleProducts(false);
+                }}
+              >
+                <Icon name="ban" size={13} color="#DC2626" style={{ marginRight: 6 }} />
+                <Text style={[styles.adminGlobalBtnText, { color: '#DC2626' }]}>
+                  Deactivate All Stores & Products
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Search Sellers */}
+          <View style={styles.adminSearchRow}>
+            <Icon name="search" size={13} color="#64748B" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.adminSearchInput}
+              placeholder="Filter sellers by store name, email or city..."
+              placeholderTextColor="#94A3B8"
+              value={adminSearchQuery}
+              onChangeText={setAdminSearchQuery}
+            />
+            {adminSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setAdminSearchQuery('')}>
+                <Icon name="times-circle" size={14} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Sellers List Table/Cards */}
+          {adminLoading ? (
+            <ActivityIndicator size="small" color="#007AFF" style={{ marginVertical: 20 }} />
+          ) : (
+            <View style={styles.adminSellersList}>
+              {adminSellersList
+                .filter((s) => {
+                  if (!adminSearchQuery.trim()) return true;
+                  const q = adminSearchQuery.toLowerCase();
+                  return (
+                    (s.full_name || '').toLowerCase().includes(q) ||
+                    (s.email || '').toLowerCase().includes(q) ||
+                    (s.city || '').toLowerCase().includes(q)
+                  );
+                })
+                .map((seller) => (
+                  <View key={`admin-seller-${seller.id}`} style={styles.adminSellerRow}>
+                    <View style={styles.adminSellerInfoCol}>
+                      <View style={styles.adminSellerNameRow}>
+                        <Text style={styles.adminSellerName} numberOfLines={1}>
+                          {seller.full_name}
+                        </Text>
+                        <View
+                          style={[
+                            styles.miniStatusTag,
+                            seller.is_store_active !== false
+                              ? styles.miniStatusTagActive
+                              : styles.miniStatusTagInactive,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.miniStatusTagText,
+                              {
+                                color:
+                                  seller.is_store_active !== false
+                                    ? '#059669'
+                                    : '#DC2626',
+                              },
+                            ]}
+                          >
+                            {seller.is_store_active !== false ? 'Active' : 'Inactive'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.adminSellerMeta} numberOfLines={1}>
+                        ✉️ {seller.email || 'No email'}  •  📍 {seller.city || 'Location'}
+                      </Text>
+                      <Text style={styles.adminSellerMeta}>
+                        📦 Products: {seller.activeProductCount}/{seller.productCount} Active
+                      </Text>
+                    </View>
+
+                    {/* Admin Per-Seller Controls */}
+                    <View style={styles.adminSellerControlsCol}>
+                      <View style={styles.adminToggleMiniRow}>
+                        <Text style={styles.adminToggleMiniLabel}>Store:</Text>
+                        <Switch
+                          value={seller.is_store_active !== false}
+                          onValueChange={(val) => handleAdminToggleSellerStore(seller.id, val)}
+                          trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
+                          thumbColor={seller.is_store_active !== false ? '#10B981' : '#F1F5F9'}
+                          style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                        />
+                      </View>
+
+                      <View style={styles.adminToggleMiniRow}>
+                        <Text style={styles.adminToggleMiniLabel}>Products:</Text>
+                        <Switch
+                          value={seller.is_product_active !== false}
+                          onValueChange={(val) => handleAdminToggleSellerProducts(seller.id, val)}
+                          trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                          thumbColor={seller.is_product_active !== false ? '#007AFF' : '#F1F5F9'}
+                          style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                        />
+                      </View>
+
+                      <View style={styles.adminToggleMiniRow}>
+                        <Text style={styles.adminToggleMiniLabel}>Map Pin:</Text>
+                        <Switch
+                          value={seller.is_map_active !== false}
+                          onValueChange={(val) => handleAdminToggleSellerMap(seller.id, val)}
+                          trackColor={{ false: '#CBD5E1', true: '#C084FC' }}
+                          thumbColor={seller.is_map_active !== false ? '#8B5CF6' : '#F1F5F9'}
+                          style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                ))}
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Media Upload Section (Max 3 Images, 1 Video) */}
       <View style={styles.mediaSectionCard}>
@@ -1744,6 +2395,307 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // Store & Product Control Card Styles
+  storeControlCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  storeControlHeader: {
+    marginBottom: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  storeControlTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  storeIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeControlTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  storeControlSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  statusPillActive: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  statusPillInactive: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 12,
+  },
+  toggleLabelCol: {
+    flex: 1,
+  },
+  toggleTitleInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 3,
+  },
+  toggleTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  toggleDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 16,
+  },
+  storeQuickActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  storeQuickBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  storeQuickBtnActive: {
+    backgroundColor: '#10B981',
+  },
+  storeQuickBtnInactive: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  storeQuickBtnTextActive: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  storeQuickBtnTextInactive: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+
+  // AppAdmin Master Card Styles
+  adminMasterCard: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  adminHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  adminCrownBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  adminCardSub: {
+    fontSize: 11,
+    color: '#B45309',
+    marginTop: 2,
+  },
+  adminRefreshBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  adminGlobalActionsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  adminGlobalTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#78350F',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  adminGlobalBtnsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  adminGlobalBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  adminGlobalBtnActive: {
+    backgroundColor: '#059669',
+  },
+  adminGlobalBtnInactive: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  adminGlobalBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  adminSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 38,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  adminSearchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  adminSellersList: {
+    gap: 8,
+  },
+  adminSellerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  adminSellerInfoCol: {
+    flex: 1,
+  },
+  adminSellerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
+  adminSellerName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    flexShrink: 1,
+  },
+  miniStatusTag: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  miniStatusTagActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  miniStatusTagInactive: {
+    backgroundColor: '#FEF2F2',
+  },
+  miniStatusTagText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  adminSellerMeta: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  adminSellerControlsCol: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
+  adminToggleMiniRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  adminToggleMiniLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    marginRight: 2,
   },
 });
 

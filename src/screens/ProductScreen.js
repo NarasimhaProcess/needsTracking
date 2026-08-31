@@ -227,7 +227,9 @@ const ProductScreen = ({ route, navigation }) => {
             }}
             keyExtractor={(item) => item.id.toString()}
             style={styles.productsList}
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 80 }}
             showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
           />
         </View>
       ) : (
@@ -341,6 +343,8 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   productsList: {
+    flex: 1,
+    width: '100%',
     marginTop: 10,
   },
   productRow: {
