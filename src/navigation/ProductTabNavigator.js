@@ -111,6 +111,16 @@ function ProductTabNavigator({ route }) {
         // ===== SELLER / ADMIN TABS =====
         <>
           <Tab.Screen
+            name="CatalogTab"
+            component={CatalogScreen}
+            options={{
+              title: 'Catalog',
+              tabBarBadge: cartItemCount > 0 ? cartItemCount : undefined,
+              tabBarBadgeStyle: { backgroundColor: '#10B981', color: '#FFFFFF', fontSize: 10 },
+            }}
+            initialParams={{ session, userId, customerId }}
+          />
+          <Tab.Screen
             name="ProductsTab"
             component={ProductScreen}
             options={{ title: 'Products' }}

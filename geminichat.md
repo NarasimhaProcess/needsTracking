@@ -20,3 +20,11 @@
 ## 2026-08-31 09:25:21 UTC
 - **User Request**: "can i test now"
 - **Summary**: Confirmed readiness for testing and provided options to test locally (web/mobile) and on live preview.
+
+## 2026-08-31 09:36:06 UTC
+- **User Request**: "Active inactive works from admin but catalog or product images not shown kindly check and fix"
+- **Summary**: Investigating product media URLs, CatalogScreen and ProductScreen image rendering, product_media database rows and RPC mapping.
+
+## 2026-08-31 09:45:51 UTC
+- **User Request**: "why catalog removed after login the seller it should be bec seller also have inhouse same right"
+- **Summary**: Added CatalogTab directly to the Seller/Admin bottom navigation bar in ProductTabNavigator.js so sellers have instant access to POS Catalog for in-house/counter sales.

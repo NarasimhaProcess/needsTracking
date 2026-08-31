@@ -249,16 +249,15 @@ const CatalogScreen = ({ navigation, route }) => {
         setUser(currentUser);
 
         // Determine target seller:
-        // 1. Explicit sellerId or customerId passed via navigation
-        // 2. Logged-in user's own products
-        const targetSellerId = sellerId || customerId || (currentUser ? currentUser.id : null);
+        // Strictly use explicit sellerId or customerId passed via navigation (e.g. from Map)
+        const targetSellerId = sellerId || customerId || null;
 
         let data = [];
         if (targetSellerId) {
-          // Strictly fetch ONLY this seller's products (do not fallback to all products if 0 items)
+          // Strictly fetch ONLY this seller's products
           data = await getActiveProductsWithDetails(targetSellerId);
         } else {
-          // Only for unauthenticated general browse
+          // General browse: fetch all active products across all sellers
           data = await getActiveProductsWithDetails();
         }
 
@@ -933,15 +932,27 @@ const CatalogScreen = ({ navigation, route }) => {
               >
                 <View style={styles.swiperContainer}>
                   {selectedProduct?.product_media && selectedProduct.product_media.length > 0 && selectedProduct.product_media.some(m => isImageMedia(m) && (m?.media_url || m?.uri)) ? (
-                    <Swiper showsButtons={false} loop={false}>
-                      {selectedProduct.product_media
-                        .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
-                        .map((media, index) => (
-                          <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
-                            <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
-                          </TouchableOpacity>
-                        ))}
-                    </Swiper>
+                    Platform.OS === 'web' ? (
+                      <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={true} style={{ width: '100%', height: 250 }}>
+                        {selectedProduct.product_media
+                          .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
+                          .map((media, index) => (
+                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9} style={{ width: 340, height: 250, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
+                              <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
+                            </TouchableOpacity>
+                          ))}
+                      </ScrollView>
+                    ) : (
+                      <Swiper showsButtons={false} loop={false}>
+                        {selectedProduct.product_media
+                          .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
+                          .map((media, index) => (
+                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
+                              <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
+                            </TouchableOpacity>
+                          ))}
+                      </Swiper>
+                    )
                   ) : (
                     <View style={styles.modalProductImagePlaceholder}>
                       <Icon name="shopping-bag" size={48} color="#94a3b8" />

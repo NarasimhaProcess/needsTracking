@@ -311,44 +311,49 @@ export async function getAllProducts() {
 }
 
 export async function getProductsWithDetails(userId) {
-  console.log('getProductsWithDetails: Received userId:', userId);
-  const { data: { user } } = await supabase.auth.getUser();
-  console.log('getProductsWithDetails: Authenticated user UID:', user?.id);
+  try {
+    let query = supabase
+      .from('products')
+      .select(`
+        *,
+        product_media (id, media_url, media_type),
+        product_variants (
+          id,
+          name,
+          variant_options (id, value)
+        ),
+        product_variant_combinations (id, combination_string, price, quantity, sku)
+      `);
 
-  const { data, error } = await supabase
-    .from('products')
-    .select(`
-      *,
-      product_media (id, media_url, media_type),
-      product_variants (
-        id,
-        name,
-        variant_options (id, value)
-      ),
-      product_variant_combinations (id, combination_string, price, quantity, sku)
-    `)
-    .eq('user_id', userId)
-    .order('display_order');
+    if (userId) {
+      query = query.or(`user_id.eq.${userId},customer_id.eq.${userId}`);
+    }
 
-  if (error) {
-    console.error('Error fetching products with details:', error.message);
-    return null;
+    const { data, error } = await query.order('display_order', { ascending: true });
+    if (error) {
+      console.error('Error fetching products with details:', error.message);
+      return null;
+    }
+    return data || [];
+  } catch (err) {
+    console.error('Exception in getProductsWithDetails:', err);
+    return [];
   }
-  console.log('getProductsWithDetails: Fetched products data:', data);
-  return data;
 }
 
 export async function getActiveProductsWithDetails(userId) {
   try {
     if (userId) {
-      const { data, error } = await supabase.rpc('get_active_products_with_details', {
-        p_user_id: userId,
-      });
+      try {
+        const { data, error } = await supabase.rpc('get_active_products_with_details', {
+          p_user_id: userId,
+        });
 
-      if (!error && data && data.length > 0) {
-        console.log('Fetched active products via RPC:', data);
-        return data;
-      }
+        if (!error && data && data.length > 0) {
+          console.log('Fetched active products via RPC:', data);
+          return data;
+        }
+      } catch (_) {}
     }
   } catch (rpcErr) {
     console.warn('RPC get_active_products_with_details failed:', rpcErr);
@@ -371,7 +376,7 @@ export async function getActiveProductsWithDetails(userId) {
       .eq('is_active', true);
 
     if (userId) {
-      query = query.eq('user_id', userId);
+      query = query.or(`user_id.eq.${userId},customer_id.eq.${userId}`);
     }
 
     const { data, error } = await query.order('display_order', { ascending: true });
@@ -388,32 +393,32 @@ export async function getActiveProductsWithDetails(userId) {
 }
 
 export async function getTopProductsWithDetails() {
-  const now = new Date();
-  const currentTime = new Date().toTimeString().split(' ')[0];
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select(`
+        *,
+        product_media (id, media_url, media_type),
+        product_variants (
+          id,
+          name,
+          variant_options (id, value)
+        ),
+        product_variant_combinations (id, combination_string, price, quantity, sku)
+      `)
+      .eq('is_active', true)
+      .order('display_order', { ascending: true })
+      .limit(10);
 
-  const { data, error } = await supabase
-    .from('products')
-    .select(`
-      *,
-      product_media (id, media_url, media_type),
-      product_variants (
-        id,
-        name,
-        variant_options (id, value)
-      ),
-      product_variant_combinations (id, combination_string, price, quantity, sku)
-    `)
-    .eq('is_active', true)
-    .or(`visible_from.is.null,visible_from.lte.${currentTime}`)
-    .or(`visible_to.is.null,visible_to.gte.${currentTime}`)
-    .order('display_order', { ascending: true })
-    .limit(10);
-
-  if (error) {
-    console.error('Error fetching top products with details:', error.message);
-    return null;
+    if (error) {
+      console.error('Error fetching top products with details:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error('Exception in getTopProductsWithDetails:', err);
+    return [];
   }
-  return data;
 }
 
 
