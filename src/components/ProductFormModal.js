@@ -468,10 +468,15 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
     >
       <View style={styles.modalContainer}>
         <View style={styles.modalContent}>
-          <ScrollView contentContainerStyle={styles.scrollContent}>
-            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-              <Icon name="times-circle" size={24} color="#333" />
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Icon name="times-circle" size={24} color="#333" />
+          </TouchableOpacity>
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
+          >
             <Text style={styles.modalTitle}>{productToEdit ? 'Edit Product' : 'Add New Product'}</Text>
 
             <Text style={styles.label}>Product Name</Text>
@@ -831,20 +836,43 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: 'center',
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalContent: {
     backgroundColor: '#fff',
     padding: 20,
     width: '100%',
-    height: '85%',
+    maxWidth: 720,
+    height: Platform.OS === 'web' ? '90vh' : '88%',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '88%',
+    borderRadius: 16,
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: 24,
   },
   buttonContainer: {
-    paddingBottom: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 16 : 6,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#fff',
   },
   closeButton: {
     position: 'absolute',

@@ -241,11 +241,33 @@ const SimpleLeafletMap = forwardRef(({
       });
     }
 
-    window.addEventListener('message', function(e) {
-      if (e.data && e.data.type === 'EVAL_SCRIPT' && e.data.script) {
-        try { eval(e.data.script); } catch(err) { console.error('EVAL_SCRIPT error in LeafletMap:', err); }
+    function handleIncoming(e) {
+      try {
+        var data = e.data !== undefined ? e.data : e;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data); } catch(err) { return; }
+        }
+        if (!data) return;
+        if (data.type === 'EVAL_SCRIPT' && data.script) {
+          try { eval(data.script); } catch(err) { console.error('EVAL_SCRIPT error:', err); }
+        } else if (data.type === 'CENTER_ON_LOCATION') {
+          centerOnLocation(data.latitude, data.longitude, data.zoom || 15);
+        } else if (data.type === 'UPDATE_MARKER') {
+          updateMarker(data.latitude, data.longitude);
+        } else if (data.type === 'CLEAR_USER_LOCATIONS') {
+          clearUserLocations();
+        } else if (data.type === 'UPDATE_ROUTE') {
+          updateRoute(data.locations);
+        } else if (data.type === 'FIT_TO_ROUTE') {
+          fitToRoute();
+        }
+      } catch(err) {
+        console.error('handleIncoming error in LeafletMap:', err);
       }
-    });
+    }
+
+    window.addEventListener('message', handleIncoming);
+    document.addEventListener('message', handleIncoming);
 
     window.mapFunctions = {
       centerOnLocation,
@@ -311,6 +333,13 @@ const SimpleLeafletMap = forwardRef(({
 
   useImperativeHandle(ref, () => ({
     centerOnLocation: (location, zoom = 15) => {
+      if (!location) return;
+      sendMessageToWebView({
+        type: 'CENTER_ON_LOCATION',
+        latitude: location.latitude,
+        longitude: location.longitude,
+        zoom: zoom
+      });
       sendMessageToWebView(`
         if (window.mapFunctions && window.mapFunctions.centerOnLocation) {
           window.mapFunctions.centerOnLocation(${location.latitude}, ${location.longitude}, ${zoom});
@@ -319,6 +348,7 @@ const SimpleLeafletMap = forwardRef(({
     },
     
     clearMap: () => {
+      sendMessageToWebView({ type: 'CLEAR_USER_LOCATIONS' });
       sendMessageToWebView(`
         if (window.mapFunctions && window.mapFunctions.clearUserLocations) {
           window.mapFunctions.clearUserLocations();
@@ -327,6 +357,7 @@ const SimpleLeafletMap = forwardRef(({
     },
     
     fitToRoute: () => {
+      sendMessageToWebView({ type: 'FIT_TO_ROUTE' });
       sendMessageToWebView(`
         if (window.mapFunctions && window.mapFunctions.fitToRoute) {
           window.mapFunctions.fitToRoute();
@@ -335,6 +366,7 @@ const SimpleLeafletMap = forwardRef(({
     },
 
     updateRoute: (locations) => {
+      sendMessageToWebView({ type: 'UPDATE_ROUTE', locations });
       sendMessageToWebView(`
         if (window.mapFunctions && window.mapFunctions.updateRoute) {
           window.mapFunctions.updateRoute(${JSON.stringify(locations)});
@@ -343,6 +375,12 @@ const SimpleLeafletMap = forwardRef(({
     },
 
     updateMarker: (location) => {
+      if (!location) return;
+      sendMessageToWebView({
+        type: 'UPDATE_MARKER',
+        latitude: location.latitude,
+        longitude: location.longitude
+      });
       sendMessageToWebView(`
         if (window.mapFunctions && window.mapFunctions.updateMarker) {
           window.mapFunctions.updateMarker(${location.latitude}, ${location.longitude});

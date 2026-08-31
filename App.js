@@ -74,6 +74,9 @@ export default function App() {
           'Login',
           'Signup',
           'SellerLogin',
+          'BuyerLogin',
+          'BuyerSignup',
+          'BuyerAuth',
           'DeliveryManagerLogin',
           'DeliveryManagerSignup',
         ];

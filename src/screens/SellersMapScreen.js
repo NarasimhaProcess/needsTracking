@@ -16,6 +16,7 @@ import {
   ScrollView,
   RefreshControl,
   StatusBar,
+  Image,
 } from "react-native";
 import UniversalWebView from "../components/UniversalWebView";
 import { supabase } from "../services/supabase";
@@ -24,6 +25,7 @@ import * as Location from "expo-location";
 import { useNavigation } from "@react-navigation/native";
 import { useCart } from "../context/CartContext";
 import { showAlert } from "../utils/alertUtils";
+import { Video, ResizeMode } from "expo-av";
 
 const { width } = Dimensions.get("window");
 
@@ -80,6 +82,7 @@ export default function SellersMapScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const [viewerMediaItem, setViewerMediaItem] = useState(null);
 
   // View Mode: 'map' | 'directory'
   const [viewMode, setViewMode] = useState("map");
@@ -133,26 +136,44 @@ export default function SellersMapScreen() {
       const { data: profilesData, error: profilesError } = await supabase
         .from("profiles")
         .select(
-          "id, full_name, email, mobile, role, address_line_1, address_line_2, city, state, zip_code, latitude, longitude, avatar_url"
+          "id, full_name, email, mobile, role, address_line_1, address_line_2, city, state, zip_code, latitude, longitude, avatar_url, media_urls"
         );
 
       if (profilesError) {
         console.warn("Profiles fetch notice in SellersMapScreen:", profilesError.message);
       }
 
-      // 2. Fetch products to get accurate product counts and discover active seller IDs
+      // 2. Fetch products and product_media to discover seller product images
       let productsCountMap = {};
       let sellersWithProductsSet = new Set();
+      let sellerProductMediaMap = {};
+
       try {
         const { data: prodData } = await supabase
           .from("products")
-          .select("id, user_id, customer_id, is_active");
+          .select("id, user_id, customer_id, product_name, is_active, product_media ( id, media_url, media_type )");
+
         if (prodData && Array.isArray(prodData)) {
           prodData.forEach((p) => {
             const uId = p?.user_id || p?.customer_id;
             if (uId) {
               productsCountMap[uId] = (productsCountMap[uId] || 0) + 1;
               sellersWithProductsSet.add(uId);
+
+              if (p.product_media && Array.isArray(p.product_media)) {
+                if (!sellerProductMediaMap[uId]) {
+                  sellerProductMediaMap[uId] = [];
+                }
+                p.product_media.forEach((pm) => {
+                  if (pm?.media_url && !sellerProductMediaMap[uId].some((m) => m.uri === pm.media_url)) {
+                    sellerProductMediaMap[uId].push({
+                      uri: pm.media_url,
+                      type: pm.media_type || "image",
+                      title: p.product_name || "Product",
+                    });
+                  }
+                });
+              }
             }
           });
         }
@@ -187,6 +208,34 @@ export default function SellersMapScreen() {
           const fallbackLat = DEFAULT_LAT + ((index % 5) - 2) * 0.012;
           const fallbackLon = DEFAULT_LON + (((index + 1) % 5) - 2) * 0.012;
 
+          let mediaList = [];
+          if (p.media_urls) {
+            try {
+              mediaList = typeof p.media_urls === "string" ? JSON.parse(p.media_urls) : p.media_urls;
+            } catch (e) {
+              mediaList = [];
+            }
+          }
+          if (!Array.isArray(mediaList)) {
+            mediaList = [];
+          }
+          if (p.avatar_url && !mediaList.some((m) => m.uri === p.avatar_url)) {
+            mediaList.unshift({ uri: p.avatar_url, type: "image", isProfile: true });
+          }
+
+          const prodMedia = sellerProductMediaMap[p.id] || [];
+          prodMedia.forEach((pm) => {
+            if (!mediaList.some((m) => m.uri === pm.uri)) {
+              mediaList.push(pm);
+            }
+          });
+
+          const firstPhoto =
+            (mediaList.find((m) => m.type === "image")?.uri) ||
+            p.avatar_url ||
+            (prodMedia.find((m) => m.type === "image")?.uri) ||
+            null;
+
           return {
             id: p.id,
             full_name: p.full_name || p.email?.split("@")[0] || "Seller Store",
@@ -200,6 +249,8 @@ export default function SellersMapScreen() {
             hasExactCoordinates: hasCoords,
             productCount: productsCountMap[p.id] || 0,
             avatar_url: p.avatar_url,
+            firstPhoto: firstPhoto,
+            mediaList: mediaList,
             isProfile: true,
           };
         });
@@ -212,6 +263,8 @@ export default function SellersMapScreen() {
           const hasCoords = c.latitude != null && c.longitude != null && !isNaN(Number(c.latitude));
           const fallbackLat = DEFAULT_LAT + (((index + 2) % 5) - 2) * 0.015;
           const fallbackLon = DEFAULT_LON + (((index + 3) % 5) - 2) * 0.015;
+          const custProdMedia = sellerProductMediaMap[c.id] || [];
+          const custFirstPhoto = custProdMedia.find((m) => m.type === "image")?.uri || null;
 
           return {
             id: String(c.id),
@@ -226,6 +279,8 @@ export default function SellersMapScreen() {
             hasExactCoordinates: hasCoords,
             productCount: productsCountMap[c.id] || 0,
             avatar_url: null,
+            firstPhoto: custFirstPhoto,
+            mediaList: custProdMedia,
             isProfile: false,
           };
         });
@@ -680,6 +735,10 @@ export default function SellersMapScreen() {
         setSelectedSeller(raw.seller);
       } else if (raw.type === "getDirections") {
         handleOpenDirections(raw.latitude, raw.longitude, raw.name);
+      } else if (raw.type === "openViewer") {
+        if (raw.media) {
+          setViewerMediaItem(raw.media);
+        }
       }
     } catch (err) {
       console.error("Error handling map message:", err);
@@ -719,28 +778,51 @@ export default function SellersMapScreen() {
                 right: 0;
                 bottom: 0;
             }
-            .seller-pin {
+            .seller-icon-wrapper {
+                background: transparent;
+                border: none;
+            }
+            .seller-custom-pin {
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                cursor: pointer;
+                filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3));
+                transition: transform 0.2s ease;
+            }
+            .seller-custom-pin:hover {
+                transform: scale(1.15);
+            }
+            .seller-pin-bubble {
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #007AFF 0%, #0056b3 100%);
+                border: 2.5px solid #FFFFFF;
+                overflow: hidden;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                width: 40px;
-                height: 40px;
-                background: linear-gradient(135deg, #007AFF 0%, #0056b3 100%);
-                border-radius: 50% 50% 50% 0;
-                transform: rotate(-45deg);
-                box-shadow: 0 4px 14px rgba(0,122,255,0.45);
-                border: 2.5px solid #FFFFFF;
-                cursor: pointer;
-                transition: transform 0.2s ease, box-shadow 0.2s ease;
+                box-shadow: 0 2px 8px rgba(0,122,255,0.4);
             }
-            .seller-pin:hover {
-                transform: rotate(-45deg) scale(1.15);
-                box-shadow: 0 6px 18px rgba(0,122,255,0.65);
+            .seller-pin-img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
             }
-            .seller-pin i {
-                transform: rotate(45deg);
+            .seller-pin-bubble i {
                 color: #FFFFFF;
-                font-size: 16px;
+                font-size: 18px;
+            }
+            .seller-pin-tail {
+                width: 0;
+                height: 0;
+                border-left: 6px solid transparent;
+                border-right: 6px solid transparent;
+                border-top: 8px solid #007AFF;
+                margin-top: -2px;
             }
             .user-pulse-marker {
                 width: 20px;
@@ -752,40 +834,132 @@ export default function SellersMapScreen() {
             }
             .custom-popup .leaflet-popup-content-wrapper {
                 border-radius: 16px;
-                padding: 6px;
-                box-shadow: 0 10px 30px rgba(15,23,42,0.2);
+                padding: 0px;
+                box-shadow: 0 12px 32px rgba(15,23,42,0.28);
                 border: 1px solid #E2E8F0;
+                overflow: hidden;
+                background: #FFFFFF;
             }
             .custom-popup .leaflet-popup-content {
-                margin: 10px 12px;
+                margin: 0;
+                padding: 12px 14px;
                 line-height: 1.4;
+                max-width: 270px;
+            }
+            .popup-hero-wrap {
+                width: calc(100% + 28px);
+                margin: -12px -14px 8px -14px;
+                height: 125px;
+                position: relative;
+                background-color: #0F172A;
+                overflow: hidden;
+                cursor: pointer;
+            }
+            .popup-hero-img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                transition: transform 0.3s ease;
+            }
+            .popup-hero-wrap:hover .popup-hero-img {
+                transform: scale(1.03);
+            }
+            .popup-photos-badge {
+                position: absolute;
+                bottom: 8px;
+                right: 8px;
+                background: rgba(15, 23, 42, 0.75);
+                backdrop-filter: blur(4px);
+                color: #FFFFFF;
+                font-size: 10px;
+                font-weight: 700;
+                padding: 3px 8px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            }
+            .popup-zoom-badge {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                background: rgba(0, 0, 0, 0.55);
+                backdrop-filter: blur(4px);
+                color: #FFFFFF;
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 11px;
+            }
+            .popup-gallery-strip {
+                display: flex;
+                gap: 6px;
+                overflow-x: auto;
+                padding: 2px 0 6px 0;
+                margin-bottom: 6px;
+            }
+            .popup-thumb-item {
+                width: 38px;
+                height: 38px;
+                border-radius: 6px;
+                overflow: hidden;
+                flex-shrink: 0;
+                border: 2px solid #E2E8F0;
+                cursor: pointer;
+                position: relative;
+                background: #F1F5F9;
+                transition: border-color 0.2s ease, transform 0.2s ease;
+            }
+            .popup-thumb-item.active {
+                border-color: #007AFF;
+                transform: scale(1.06);
+            }
+            .popup-thumb-item img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+            .popup-thumb-video-badge {
+                position: absolute;
+                inset: 0;
+                background: rgba(15,23,42,0.5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #FFFFFF;
+                font-size: 9px;
             }
             .popup-header {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                margin-bottom: 6px;
+                margin-bottom: 4px;
             }
             .popup-title {
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: 700;
                 color: #0F172A;
                 margin: 0;
+                line-height: 1.2;
             }
             .popup-tag {
                 display: inline-block;
                 background: #E0F2FE;
                 color: #0284C7;
-                font-size: 11px;
+                font-size: 10px;
                 font-weight: 600;
-                padding: 3px 8px;
+                padding: 2px 7px;
                 border-radius: 6px;
-                margin-bottom: 8px;
+                margin-bottom: 6px;
             }
             .popup-info-row {
-                font-size: 12px;
+                font-size: 11px;
                 color: #64748B;
-                margin-bottom: 4px;
+                margin-bottom: 3px;
                 display: flex;
                 align-items: center;
                 gap: 6px;
@@ -795,16 +969,16 @@ export default function SellersMapScreen() {
                 background: #007AFF;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 10px;
-                padding: 10px 14px;
-                font-size: 13px;
+                border-radius: 9px;
+                padding: 8px 12px;
+                font-size: 12px;
                 font-weight: 700;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 8px;
-                margin-top: 10px;
+                gap: 6px;
+                margin-top: 8px;
                 box-shadow: 0 4px 10px rgba(0,122,255,0.3);
             }
             .popup-btn-primary:active {
@@ -815,16 +989,16 @@ export default function SellersMapScreen() {
                 background: #F1F5F9;
                 color: #334155;
                 border: 1px solid #CBD5E1;
-                border-radius: 10px;
-                padding: 8px 12px;
-                font-size: 12px;
+                border-radius: 9px;
+                padding: 7px 12px;
+                font-size: 11px;
                 font-weight: 600;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 8px;
-                margin-top: 6px;
+                gap: 6px;
+                margin-top: 5px;
             }
         </style>
     </head>
@@ -845,6 +1019,7 @@ export default function SellersMapScreen() {
                 window.sellerMarkers = {};
                 window.markerLayerGroup = L.layerGroup().addTo(map);
                 window.userMarker = null;
+                window.currentSellers = [];
 
                 function postToParent(data) {
                     try {
@@ -868,9 +1043,22 @@ export default function SellersMapScreen() {
                     postToParent({ type: 'getDirections', latitude: latitude, longitude: longitude, name: name });
                 }
 
+                function handlePinImgError(img) {
+                    if (!img) return;
+                    img.style.display = 'none';
+                    if (img.nextElementSibling) {
+                        img.nextElementSibling.style.display = 'flex';
+                    }
+                }
+
+                function openViewer(mediaObj) {
+                    postToParent({ type: 'openViewer', media: mediaObj });
+                }
+
                 window.updateMapData = function(sellersData, userLoc) {
                     try {
                         if (!window.map) return;
+                        window.currentSellers = sellersData || [];
                         if (window.markerLayerGroup) {
                             window.markerLayerGroup.clearLayers();
                         } else {
@@ -902,24 +1090,69 @@ export default function SellersMapScreen() {
                                 if (!seller || seller.latitude == null || seller.longitude == null) return;
                                 boundsPoints.push([seller.latitude, seller.longitude]);
 
+                                var markerHtml = '';
+                                if (seller.firstPhoto) {
+                                    markerHtml =
+                                        '<div class="seller-custom-pin">' +
+                                            '<div class="seller-pin-bubble">' +
+                                                '<img src="' + seller.firstPhoto + '" class="seller-pin-img" onerror="handlePinImgError(this)" />' +
+                                                '<div style="display:none; color:white; align-items:center; justify-content:center; width:100%; height:100%;"><i class="fas fa-store"></i></div>' +
+                                            '</div>' +
+                                            '<div class="seller-pin-tail"></div>' +
+                                        '</div>';
+                                } else {
+                                    markerHtml =
+                                        '<div class="seller-custom-pin">' +
+                                            '<div class="seller-pin-bubble">' +
+                                                '<i class="fas fa-store"></i>' +
+                                            '</div>' +
+                                            '<div class="seller-pin-tail"></div>' +
+                                        '</div>';
+                                }
+
                                 var sellerIcon = L.divIcon({
                                     className: 'seller-icon-wrapper',
-                                    html: '<div class="seller-pin"><i class="fas fa-store"></i></div>',
-                                    iconSize: [40, 40],
-                                    iconAnchor: [20, 40],
-                                    popupAnchor: [0, -40]
+                                    html: markerHtml,
+                                    iconSize: [44, 52],
+                                    iconAnchor: [22, 52],
+                                    popupAnchor: [0, -52]
                                 });
 
                                 var safeName = (seller.full_name || 'Seller Store').replace(/"/g, '&quot;');
-                                var popupHtml =
+                                var photosCount = (seller.mediaList && seller.mediaList.length) || (seller.firstPhoto ? 1 : 0);
+
+                                var popupHtml = '';
+                                if (seller.firstPhoto) {
+                                    popupHtml +=
+                                        '<div class="popup-hero-wrap" data-action="openHeroViewer" data-seller-id="' + seller.id + '" title="Tap to view full media">' +
+                                            '<img id="popup-hero-' + seller.id + '" src="' + seller.firstPhoto + '" data-current-idx="0" data-current-type="image" class="popup-hero-img" />' +
+                                            (photosCount > 1 ? '<div class="popup-photos-badge" id="popup-badge-' + seller.id + '"><i class="fas fa-images"></i> ' + photosCount + ' Media</div>' : '') +
+                                            '<div class="popup-zoom-badge"><i class="fas fa-expand"></i></div>' +
+                                        '</div>';
+                                }
+
+                                // Interactive Gallery Strip if multiple media items exist
+                                if (seller.mediaList && seller.mediaList.length > 1) {
+                                    popupHtml += '<div class="popup-gallery-strip" id="popup-strip-' + seller.id + '">';
+                                    seller.mediaList.slice(0, 6).forEach(function(media, mIdx) {
+                                        popupHtml +=
+                                            '<div class="popup-thumb-item ' + (mIdx === 0 ? 'active' : '') + '" data-action="selectMedia" data-seller-id="' + seller.id + '" data-media-idx="' + mIdx + '" data-media-url="' + media.uri + '" data-media-type="' + (media.type || 'image') + '">' +
+                                                (media.type === 'video' ? '<div class="popup-thumb-video-badge"><i class="fas fa-play"></i></div>' : '') +
+                                                '<img src="' + media.uri + '" />' +
+                                            '</div>';
+                                    });
+                                    popupHtml += '</div>';
+                                }
+
+                                popupHtml +=
                                     '<div class="popup-header">' +
-                                        '<i class="fas fa-store" style="color:#007AFF; font-size:18px;"></i>' +
+                                        (!seller.firstPhoto ? '<i class="fas fa-store" style="color:#007AFF; font-size:16px;"></i>' : '') +
                                         '<h4 class="popup-title">' + (seller.full_name || 'Seller Store') + '</h4>' +
                                     '</div>' +
                                     '<div class="popup-tag">' + (seller.hasExactCoordinates === false ? 'Store • Location Approximate' : 'Verified Store') + '</div>' +
-                                    (seller.city ? '<div class="popup-info-row"><i class="fas fa-map-marker-alt" style="color:#64748B;"></i> ' + seller.city + '</div>' : '') +
-                                    (seller.mobile ? '<div class="popup-info-row"><i class="fas fa-phone" style="color:#64748B;"></i> ' + seller.mobile + '</div>' : '') +
-                                    (seller.productCount > 0 ? '<div class="popup-info-row"><i class="fas fa-box-open" style="color:#10B981;"></i> <b>' + seller.productCount + ' Products</b> available</div>' : '') +
+                                    (seller.city ? '<div class="popup-info-row"><i class="fas fa-map-marker-alt" style="color:#007AFF;"></i> ' + seller.city + '</div>' : '') +
+                                    (seller.mobile ? '<div class="popup-info-row"><i class="fas fa-phone" style="color:#10B981;"></i> ' + seller.mobile + '</div>' : '') +
+                                    (seller.productCount > 0 ? '<div class="popup-info-row"><i class="fas fa-box-open" style="color:#6366F1;"></i> <b>' + seller.productCount + ' Products</b> in store</div>' : '') +
                                     '<button class="popup-btn-primary" data-action="viewProducts" data-seller-id="' + seller.id + '" data-seller-name="' + safeName + '">' +
                                         '<i class="fas fa-shopping-bag"></i> Browse Store' +
                                     '</button>' +
@@ -960,7 +1193,7 @@ export default function SellersMapScreen() {
                     }
                 };
 
-                // Event delegation for popup buttons
+                // Event delegation for popup buttons and interactive gallery
                 document.addEventListener('click', function(e) {
                     var btn = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
                     if (!btn) return;
@@ -974,6 +1207,40 @@ export default function SellersMapScreen() {
                         var lng = parseFloat(btn.getAttribute('data-lng'));
                         var name = btn.getAttribute('data-seller-name');
                         getDirections(lat, lng, name);
+                    } else if (action === 'selectMedia') {
+                        var sId = btn.getAttribute('data-seller-id');
+                        var mIdx = parseInt(btn.getAttribute('data-media-idx'), 10);
+                        var mediaUrl = btn.getAttribute('data-media-url');
+                        var mediaType = btn.getAttribute('data-media-type');
+                        var heroEl = document.getElementById('popup-hero-' + sId);
+                        if (heroEl && mediaUrl) {
+                            heroEl.src = mediaUrl;
+                            heroEl.setAttribute('data-current-idx', mIdx);
+                            heroEl.setAttribute('data-current-type', mediaType || 'image');
+                        }
+                        var stripEl = document.getElementById('popup-strip-' + sId);
+                        if (stripEl) {
+                            var thumbs = stripEl.querySelectorAll('.popup-thumb-item');
+                            thumbs.forEach(function(t, idx) {
+                                if (idx === mIdx) {
+                                    t.classList.add('active');
+                                } else {
+                                    t.classList.remove('active');
+                                }
+                            });
+                        }
+                    } else if (action === 'openHeroViewer') {
+                        var sId = btn.getAttribute('data-seller-id');
+                        var heroEl = document.getElementById('popup-hero-' + sId);
+                        var curIdx = parseInt((heroEl && heroEl.getAttribute('data-current-idx')) || '0', 10);
+                        var curUrl = (heroEl && heroEl.src) || '';
+                        var curType = (heroEl && heroEl.getAttribute('data-current-type')) || 'image';
+                        var seller = (window.currentSellers || []).find(function(s) { return String(s.id) === String(sId); });
+                        if (seller && seller.mediaList && seller.mediaList[curIdx]) {
+                            openViewer(seller.mediaList[curIdx]);
+                        } else if (curUrl) {
+                            openViewer({ uri: curUrl, type: curType });
+                        }
                     }
                 });
 
@@ -1046,14 +1313,23 @@ export default function SellersMapScreen() {
         : null;
 
     const initialLetter = (item.full_name || "S").charAt(0).toUpperCase();
+    const hasMedia = item.mediaList && item.mediaList.length > 0;
 
     return (
       <View style={styles.directoryCard}>
         <View style={styles.directoryCardHeader}>
-          {/* Avatar / Store Icon */}
-          <View style={styles.directoryAvatar}>
-            <Text style={styles.directoryAvatarText}>{initialLetter}</Text>
-          </View>
+          {/* Avatar / 1st Profile Photo */}
+          {item.firstPhoto ? (
+            <Image
+              source={{ uri: item.firstPhoto }}
+              style={styles.directoryAvatarImg}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.directoryAvatar}>
+              <Text style={styles.directoryAvatarText}>{initialLetter}</Text>
+            </View>
+          )}
 
           <View style={styles.directoryInfo}>
             <View style={styles.directoryNameRow}>
@@ -1087,6 +1363,52 @@ export default function SellersMapScreen() {
             </View>
           </View>
         </View>
+
+        {/* Store Directory Images Strip */}
+        {hasMedia && (
+          <View style={styles.dirMediaSection}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.dirMediaScroll}
+            >
+              {item.mediaList.slice(0, 5).map((media, mIdx) => (
+                <TouchableOpacity
+                  key={`dir-thumb-${item.id}-${mIdx}`}
+                  style={styles.dirMediaThumbWrap}
+                  activeOpacity={0.85}
+                  onPress={() => setViewerMediaItem(media)}
+                >
+                  {media.type === "video" ? (
+                    <View style={styles.dirVideoThumb}>
+                      <View style={styles.dirVideoPlayBadge}>
+                        <Text style={styles.dirVideoPlayText}>▶</Text>
+                      </View>
+                      <Text style={styles.dirVideoLabel}>Video</Text>
+                    </View>
+                  ) : (
+                    <Image source={{ uri: media.uri }} style={styles.dirMediaThumb} resizeMode="cover" />
+                  )}
+                </TouchableOpacity>
+              ))}
+              {item.mediaList.length > 5 && (
+                <TouchableOpacity
+                  style={styles.dirMediaMoreBadge}
+                  onPress={() =>
+                    safeNavigate("Catalog", {
+                      userId: item.id,
+                      sellerId: item.id,
+                      sellerName: item.full_name,
+                    })
+                  }
+                >
+                  <Text style={styles.dirMediaMoreText}>+{item.mediaList.length - 5}</Text>
+                  <Text style={styles.dirMediaMoreSub}>more</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Action Buttons Row */}
         <View style={styles.directoryActionsRow}>
@@ -1371,11 +1693,19 @@ export default function SellersMapScreen() {
           {selectedSeller && (
             <View style={styles.sellerCard}>
               <View style={styles.sellerCardHeader}>
-                <View style={styles.sellerAvatarBox}>
-                  <Text style={styles.sellerAvatarLetter}>
-                    {(selectedSeller.full_name || "S").charAt(0).toUpperCase()}
-                  </Text>
-                </View>
+                {selectedSeller.firstPhoto ? (
+                  <Image
+                    source={{ uri: selectedSeller.firstPhoto }}
+                    style={styles.sellerAvatarImg}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.sellerAvatarBox}>
+                    <Text style={styles.sellerAvatarLetter}>
+                      {(selectedSeller.full_name || "S").charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
 
                 <View style={styles.sellerDetails}>
                   <View style={styles.sellerNameRow}>
@@ -1400,6 +1730,46 @@ export default function SellersMapScreen() {
                   <Icon name="times" size={16} color="#94A3B8" />
                 </TouchableOpacity>
               </View>
+
+              {/* Photos & Videos Gallery Preview Strip in Bottom Sheet */}
+              {selectedSeller.mediaList && selectedSeller.mediaList.length > 0 && (
+                <View style={styles.cardMediaSection}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.cardMediaScroll}
+                  >
+                    {selectedSeller.mediaList.map((media, idx) => (
+                      <TouchableOpacity
+                        key={`sel-media-${idx}-${media.uri}`}
+                        style={styles.cardMediaThumbWrap}
+                        activeOpacity={0.85}
+                        onPress={() => setViewerMediaItem(media)}
+                      >
+                        {media.type === "video" ? (
+                          <View style={styles.cardVideoThumbBox}>
+                            <View style={styles.cardVideoPlayBadge}>
+                              <Text style={styles.cardVideoPlayIcon}>▶</Text>
+                            </View>
+                            <View style={styles.cardVideoBadge}>
+                              <Text style={styles.cardVideoBadgeText}>🎥 Video</Text>
+                            </View>
+                          </View>
+                        ) : (
+                          <View style={styles.cardPhotoThumbBox}>
+                            <Image source={{ uri: media.uri }} style={styles.cardMediaThumb} resizeMode="cover" />
+                            <View style={styles.cardPhotoBadge}>
+                              <Text style={styles.cardPhotoBadgeText}>
+                                {idx === 0 ? "Profile" : `Photo ${idx + 1}`}
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
 
               {/* Meta Badges */}
               <View style={styles.sellerMetaRow}>
@@ -1635,6 +2005,42 @@ export default function SellersMapScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Fullscreen Media Viewer Modal for Store Images & Videos */}
+      <Modal
+        visible={!!viewerMediaItem}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setViewerMediaItem(null)}
+      >
+        <View style={styles.viewerModalContainer}>
+          <TouchableOpacity
+            style={styles.viewerCloseBtn}
+            onPress={() => setViewerMediaItem(null)}
+          >
+            <Text style={styles.viewerCloseBtnText}>✕ Close</Text>
+          </TouchableOpacity>
+          {viewerMediaItem && (
+            <View style={styles.viewerMediaBox}>
+              {viewerMediaItem.type === "video" ? (
+                <Video
+                  source={{ uri: viewerMediaItem.uri }}
+                  style={styles.viewerFullVideo}
+                  useNativeControls
+                  resizeMode={ResizeMode.CONTAIN}
+                  shouldPlay={true}
+                />
+              ) : (
+                <Image
+                  source={{ uri: viewerMediaItem.uri }}
+                  style={styles.viewerFullImage}
+                  resizeMode="contain"
+                />
+              )}
+            </View>
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1699,50 +2105,65 @@ const styles = StyleSheet.create({
   clearBtn: {
     padding: 4,
   },
-  segmentContainer: {
-    flexDirection: "row",
-    backgroundColor: "#F1F5F9",
-    borderRadius: 12,
-    padding: 3,
-    marginTop: 10,
-  },
-  segmentBtn: {
-    flex: 1,
-    flexDirection: "row",
+  menuBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F8FAFC",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8,
-    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
-  segmentBtnActive: {
+  controlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 10,
+    gap: 8,
+  },
+  viewToggle: {
+    flexDirection: "row",
+    backgroundColor: "#F1F5F9",
+    borderRadius: 10,
+    padding: 3,
+  },
+  viewToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 5,
+  },
+  viewToggleBtnActive: {
     backgroundColor: "#FFFFFF",
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 2,
     elevation: 2,
   },
-  segmentText: {
+  viewToggleText: {
     fontSize: 12,
     fontWeight: "600",
     color: "#64748B",
   },
-  segmentTextActive: {
+  viewToggleTextActive: {
     color: "#007AFF",
     fontWeight: "700",
   },
   filterChipsRow: {
-    marginTop: 8,
     flexDirection: "row",
   },
   chipBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F8FAFC",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-    marginRight: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: "#F1F5F9",
+    marginRight: 6,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
@@ -1753,56 +2174,25 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#475569",
+    color: "#64748B",
   },
   chipTextActive: {
     color: "#FFFFFF",
-  },
-  mapContainer: {
-    flex: 1,
-    position: "relative",
-  },
-  webview: {
-    flex: 1,
-  },
-  mapLoadingBadge: {
-    position: "absolute",
-    top: 14,
-    alignSelf: "center",
-    zIndex: 45,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.95)",
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 4,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    gap: 8,
-  },
-  mapLoadingText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0F172A",
+    fontWeight: "700",
   },
   suggestionDropdown: {
     position: "absolute",
-    top: Platform.OS === "ios" ? 110 : 80,
+    top: Platform.OS === "ios" ? 110 : 105,
     left: 16,
     right: 16,
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
-    maxHeight: 250,
-    zIndex: 60,
+    zIndex: 100,
+    maxHeight: 240,
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 8 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.15,
-    shadowRadius: 14,
+    shadowRadius: 12,
     elevation: 8,
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -1817,9 +2207,9 @@ const styles = StyleSheet.create({
     borderBottomColor: "#F1F5F9",
   },
   suggestionIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 10,
@@ -1841,13 +2231,12 @@ const styles = StyleSheet.create({
   suggestionSubtitle: {
     fontSize: 11,
     color: "#64748B",
-    marginTop: 2,
+    marginTop: 1,
   },
   typeBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
-    marginLeft: 6,
+    borderRadius: 4,
   },
   sellerBadge: {
     backgroundColor: "#EFF6FF",
@@ -1857,7 +2246,7 @@ const styles = StyleSheet.create({
   },
   typeBadgeText: {
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   sellerBadgeText: {
     color: "#007AFF",
@@ -1865,22 +2254,52 @@ const styles = StyleSheet.create({
   areaBadgeText: {
     color: "#10B981",
   },
+  mapContainer: {
+    flex: 1,
+    position: "relative",
+  },
+  webview: {
+    flex: 1,
+  },
+  mapLoadingBadge: {
+    position: "absolute",
+    top: 14,
+    alignSelf: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    gap: 8,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
+    zIndex: 30,
+  },
+  mapLoadingText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#1E293B",
+  },
   recenterButton: {
     position: "absolute",
     right: 16,
-    bottom: 230,
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    bottom: 200,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 6,
-    zIndex: 35,
+    shadowRadius: 6,
+    elevation: 5,
+    zIndex: 30,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
@@ -1913,6 +2332,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
+  },
+  sellerAvatarImg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: "#007AFF",
+    backgroundColor: "#F1F5F9",
   },
   sellerAvatarLetter: {
     color: "#FFFFFF",
@@ -1954,11 +2382,84 @@ const styles = StyleSheet.create({
   closeCardButton: {
     padding: 6,
   },
+  cardMediaSection: {
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  cardMediaScroll: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  cardMediaThumbWrap: {
+    borderRadius: 10,
+    overflow: "hidden",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+  },
+  cardPhotoThumbBox: {
+    position: "relative",
+  },
+  cardMediaThumb: {
+    width: 70,
+    height: 70,
+    borderRadius: 8,
+  },
+  cardPhotoBadge: {
+    position: "absolute",
+    bottom: 2,
+    right: 2,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  cardPhotoBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  cardVideoThumbBox: {
+    width: 70,
+    height: 70,
+    backgroundColor: "#0F172A",
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  cardVideoPlayBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardVideoPlayIcon: {
+    fontSize: 12,
+    color: "#007AFF",
+    marginLeft: 2,
+  },
+  cardVideoBadge: {
+    position: "absolute",
+    bottom: 2,
+    right: 2,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  cardVideoBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "700",
+  },
   sellerMetaRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginTop: 12,
+    marginTop: 10,
   },
   metaBadge: {
     flexDirection: "row",
@@ -2040,9 +2541,9 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   directoryAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: "#007AFF",
     alignItems: "center",
     justifyContent: "center",
@@ -2052,6 +2553,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 2,
+  },
+  directoryAvatarImg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+    borderWidth: 1.5,
+    borderColor: "#007AFF",
+    backgroundColor: "#F1F5F9",
   },
   directoryAvatarText: {
     color: "#FFFFFF",
@@ -2134,6 +2644,74 @@ const styles = StyleSheet.create({
   },
   prodCountTextEmpty: {
     color: "#64748B",
+  },
+  dirMediaSection: {
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  dirMediaScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  dirMediaThumbWrap: {
+    borderRadius: 8,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  dirMediaThumb: {
+    width: 62,
+    height: 62,
+    borderRadius: 7,
+    backgroundColor: "#F1F5F9",
+  },
+  dirVideoThumb: {
+    width: 62,
+    height: 62,
+    borderRadius: 7,
+    backgroundColor: "#0F172A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dirVideoPlayBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dirVideoPlayText: {
+    fontSize: 10,
+    color: "#007AFF",
+    marginLeft: 2,
+  },
+  dirVideoLabel: {
+    position: "absolute",
+    bottom: 2,
+    color: "#FFFFFF",
+    fontSize: 8,
+    fontWeight: "700",
+  },
+  dirMediaMoreBadge: {
+    width: 62,
+    height: 62,
+    borderRadius: 8,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dirMediaMoreText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#007AFF",
+  },
+  dirMediaMoreSub: {
+    fontSize: 10,
+    color: "#64748B",
+    fontWeight: "600",
   },
   directoryActionsRow: {
     flexDirection: "row",
@@ -2365,5 +2943,41 @@ const styles = StyleSheet.create({
     color: "#EF4444",
     fontSize: 14,
     fontWeight: "700",
+  },
+  viewerModalContainer: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.94)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  viewerCloseBtn: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 55 : 30,
+    right: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    zIndex: 100,
+  },
+  viewerCloseBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  viewerMediaBox: {
+    width: "100%",
+    height: "80%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  viewerFullImage: {
+    width: "100%",
+    height: "100%",
+  },
+  viewerFullVideo: {
+    width: "100%",
+    height: "100%",
   },
 });

@@ -27,6 +27,9 @@ export default function SellerLoginScreen({ navigation, route }) {
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     try {
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        localStorage.setItem('pending_auth_role', 'seller');
+      }
       const res = await signInWithGoogle('seller');
       if (res.success && res.user) {
         await supabase
@@ -38,6 +41,10 @@ export default function SellerLoginScreen({ navigation, route }) {
             email: res.user.email,
             updated_at: new Date().toISOString(),
           });
+
+        try {
+          await supabase.auth.updateUser({ data: { role: 'seller' } });
+        } catch (_) {}
 
         if (onAuthSuccess) {
           onAuthSuccess(res.user);
@@ -89,13 +96,32 @@ export default function SellerLoginScreen({ navigation, route }) {
               .upsert({
                 id: data.user.id,
                 full_name: data.user.user_metadata?.full_name || 'Seller',
-                role: 'seller'
+                role: 'seller',
+                email: data.user.email,
+                updated_at: new Date().toISOString(),
               })
               .select()
               .maybeSingle();
             profileData = newProfile;
+            await supabase.auth.updateUser({ data: { role: 'seller' } });
           } catch (upsertErr) {
             console.error("Error upserting profile:", upsertErr);
+          }
+        } else if (profileData.role !== 'seller' && profileData.role !== 'admin') {
+          try {
+            const { data: updatedProfile } = await supabase
+              .from('profiles')
+              .update({
+                role: 'seller',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', data.user.id)
+              .select()
+              .maybeSingle();
+            if (updatedProfile) profileData = updatedProfile;
+            await supabase.auth.updateUser({ data: { role: 'seller' } });
+          } catch (updateErr) {
+            console.error("Error updating seller profile role:", updateErr);
           }
         }
 

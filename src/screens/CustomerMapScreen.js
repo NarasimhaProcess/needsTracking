@@ -228,18 +228,35 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
     try {
       const { data, error: fetchError } = await supabase
         .from('profiles')
-        .select('id, full_name, role, latitude, longitude')
+        .select('id, full_name, role, latitude, longitude, avatar_url, media_urls')
         .not('latitude', 'is', null)
         .not('longitude', 'is', null);
 
       if (!fetchError && data && data.length > 0) {
         setCustomerLocations(
-          data.map((p) => ({
-            id: p.id,
-            name: p.full_name || 'User Location',
-            latitude: p.latitude,
-            longitude: p.longitude,
-          }))
+          data.map((p) => {
+            let mediaList = [];
+            if (p.media_urls) {
+              try {
+                mediaList = typeof p.media_urls === 'string' ? JSON.parse(p.media_urls) : p.media_urls;
+              } catch (_) {
+                mediaList = [];
+              }
+            }
+            const firstPhoto =
+              (mediaList && mediaList.find((m) => m.type === 'image')?.uri) ||
+              p.avatar_url ||
+              null;
+
+            return {
+              id: p.id,
+              name: p.full_name || 'User Location',
+              latitude: p.latitude,
+              longitude: p.longitude,
+              firstPhoto: firstPhoto,
+              role: p.role || 'user',
+            };
+          })
         );
       }
     } catch (err) {
@@ -251,8 +268,8 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
       if (!id) return;
       try {
         const { data, error: fetchError } = await supabase
-          .from('profiles') // Assuming customer location is in profiles table
-          .select('latitude, longitude, full_name')
+          .from('profiles')
+          .select('latitude, longitude, full_name, avatar_url, media_urls')
           .eq('id', id)
           .single();
 
@@ -262,7 +279,26 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
         }
 
         if (data && data.latitude && data.longitude) {
-          setCustomerLocations([{ latitude: data.latitude, longitude: data.longitude, id: id, name: data.full_name || 'Customer' }]);
+          let mediaList = [];
+          if (data.media_urls) {
+            try {
+              mediaList = typeof data.media_urls === 'string' ? JSON.parse(data.media_urls) : data.media_urls;
+            } catch (_) {
+              mediaList = [];
+            }
+          }
+          const firstPhoto =
+            (mediaList && mediaList.find((m) => m.type === 'image')?.uri) ||
+            data.avatar_url ||
+            null;
+
+          setCustomerLocations([{
+            latitude: data.latitude,
+            longitude: data.longitude,
+            id: id,
+            name: data.full_name || 'Customer',
+            firstPhoto: firstPhoto,
+          }]);
         } else {
           Alert.alert('Location Not Found', 'Customer location not available.');
           setCustomerLocations([]);
@@ -309,11 +345,88 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
         <style>
             body { margin: 0; padding: 0; }
             #mapid { width: 100vw; height: 100vh; background-color: #f0f0f0; }
+            .seller-icon-wrapper {
+                background: transparent;
+                border: none;
+            }
+            .seller-custom-pin {
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                cursor: pointer;
+                filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3));
+                transition: transform 0.2s ease;
+            }
+            .seller-custom-pin:hover {
+                transform: scale(1.15);
+            }
+            .seller-pin-bubble {
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #007AFF 0%, #0056b3 100%);
+                border: 2.5px solid #FFFFFF;
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 2px 8px rgba(0,122,255,0.4);
+            }
+            .seller-pin-img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+            }
+            .seller-pin-bubble i {
+                color: #FFFFFF;
+                font-size: 18px;
+            }
+            .seller-pin-tail {
+                width: 0;
+                height: 0;
+                border-left: 6px solid transparent;
+                border-right: 6px solid transparent;
+                border-top: 8px solid #007AFF;
+                margin-top: -2px;
+            }
+            .custom-popup .leaflet-popup-content-wrapper {
+                border-radius: 14px;
+                padding: 0px;
+                box-shadow: 0 8px 24px rgba(15,23,42,0.2);
+                overflow: hidden;
+            }
+            .custom-popup .leaflet-popup-content {
+                margin: 0;
+                padding: 10px 14px;
+            }
+            .popup-hero-wrap {
+                width: 100%;
+                height: 100px;
+                overflow: hidden;
+                background-color: #0F172A;
+                margin: -10px -14px 8px -14px;
+                width: calc(100% + 28px);
+            }
+            .popup-hero-img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
         </style>
     </head>
     <body>
         <div id="mapid"></div>
         <script>
+            function handlePinImgError(img) {
+                if (!img) return;
+                img.style.display = 'none';
+                if (img.nextElementSibling) {
+                    img.nextElementSibling.style.display = 'flex';
+                }
+            }
+
             var map = L.map('mapid').setView([20.5937, 78.9629], 5);
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -324,16 +437,52 @@ export default function CustomerMapScreen({ route }) { // Remove navigation from
                 latitude: loc.latitude,
                 longitude: loc.longitude,
                 id: loc.id,
-                name: loc.name || 'Location'
+                name: loc.name || 'Location',
+                firstPhoto: loc.firstPhoto || null,
             })))};
 
             if (customerLocations.length > 0) {
                 var bounds = [];
                 customerLocations.forEach(function(loc) {
                     bounds.push([loc.latitude, loc.longitude]);
-                    L.marker([loc.latitude, loc.longitude])
+
+                    var markerHtml = '';
+                    if (loc.firstPhoto) {
+                        markerHtml =
+                            '<div class="seller-custom-pin">' +
+                                '<div class="seller-pin-bubble">' +
+                                    '<img src="' + loc.firstPhoto + '" class="seller-pin-img" onerror="handlePinImgError(this)" />' +
+                                    '<div style="display:none; color:white; align-items:center; justify-content:center; width:100%; height:100%;"><i class="fas fa-user"></i></div>' +
+                                '</div>' +
+                                '<div class="seller-pin-tail"></div>' +
+                            '</div>';
+                    } else {
+                        markerHtml =
+                            '<div class="seller-custom-pin">' +
+                                '<div class="seller-pin-bubble">' +
+                                    '<i class="fas fa-map-marker-alt"></i>' +
+                                '</div>' +
+                                '<div class="seller-pin-tail"></div>' +
+                            '</div>';
+                    }
+
+                    var customIcon = L.divIcon({
+                        className: 'seller-icon-wrapper',
+                        html: markerHtml,
+                        iconSize: [44, 52],
+                        iconAnchor: [22, 52],
+                        popupAnchor: [0, -52]
+                    });
+
+                    var popupHtml = '';
+                    if (loc.firstPhoto) {
+                        popupHtml += '<div class="popup-hero-wrap"><img src="' + loc.firstPhoto + '" class="popup-hero-img" /></div>';
+                    }
+                    popupHtml += '<h4 style="margin:0 0 4px 0; font-size:15px; color:#0F172A;">' + loc.name + '</h4>';
+
+                    L.marker([loc.latitude, loc.longitude], { icon: customIcon })
                         .addTo(map)
-                        .bindPopup('<b>' + loc.name + '</b>');
+                        .bindPopup(popupHtml, { className: 'custom-popup' });
                 });
                 if (bounds.length === 1) {
                     map.setView(bounds[0], 13);

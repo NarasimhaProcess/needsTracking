@@ -340,14 +340,20 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: 'center',
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalContainer: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '90%',
+    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    width: '100%',
+    maxWidth: 600,
+    maxHeight: Platform.OS === 'web' ? '88vh' : '90%',
     paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',

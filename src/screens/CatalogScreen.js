@@ -963,7 +963,12 @@ const CatalogScreen = ({ navigation, route }) => {
                 ) : null}
               </View>
               
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                style={{ flex: 1, width: '100%' }}
+                contentContainerStyle={{ paddingBottom: 24 }}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+              >
                 {(() => {
                   const combos = getProductCombinations(selectedProduct);
                   const isMultiCombo = combos.length > 1;
@@ -1415,22 +1420,34 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: 'center',
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalContent: {
     backgroundColor: 'white',
     padding: 20,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: '80%',
+    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    width: '100%',
+    maxWidth: 600,
+    height: Platform.OS === 'web' ? '85vh' : '80%',
+    maxHeight: Platform.OS === 'web' ? '85vh' : '80%',
+    overflow: 'hidden',
   },
   productModalContent: {
     backgroundColor: 'white',
     padding: 20,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: '90%',
+    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    width: '100%',
+    maxWidth: 700,
+    height: Platform.OS === 'web' ? '90vh' : '90%',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+    overflow: 'hidden',
   },
   modalTitle: {
     fontSize: 20,
@@ -1586,9 +1603,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    height: '92%',
+    borderRadius: Platform.OS === 'web' ? 20 : 0,
+    width: '100%',
+    maxWidth: 720,
+    height: Platform.OS === 'web' ? '90vh' : '92%',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '92%',
     paddingTop: 16,
     overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    position: 'relative',
   },
   swiggyHeaderSection: {
     paddingHorizontal: 16,

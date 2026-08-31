@@ -939,6 +939,84 @@ export async function uploadQrImage(userId, imageUri) {
   }
 }
 
+/**
+ * Upload profile media (image or video) to Supabase Storage
+ */
+export async function uploadProfileMedia(userId, mediaUri, mediaType = 'image') {
+  try {
+    const isVideo = mediaType === 'video';
+    const { extension, contentType, fileName } = extractFileDetails(mediaUri, isVideo ? 'video' : 'image');
+    const profileFileName = `${Date.now()}-${userId}-${fileName}`;
+    const filePath = `profile_media/${userId}/${profileFileName}`;
+
+    let fileData = null;
+    if (Platform.OS === 'web' || (typeof window !== 'undefined' && typeof fetch === 'function')) {
+      try {
+        const fileResponse = await fetch(mediaUri);
+        fileData = await fileResponse.blob();
+      } catch (webBlobErr) {
+        console.warn('Web blob fetch failed in uploadProfileMedia:', webBlobErr.message);
+      }
+    }
+
+    if (!fileData) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(mediaUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        if (typeof Buffer !== 'undefined') {
+          const buf = Buffer.from(base64, 'base64');
+          fileData = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+        } else {
+          fileData = new Uint8Array(
+            atob(base64).split('').map((c) => c.charCodeAt(0))
+          );
+        }
+      } catch (fsErr) {
+        console.error('FileSystem read error in uploadProfileMedia:', fsErr.message);
+      }
+    }
+
+    if (!fileData) {
+      console.error('uploadProfileMedia: Unable to obtain media binary data.');
+      return null;
+    }
+
+    let publicUrl = null;
+    const bucketsToTry = ['productsmedia', 'locationtracker', 'chat_media', 'qr_codes', 'damage_photos'];
+    for (const bucketName of bucketsToTry) {
+      try {
+        const { error } = await supabase.storage
+          .from(bucketName)
+          .upload(filePath, fileData, {
+            contentType: contentType,
+            upsert: true,
+          });
+
+        if (!error) {
+          const { data: publicUrlData } = supabase.storage
+            .from(bucketName)
+            .getPublicUrl(filePath);
+          publicUrl = publicUrlData?.publicUrl;
+          if (publicUrl) {
+            console.log(`Profile media uploaded successfully to bucket "${bucketName}":`, publicUrl);
+            break;
+          }
+        } else {
+          console.warn(`Storage upload to "${bucketName}" failed:`, error.message);
+        }
+      } catch (bucketErr) {
+        console.warn(`Error trying storage bucket "${bucketName}":`, bucketErr.message);
+      }
+    }
+
+    return publicUrl;
+  } catch (error) {
+    console.error('Error in uploadProfileMedia:', error.message);
+    return null;
+  }
+}
+
 export async function addQrCode(userId, qrImageUrl, name = 'My UPI QR', isActive = true) {
   try {
     if (isActive) {
@@ -1413,27 +1491,85 @@ export function getAuthRedirectUrl() {
 }
 
 /**
- * Ensures user profile exists in `profiles` table after OAuth or Email login
+ * Ensures user profile exists in `profiles` table after OAuth or Email login with proper role
  */
-export async function ensureUserProfile(user, defaultRole = 'customer') {
+export async function ensureUserProfile(user, defaultRole = null) {
   if (!user || !user.id) return null;
   try {
+    // 1. Check for explicit or stored pending role (from SellerLogin / DeliveryLogin / BuyerLogin)
+    let roleToAssign = defaultRole;
+    if (!roleToAssign) {
+      try {
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          roleToAssign = localStorage.getItem('pending_auth_role') || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('pending_auth_role') : null);
+        }
+        if (!roleToAssign && Storage && typeof Storage.getItem === 'function') {
+          roleToAssign = await Storage.getItem('pending_auth_role');
+        }
+      } catch (_) {}
+    }
+
+    // Clear pending role once read
+    if (roleToAssign) {
+      try {
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          localStorage.removeItem('pending_auth_role');
+          if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('pending_auth_role');
+        }
+        if (Storage && typeof Storage.removeItem === 'function') {
+          await Storage.removeItem('pending_auth_role');
+        }
+      } catch (_) {}
+    }
+
     const { data: existingProfile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .maybeSingle();
 
+    // If an explicit role was requested (e.g. 'seller' or 'delivery_manager')
+    if (roleToAssign) {
+      // Sync auth user metadata
+      try {
+        await supabase.auth.updateUser({
+          data: { role: roleToAssign }
+        });
+      } catch (_) {}
+
+      if (existingProfile) {
+        // Upgrade / sync role if different and not admin
+        if (existingProfile.role !== roleToAssign && existingProfile.role !== 'admin') {
+          const { data: updatedProfile, error: updateErr } = await supabase
+            .from('profiles')
+            .update({
+              role: roleToAssign,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', user.id)
+            .select()
+            .maybeSingle();
+
+          if (!updateErr && updatedProfile) {
+            console.log(`[ensureUserProfile] Upgraded user profile to role "${roleToAssign}":`, updatedProfile);
+            return updatedProfile;
+          }
+        }
+        return existingProfile;
+      }
+    }
+
     if (existingProfile) {
       return existingProfile;
     }
 
+    // New profile creation
     const fullName =
       user.user_metadata?.full_name ||
       user.user_metadata?.name ||
       user.email?.split('@')[0] ||
       'User';
-    const role = user.user_metadata?.role || defaultRole;
+    const role = roleToAssign || user.user_metadata?.role || 'customer';
 
     const newProfile = {
       id: user.id,
@@ -1466,12 +1602,25 @@ export async function ensureUserProfile(user, defaultRole = 'customer') {
 
 /**
  * Sign in / Sign up with Google OAuth via Supabase
- * @param {string} defaultRole - Role to assign if new profile ('customer' / 'buyer')
+ * @param {string} defaultRole - Role to assign if new profile ('seller' / 'delivery_manager' / 'customer')
  */
 export async function signInWithGoogle(defaultRole = 'customer') {
   try {
+    // Persist pending role so after OAuth redirect on web / app refocus, role is preserved
+    try {
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        localStorage.setItem('pending_auth_role', defaultRole);
+        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('pending_auth_role', defaultRole);
+      }
+      if (Storage && typeof Storage.setItem === 'function') {
+        await Storage.setItem('pending_auth_role', defaultRole);
+      }
+    } catch (storeErr) {
+      console.warn('[Google Auth] Could not store pending_auth_role:', storeErr);
+    }
+
     const redirectUrl = getAuthRedirectUrl();
-    console.log('[Google Auth] Using redirect URL:', redirectUrl);
+    console.log('[Google Auth] Using redirect URL:', redirectUrl, 'for intended role:', defaultRole);
 
     if (Platform.OS === 'web') {
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -1531,7 +1680,8 @@ export async function signInWithGoogle(defaultRole = 'customer') {
         if (sessionError) throw sessionError;
 
         if (sessionData?.user) {
-          await ensureUserProfile(sessionData.user, defaultRole);
+          const profile = await ensureUserProfile(sessionData.user, defaultRole);
+          return { user: sessionData.user, session: sessionData.session, profile, success: true };
         }
 
         return { user: sessionData.user, session: sessionData.session, success: true };
