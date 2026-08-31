@@ -1538,8 +1538,8 @@ export async function ensureUserProfile(user, defaultRole = null) {
       } catch (_) {}
 
       if (existingProfile) {
-        // Upgrade / sync role if different and not admin
-        if (existingProfile.role !== roleToAssign && existingProfile.role !== 'admin') {
+        // Upgrade / sync role if different and not admin / superadmin
+        if (existingProfile.role !== roleToAssign && !isUserAdminOrSuperadmin(existingProfile, user)) {
           const { data: updatedProfile, error: updateErr } = await supabase
             .from('profiles')
             .update({
@@ -1781,12 +1781,22 @@ export function subscribeToLiveDelivery(orderId, partnerId, onLocationUpdate) {
 export async function setSellerProductsActiveStatus(userId, isActive) {
   try {
     if (!userId) return false;
+    // 1. Try RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_set_seller_products_active', {
+        p_seller_id: userId,
+        p_is_active: isActive === true,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Direct table update fallback
     const { error } = await supabase
       .from('products')
       .update({ is_active: isActive })
-      .eq('user_id', userId);
+      .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
     if (error) {
-      console.error('Error updating seller products active status:', error.message);
+      console.warn('Error updating seller products active status:', error.message);
       return false;
     }
     return true;
@@ -1801,17 +1811,106 @@ export async function setSellerProductsActiveStatus(userId, isActive) {
  */
 export async function setAllProductsActiveStatus(isActive) {
   try {
+    // 1. Try RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_global_toggle_products', {
+        p_is_active: isActive === true,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Direct table update fallback
     const { error } = await supabase
       .from('products')
       .update({ is_active: isActive })
       .not('id', 'is', null);
     if (error) {
-      console.error('Error updating all products active status:', error.message);
+      console.warn('Error updating all products active status:', error.message);
       return false;
     }
     return true;
   } catch (e) {
     console.error('Exception updating all products active status:', e);
+    return false;
+  }
+}
+
+/**
+ * Set store & map active status for a specific seller
+ */
+export async function setSellerStoreActiveStatus(sellerId, settings) {
+  try {
+    if (!sellerId) return false;
+    const { is_store_active, is_map_active, is_product_active, existingMedia } = settings || {};
+
+    // 1. Attempt via RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_set_seller_store_settings', {
+        p_seller_id: sellerId,
+        p_store_active: is_store_active !== false,
+        p_map_active: is_map_active !== false,
+        p_product_active: is_product_active !== false,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Direct profiles table update fallback
+    const updatedMedia = embedStoreSettings(existingMedia || [], {
+      is_store_active: is_store_active !== false,
+      is_map_active: is_map_active !== false,
+      is_product_active: is_product_active !== false,
+    });
+
+    const { error: profileErr } = await supabase
+      .from('profiles')
+      .update({ media_urls: updatedMedia })
+      .eq('id', sellerId);
+
+    if (profileErr) {
+      console.warn('Direct profile update notice:', profileErr.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception in setSellerStoreActiveStatus:', err);
+    return false;
+  }
+}
+
+/**
+ * Global toggle for all stores and maps across the platform
+ */
+export async function setAllStoresActiveStatus(isActive, sellersList = []) {
+  try {
+    // 1. Try global RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_global_toggle_stores', {
+        p_is_active: isActive === true,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Fallback: Iterate and update each profile
+    let listToUpdate = sellersList;
+    if (!listToUpdate || listToUpdate.length === 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, media_urls');
+      listToUpdate = profs || [];
+    }
+
+    for (const s of listToUpdate) {
+      const updatedMedia = embedStoreSettings(s.media_urls || [], {
+        is_store_active: isActive === true,
+        is_map_active: isActive === true,
+        is_product_active: s.is_product_active !== false,
+      });
+      await supabase
+        .from('profiles')
+        .update({ media_urls: updatedMedia })
+        .eq('id', s.id);
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception in setAllStoresActiveStatus:', err);
     return false;
   }
 }
@@ -1837,7 +1936,7 @@ export function isUserAdminOrSuperadmin(profile, user) {
 
 /**
  * Helper to parse store settings from media_urls or object.
- * By default, sellers are INACTIVE (false) for map and store directory until explicitly activated by admin/superadmin.
+ * By default, if no store_settings object is stored yet, default to ACTIVE (true) so stores are visible.
  */
 export function extractStoreSettings(mediaUrls) {
   let list = [];
@@ -1850,11 +1949,18 @@ export function extractStoreSettings(mediaUrls) {
   } else if (Array.isArray(mediaUrls)) {
     list = mediaUrls;
   }
-  const settingsItem = list.find((m) => m && m.type === 'store_settings');
+  const settingsItem = (list || []).find((m) => m && m.type === 'store_settings');
+  if (!settingsItem) {
+    return {
+      is_store_active: true,
+      is_map_active: true,
+      is_product_active: true,
+    };
+  }
   return {
-    is_store_active: settingsItem ? settingsItem.store_active === true : false,
-    is_map_active: settingsItem ? settingsItem.map_active === true : false,
-    is_product_active: settingsItem ? settingsItem.product_active === true : false,
+    is_store_active: settingsItem.store_active !== false,
+    is_map_active: settingsItem.map_active !== false,
+    is_product_active: settingsItem.product_active !== false,
   };
 }
 
@@ -1877,11 +1983,12 @@ export function embedStoreSettings(existingMediaList, storeSettings) {
   );
   cleanMedia.push({
     type: 'store_settings',
-    store_active: storeSettings?.is_store_active === true,
-    map_active: storeSettings?.is_map_active === true,
-    product_active: storeSettings?.is_product_active === true,
+    store_active: storeSettings?.is_store_active !== false,
+    map_active: storeSettings?.is_map_active !== false,
+    product_active: storeSettings?.is_product_active !== false,
     updated_at: new Date().toISOString(),
   });
   return cleanMedia;
 }
+
 

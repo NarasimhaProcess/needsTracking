@@ -23,6 +23,8 @@ import {
   uploadProfileMedia,
   setSellerProductsActiveStatus,
   setAllProductsActiveStatus,
+  setSellerStoreActiveStatus,
+  setAllStoresActiveStatus,
   extractStoreSettings,
   embedStoreSettings,
 } from '../services/supabase';
@@ -498,15 +500,12 @@ const ProfileScreen = ({ navigation }) => {
     );
     try {
       const targetSeller = adminSellersList.find((s) => s.id === sellerId);
-      const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
+      await setSellerStoreActiveStatus(sellerId, {
         is_store_active: newVal === true,
         is_map_active: targetSeller?.is_map_active === true,
         is_product_active: targetSeller?.is_product_active === true,
+        existingMedia: targetSeller?.media_urls,
       });
-      await supabase
-        .from('profiles')
-        .update({ media_urls: updatedMedia })
-        .eq('id', sellerId);
       showAlert(
         'Admin Action',
         `Store status for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active (Open)' : 'Inactive (Closed)'}.`
@@ -528,15 +527,12 @@ const ProfileScreen = ({ navigation }) => {
     try {
       await setSellerProductsActiveStatus(sellerId, newVal);
       const targetSeller = adminSellersList.find((s) => s.id === sellerId);
-      const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
+      await setSellerStoreActiveStatus(sellerId, {
         is_store_active: targetSeller?.is_store_active === true,
         is_map_active: targetSeller?.is_map_active === true,
         is_product_active: newVal === true,
+        existingMedia: targetSeller?.media_urls,
       });
-      await supabase
-        .from('profiles')
-        .update({ media_urls: updatedMedia })
-        .eq('id', sellerId);
       showAlert(
         'Admin Action',
         `All products for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Active' : 'Inactive'}.`
@@ -553,15 +549,12 @@ const ProfileScreen = ({ navigation }) => {
     );
     try {
       const targetSeller = adminSellersList.find((s) => s.id === sellerId);
-      const updatedMedia = embedStoreSettings(targetSeller?.media_urls || [], {
+      await setSellerStoreActiveStatus(sellerId, {
         is_store_active: targetSeller?.is_store_active === true,
         is_map_active: newVal === true,
         is_product_active: targetSeller?.is_product_active === true,
+        existingMedia: targetSeller?.media_urls,
       });
-      await supabase
-        .from('profiles')
-        .update({ media_urls: updatedMedia })
-        .eq('id', sellerId);
       showAlert(
         'Admin Action',
         `Map visibility for "${targetSeller?.full_name || 'Seller'}" set to ${newVal ? 'Shown on Map' : 'Hidden from Map'}.`
@@ -578,17 +571,7 @@ const ProfileScreen = ({ navigation }) => {
       prev.map((s) => ({ ...s, is_store_active: newVal === true, is_map_active: newVal === true }))
     );
     try {
-      for (const s of adminSellersList) {
-        const updatedMedia = embedStoreSettings(s.media_urls || [], {
-          is_store_active: newVal === true,
-          is_map_active: newVal === true,
-          is_product_active: s.is_product_active === true,
-        });
-        await supabase
-          .from('profiles')
-          .update({ media_urls: updatedMedia })
-          .eq('id', s.id);
-      }
+      await setAllStoresActiveStatus(newVal === true, adminSellersList);
       showAlert(
         'Admin Action',
         `All stores across the platform set to ${newVal ? 'ACTIVE (Visible on Map & Directory)' : 'INACTIVE (Hidden)'}.`

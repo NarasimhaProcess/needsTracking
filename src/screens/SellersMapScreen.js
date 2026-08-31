@@ -197,14 +197,23 @@ export default function SellersMapScreen() {
         console.warn("Customers fetch notice:", custErr.message);
       }
 
-      // 4. Format profiles: Include sellers, admins, profiles with products, or all store owners
+      // 4. Format profiles: Include sellers, admins, superadmins, appadmins, profiles with products, or all store owners
       const allProfiles = profilesData || [];
       const formattedProfiles = allProfiles
         .filter((p) => {
           if (!p) return false;
           const r = (p.role || "").toLowerCase();
           const hasProducts = sellersWithProductsSet.has(p.id);
-          return r === "seller" || r === "admin" || r === "merchant" || hasProducts || (p.latitude && p.longitude);
+          return (
+            r === "seller" ||
+            r === "admin" ||
+            r === "superadmin" ||
+            r === "appadmin" ||
+            r === "app_admin" ||
+            r === "merchant" ||
+            hasProducts ||
+            (p.latitude && p.longitude)
+          );
         })
         .map((p, index) => {
           const hasCoords = p.latitude != null && p.longitude != null && !isNaN(Number(p.latitude));
@@ -241,7 +250,7 @@ export default function SellersMapScreen() {
 
           const storeSettings = extractStoreSettings(p.media_urls);
           const isStoreActive = storeSettings.is_store_active === true;
-          const isMapActive = storeSettings.is_map_active === true;
+          const isMapActive = storeSettings.is_map_active === true || (isStoreActive && storeSettings.is_map_active !== false);
 
           return {
             id: p.id,
@@ -448,13 +457,11 @@ export default function SellersMapScreen() {
 
   // Keep map synchronized whenever mapActiveSellers or userLocation updates
   useEffect(() => {
-    if (mapActiveSellers.length > 0 || userLocation) {
-      sendMapMessage({
-        type: "UPDATE_DATA",
-        sellers: mapActiveSellers,
-        userLocation: userLocation,
-      });
-    }
+    sendMapMessage({
+      type: "UPDATE_DATA",
+      sellers: mapActiveSellers,
+      userLocation: userLocation,
+    });
   }, [mapActiveSellers, userLocation, sendMapMessage]);
 
   // Filtered sellers for Directory List (strictly store-active sellers by default)
