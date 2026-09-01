@@ -160,128 +160,135 @@ const ProductDetailScreen = ({ navigation, route }) => {
   const mediaList = (product.product_media || []).filter(m => m && (m.media_url || m.uri));
 
   return (
-    <ScrollView style={styles.container}>
-      {mediaList.length > 0 ? (
-        <Swiper style={styles.swiper} showsButtons={mediaList.length > 1} loop={mediaList.length > 1}>
-          {mediaList.map((media, index) => {
-            const mediaUrl = media.media_url || media.uri;
-            const isImage = isImageMedia(media);
-            return (
-              <View key={media.id || `media-${index}`} style={styles.slide}>
-                <TouchableOpacity
-                  onPress={() => {
-                    const imageUrls = mediaList
-                      .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                      .map(m => ({ url: m.media_url || m.uri }));
-                    if (imageUrls.length > 0) {
-                      setImages(imageUrls);
-                      setIsModalVisible(true);
-                    }
-                  }}
-                  style={styles.mediaContainer}
-                  activeOpacity={0.9}
-                >
-                  {isImage ? (
-                    <Image
-                      source={{ uri: mediaUrl }}
-                      style={styles.media}
-                      resizeMode="contain"
-                    />
-                  ) : (
-                    <Video
-                      source={{ uri: mediaUrl }}
-                      style={styles.media}
-                      useNativeControls
-                      resizeMode="contain"
-                    />
-                  )}
-                  {isImage && (
-                    <TouchableOpacity
-                      style={styles.zoomIcon}
-                      onPress={() => {
-                        const imageUrls = mediaList
-                          .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                          .map(m => ({ url: m.media_url || m.uri }));
-                        if (imageUrls.length > 0) {
-                          setImages(imageUrls);
-                          setIsModalVisible(true);
-                        }
-                      }}
-                    >
-                      <MaterialIcons name="zoom-out-map" size={24} color="white" />
-                    </TouchableOpacity>
-                  )}
-                </TouchableOpacity>
+    <View style={styles.container}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+      >
+        {mediaList.length > 0 ? (
+          <Swiper style={styles.swiper} showsButtons={mediaList.length > 1} loop={mediaList.length > 1}>
+            {mediaList.map((media, index) => {
+              const mediaUrl = media.media_url || media.uri;
+              const isImage = isImageMedia(media);
+              return (
+                <View key={media.id || `media-${index}`} style={styles.slide}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const imageUrls = mediaList
+                        .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+                        .map(m => ({ url: m.media_url || m.uri }));
+                      if (imageUrls.length > 0) {
+                        setImages(imageUrls);
+                        setIsModalVisible(true);
+                      }
+                    }}
+                    style={styles.mediaContainer}
+                    activeOpacity={0.9}
+                  >
+                    {isImage ? (
+                      <Image
+                        source={{ uri: mediaUrl }}
+                        style={styles.media}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Video
+                        source={{ uri: mediaUrl }}
+                        style={styles.media}
+                        useNativeControls
+                        resizeMode="contain"
+                      />
+                    )}
+                    {isImage && (
+                      <TouchableOpacity
+                        style={styles.zoomIcon}
+                        onPress={() => {
+                          const imageUrls = mediaList
+                            .filter(m => isImageMedia(m) && (m.media_url || m.uri))
+                            .map(m => ({ url: m.media_url || m.uri }));
+                          if (imageUrls.length > 0) {
+                            setImages(imageUrls);
+                            setIsModalVisible(true);
+                          }
+                        }}
+                      >
+                        <MaterialIcons name="zoom-out-map" size={24} color="white" />
+                      </TouchableOpacity>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </Swiper>
+        ) : (
+          <View style={styles.placeholderBanner}>
+            <Icon name="shopping-bag" size={64} color="#94a3b8" />
+            <Text style={styles.placeholderText}>{product.product_name}</Text>
+          </View>
+        )}
+
+        <View style={styles.detailsContainer}>
+          <Text style={styles.productName}>{product.product_name}</Text>
+          <Text style={styles.productPrice}>₹{product.amount}</Text>
+
+          {(product.product_variants || []).map((variant) => (
+            <View key={variant.id} style={styles.variantContainer}>
+              <Text style={styles.variantName}>{variant.name}</Text>
+              <View style={styles.optionsContainer}>
+                {(variant.variant_options || []).map((option) => (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[
+                      styles.optionButton,
+                      selectedVariants[variant.name] === option.value && styles.selectedOption,
+                    ]}
+                    onPress={() => handleVariantSelect(variant.name, option.value)}
+                  >
+                    <Text>{option.value}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-            );
-          })}
-        </Swiper>
-      ) : (
-        <View style={styles.placeholderBanner}>
-          <Icon name="shopping-bag" size={64} color="#94a3b8" />
-          <Text style={styles.placeholderText}>{product.product_name}</Text>
-        </View>
-      )}
+            </View>
+          ))}
 
-      <View style={styles.detailsContainer}>
-        <Text style={styles.productName}>{product.product_name}</Text>
-        <Text style={styles.productPrice}>₹{product.amount}</Text>
-
-        {(product.product_variants || []).map((variant) => (
-          <View key={variant.id} style={styles.variantContainer}>
-            <Text style={styles.variantName}>{variant.name}</Text>
-            <View style={styles.optionsContainer}>
-              {(variant.variant_options || []).map((option) => (
-                <TouchableOpacity
-                  key={option.id}
-                  style={[
-                    styles.optionButton,
-                    selectedVariants[variant.name] === option.value && styles.selectedOption,
-                  ]}
-                  onPress={() => handleVariantSelect(variant.name, option.value)}
-                >
-                  <Text>{option.value}</Text>
-                </TouchableOpacity>
-              ))}
+          {/* Quantity selector */}
+          <View style={styles.quantitySelector}>
+            <Text style={styles.quantityLabel}>Quantity:</Text>
+            <View style={styles.quantityControls}>
+              <TouchableOpacity 
+                onPress={() => setQuantity(Math.max(1, quantity - 1))}
+                disabled={quantity <= 1}
+                style={{ padding: 4 }}
+              >
+                <Icon name="minus-circle" size={30} color={quantity <= 1 ? '#ccc' : '#E53935'} />
+              </TouchableOpacity>
+              <Text style={styles.quantityText}>{quantity}</Text>
+              <TouchableOpacity 
+                onPress={() => setQuantity(quantity + 1)}
+                style={{ padding: 4 }}
+              >
+                <Icon name="plus-circle" size={30} color="#43A047" />
+              </TouchableOpacity>
             </View>
           </View>
-        ))}
 
-        {/* Quantity selector */}
-        <View style={styles.quantitySelector}>
-          <Text style={styles.quantityLabel}>Quantity:</Text>
-          <View style={styles.quantityControls}>
-            <TouchableOpacity 
-              onPress={() => setQuantity(Math.max(1, quantity - 1))}
-              disabled={quantity <= 1}
-              style={{ padding: 4 }}
-            >
-              <Icon name="minus-circle" size={30} color={quantity <= 1 ? '#ccc' : '#E53935'} />
-            </TouchableOpacity>
-            <Text style={styles.quantityText}>{quantity}</Text>
-            <TouchableOpacity 
-              onPress={() => setQuantity(quantity + 1)}
-              style={{ padding: 4 }}
-            >
-              <Icon name="plus-circle" size={30} color="#43A047" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.addToCartButton} onPress={handleAddToCart}>
+            <Icon name="shopping-cart" size={20} color="#fff" style={{ marginRight: 10 }} />
+            <Text style={styles.addToCartButtonText}>Add to Cart</Text>
+          </TouchableOpacity>
         </View>
+      </ScrollView>
 
-        <TouchableOpacity style={styles.addToCartButton} onPress={handleAddToCart}>
-          <Icon name="shopping-cart" size={20} color="#fff" style={{ marginRight: 10 }} />
-          <Text style={styles.addToCartButtonText}>Add to Cart</Text>
-        </TouchableOpacity>
-      </View>
-
-      <Modal visible={isModalVisible} transparent={true}>
+      <Modal visible={isModalVisible} transparent={true} onRequestClose={() => setIsModalVisible(false)}>
         <ImageViewer
           imageUrls={images}
           onCancel={() => setIsModalVisible(false)}
           enableSwipeDown
         />
       </Modal>
-    </ScrollView>
+    </View>
   );
 };
 
@@ -289,6 +296,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 24,
   },
   swiper: {
     height: 300,

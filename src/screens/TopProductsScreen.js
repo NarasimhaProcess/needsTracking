@@ -283,7 +283,12 @@ const TopProductsScreen = ({ navigation, route }) => {
               >
                 <Icon name="times-circle" size={30} color="#333" />
               </TouchableOpacity>
-              <ScrollView>
+              <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+              >
                 {modalMediaList.length > 0 ? (
                   <Swiper style={styles.swiper} showsButtons={modalMediaList.length > 1} loop={modalMediaList.length > 1}>
                     {modalMediaList.map((media, index) => {
@@ -356,11 +361,11 @@ const TopProductsScreen = ({ navigation, route }) => {
                     );
                   })()}
 
-                  {selectedProduct.product_variants.map((variant) => (
+                  {selectedProduct.product_variants && selectedProduct.product_variants.map((variant) => (
                     <View key={variant.id} style={styles.variantContainer}>
                       <Text style={styles.variantName}>{variant.name}</Text>
                       <View style={styles.optionsContainer}>
-                        {variant.variant_options.map((option) => (
+                        {variant.variant_options && variant.variant_options.map((option) => (
                           <TouchableOpacity
                             key={option.id}
                             style={[
@@ -369,38 +374,40 @@ const TopProductsScreen = ({ navigation, route }) => {
                             ]}
                             onPress={() => handleVariantSelect(variant.name, option.value)}
                           >
-                            <Text>{option.value}</Text>
+                            <Text style={selectedVariants[variant.name] === option.value ? { color: '#fff', fontWeight: 'bold' } : {}}>{option.value}</Text>
                           </TouchableOpacity>
                         ))}
                       </View>
                     </View>
                   ))}
-
-                  {/* Quantity selector for adding to cart */}
-                  <View style={styles.quantitySelector}>
-                    <Text style={styles.quantityLabel}>Quantity:</Text>
-                    <TouchableOpacity 
-                      onPress={() => setQuantity(Math.max(1, quantity - 1))}
-                      disabled={quantity <= 1}
-                      style={{ padding: 4 }}
-                    >
-                      <Icon name="minus-circle" size={30} color={quantity <= 1 ? '#ccc' : '#E53935'} />
-                    </TouchableOpacity>
-                    <Text style={styles.quantityText}>{quantity}</Text>
-                    <TouchableOpacity 
-                      onPress={() => setQuantity(quantity + 1)}
-                      style={{ padding: 4 }}
-                    >
-                      <Icon name="plus-circle" size={30} color="#43A047" />
-                    </TouchableOpacity>
-                  </View>
-                  
-                  <TouchableOpacity style={styles.modalAddToCartButton} onPress={handleAddToCart}>
-                    <Icon name="shopping-cart" size={18} color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.modalAddToCartButtonText}>Add to Cart</Text>
-                  </TouchableOpacity>
                 </View>
               </ScrollView>
+
+              {/* Sticky Footer for Quantity and Add to Cart */}
+              <View style={styles.productModalFooter}>
+                <View style={styles.quantitySelector}>
+                  <Text style={styles.quantityLabel}>Qty:</Text>
+                  <TouchableOpacity 
+                    onPress={() => setQuantity(Math.max(1, quantity - 1))}
+                    disabled={quantity <= 1}
+                    style={{ padding: 4 }}
+                  >
+                    <Icon name="minus-circle" size={26} color={quantity <= 1 ? '#ccc' : '#E53935'} />
+                  </TouchableOpacity>
+                  <Text style={styles.quantityText}>{quantity}</Text>
+                  <TouchableOpacity 
+                    onPress={() => setQuantity(quantity + 1)}
+                    style={{ padding: 4 }}
+                  >
+                    <Icon name="plus-circle" size={26} color="#43A047" />
+                  </TouchableOpacity>
+                </View>
+                
+                <TouchableOpacity style={styles.modalAddToCartButton} onPress={handleAddToCart}>
+                  <Icon name="shopping-cart" size={18} color="#fff" style={{ marginRight: 8 }} />
+                  <Text style={styles.modalAddToCartButtonText}>Add to Cart</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </Modal>
@@ -424,19 +431,33 @@ const TopProductsScreen = ({ navigation, route }) => {
               <Icon name="times-circle" size={30} color="#333" />
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Your Cart</Text>
-            {cart && cart.cart_items.length > 0 ? (
+            {cart && cart.cart_items && cart.cart_items.length > 0 ? (
               <FlatList
+                style={{ flex: 1, width: '100%' }}
+                contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
+                showsVerticalScrollIndicator={true}
                 data={cart.cart_items}
                 renderItem={renderCartItem}
                 keyExtractor={(item) => item.id.toString()}
               />
             ) : (
-              <Text style={styles.emptyCartText}>Your cart is empty.</Text>
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <Icon name="shopping-cart" size={48} color="#cbd5e1" />
+                <Text style={styles.emptyCartText}>Your cart is empty.</Text>
+              </View>
             )}
-            <Button title="Checkout" onPress={() => {
-              setIsCartModalVisible(false);
-              navigation.navigate('Checkout', { cart: cart, customerId: customerId });
-            }} />
+            <View style={styles.cartFooterContainer}>
+              <TouchableOpacity
+                style={styles.checkoutButton}
+                onPress={() => {
+                  setIsCartModalVisible(false);
+                  navigation.navigate('Checkout', { cart: cart, customerId: customerId });
+                }}
+              >
+                <Text style={styles.checkoutButtonText}>Proceed to Checkout</Text>
+                <Icon name="arrow-right" size={16} color="#ffffff" style={{ marginLeft: 8 }} />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -486,15 +507,32 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: 'center',
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalContent: {
     backgroundColor: 'white',
     padding: 20,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: '80%',
+    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    width: '100%',
+    maxWidth: 650,
+    height: Platform.OS === 'web' ? '88vh' : '88%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '88%',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
   },
   modalTitle: {
     fontSize: 20,
@@ -591,55 +629,75 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
     borderColor: '#007AFF',
   },
+  productModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    gap: 12,
+  },
   quantitySelector: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 20,
-  },
-  mediaContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardAddButton: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#f1f5f9',
     borderRadius: 8,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 5,
-    marginHorizontal: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#C8E6C9',
-  },
-  cardAddButtonText: {
-    color: '#2E7D32',
-    fontWeight: 'bold',
-    fontSize: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   quantityLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginRight: 15,
-    color: '#333',
+    fontSize: 14,
+    fontWeight: '700',
+    marginRight: 6,
+    color: '#475569',
   },
   modalAddToCartButton: {
+    flex: 1,
     backgroundColor: '#43A047',
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 14,
     borderRadius: 10,
-    marginTop: 15,
     elevation: 2,
+    shadowColor: '#43A047',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   modalAddToCartButtonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
+  },
+  cartFooterContainer: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    marginTop: 8,
+  },
+  checkoutButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  checkoutButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
   },
   zoomIcon: {
     position: 'absolute',

@@ -720,46 +720,71 @@ const CustomerDamageScreen = ({ navigation, route }) => {
       {/* New Damage Report Modal */}
       <Modal
         animationType="slide"
-        transparent={false}
+        transparent={true}
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalView}>
-          <ScrollView contentContainerStyle={styles.scrollViewContent}>
-            <Text style={styles.modalText}>New Damage Report</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Describe the damage in detail..."
-              placeholderTextColor="#999"
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              numberOfLines={4}
-            />
-
-            <View style={styles.fileSelectionContainer}>
-              <TouchableOpacity style={styles.fileSelectionButton} onPress={pickFiles}>
-                <Icon name="folder-open" size={16} color="#fff" style={{ marginRight: 6 }} />
-                <Text style={styles.textStyle}>Gallery</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.fileSelectionButton} onPress={takePhoto}>
-                <Icon name="camera" size={16} color="#fff" style={{ marginRight: 6 }} />
-                <Text style={styles.textStyle}>Take Photo</Text>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalHeaderTitle}>New Damage Report</Text>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setModalVisible(false)}
+              >
+                <Icon name="times" size={18} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            {files.length > 0 && (
-              <FlatList
-                data={files}
-                keyExtractor={(file, index) => `${file.uri}-${index}`}
-                renderItem={renderFilePreview}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ maxHeight: 120, marginVertical: 10 }}
+            <ScrollView
+              style={styles.modalScrollView}
+              contentContainerStyle={styles.scrollViewContent}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.fieldLabel}>Damage Description</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Describe the damage in detail..."
+                placeholderTextColor="#999"
+                value={description}
+                onChangeText={setDescription}
+                multiline
+                numberOfLines={4}
               />
-            )}
 
-            <View style={styles.buttonContainer}>
+              <Text style={styles.fieldLabel}>Attach Photos or Videos</Text>
+              <View style={styles.fileSelectionContainer}>
+                <TouchableOpacity style={styles.fileSelectionButton} onPress={pickFiles}>
+                  <Icon name="folder-open" size={16} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.textStyle}>Gallery</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.fileSelectionButton} onPress={takePhoto}>
+                  <Icon name="camera" size={16} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.textStyle}>Take Photo</Text>
+                </TouchableOpacity>
+              </View>
+
+              {files.length > 0 && (
+                <FlatList
+                  data={files}
+                  keyExtractor={(file, index) => `${file.uri}-${index}`}
+                  renderItem={renderFilePreview}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ maxHeight: 120, marginVertical: 10 }}
+                />
+              )}
+            </ScrollView>
+
+            <View style={styles.stickyFooterContainer}>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonClose]}
+                onPress={() => setModalVisible(false)}
+                disabled={loading}
+              >
+                <Text style={styles.buttonCloseText}>Cancel</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.button, styles.buttonSubmit]}
                 onPress={handleSubmit}
@@ -771,15 +796,8 @@ const CustomerDamageScreen = ({ navigation, route }) => {
                   <Text style={styles.textStyle}>Submit Report</Text>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.button, styles.buttonClose]}
-                onPress={() => setModalVisible(false)}
-                disabled={loading}
-              >
-                <Text style={styles.textStyle}>Cancel</Text>
-              </TouchableOpacity>
             </View>
-          </ScrollView>
+          </View>
         </View>
       </Modal>
 
@@ -1126,14 +1144,84 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: 'center',
+    padding: Platform.OS === 'web' ? 16 : 0,
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderRadius: Platform.OS === 'web' ? 20 : 0,
+    width: '100%',
+    maxWidth: 640,
+    height: Platform.OS === 'web' ? '88vh' : '90%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '90%',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    backgroundColor: '#fff',
+  },
+  modalHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  modalCloseBtn: {
+    padding: 6,
+  },
+  modalScrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  scrollViewContent: {
+    padding: 20,
+    flexGrow: 1,
+    paddingBottom: 24,
+  },
+  fieldLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+    marginTop: 6,
+  },
+  stickyFooterContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#fff',
+  },
+  buttonCloseText: {
+    color: '#475569',
+    fontWeight: '700',
+    fontSize: 15,
+  },
   modalView: {
     flex: 1,
     backgroundColor: '#fff',
     paddingTop: Platform.OS === 'ios' ? 44 : 20,
-  },
-  scrollViewContent: {
-    padding: 20,
-    alignItems: 'center',
   },
   modalText: {
     fontSize: 22,
@@ -1282,10 +1370,12 @@ const styles = StyleSheet.create({
   },
   optionModalCard: {
     width: width * 0.85,
+    maxWidth: 420,
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
+    maxHeight: '85%',
   },
   optionModalTitle: {
     fontSize: 18,

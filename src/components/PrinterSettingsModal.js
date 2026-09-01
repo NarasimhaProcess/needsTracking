@@ -133,7 +133,12 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
               <Text style={{ marginTop: 10, color: '#666' }}>Loading settings...</Text>
             </View>
           ) : (
-            <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.scrollView}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+            >
               {/* Connected Device Status Card */}
               <View style={styles.statusCard}>
                 <View style={styles.statusHeader}>
@@ -351,9 +356,12 @@ const styles = StyleSheet.create({
     borderRadius: Platform.OS === 'web' ? 16 : 0,
     width: '100%',
     maxWidth: 600,
+    height: Platform.OS === 'web' ? '88vh' : '90%',
     maxHeight: Platform.OS === 'web' ? '88vh' : '90%',
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingBottom: Platform.OS === 'ios' ? 16 : 8,
     overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
   },
   header: {
     flexDirection: 'row',
@@ -380,8 +388,14 @@ const styles = StyleSheet.create({
     padding: 40,
     alignItems: 'center',
   },
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
   scrollContent: {
     padding: 20,
+    flexGrow: 1,
+    paddingBottom: 30,
   },
   statusCard: {
     backgroundColor: '#F8FAFC',
