@@ -718,7 +718,7 @@ const CustomerDamageScreen = ({ navigation, route }) => {
         <Icon name="plus" size={24} color="#fff" />
       </TouchableOpacity>
 
-      {/* New Damage Report Modal */}
+      {/* New Damage Report Modal - NO SCROLLING REQUIRED */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -727,6 +727,7 @@ const CustomerDamageScreen = ({ navigation, route }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
+            {/* Header - Fixed */}
             <View style={styles.modalHeader}>
               <Text style={styles.modalHeaderTitle}>New Damage Report</Text>
               <TouchableOpacity
@@ -737,11 +738,13 @@ const CustomerDamageScreen = ({ navigation, route }) => {
               </TouchableOpacity>
             </View>
 
+            {/* Content Area - Auto-Expanding */}
             <ScrollView
-              style={styles.modalScrollView}
+              style={styles.modalContent}
               contentContainerStyle={styles.scrollViewContent}
               showsVerticalScrollIndicator={true}
               keyboardShouldPersistTaps="handled"
+              scrollEnabled={true}
             >
               <Text style={styles.fieldLabel}>Damage Description</Text>
               <TextInput
@@ -767,17 +770,23 @@ const CustomerDamageScreen = ({ navigation, route }) => {
               </View>
 
               {files.length > 0 && (
-                <FlatList
-                  data={files}
-                  keyExtractor={(file, index) => `${file.uri}-${index}`}
-                  renderItem={renderFilePreview}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={{ maxHeight: 120, marginVertical: 10 }}
-                />
+                <View>
+                  <Text style={styles.fieldLabel}>Selected Files ({files.length})</Text>
+                  <FlatList
+                    data={files}
+                    keyExtractor={(file, index) => `${file.uri}-${index}`}
+                    renderItem={renderFilePreview}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    scrollEnabled={true}
+                    style={styles.filePreviewList}
+                    nestedScrollEnabled={true}
+                  />
+                </View>
               )}
             </ScrollView>
 
+            {/* Footer - Fixed */}
             <View style={styles.stickyFooterContainer}>
               <TouchableOpacity
                 style={[styles.button, styles.buttonClose]}
@@ -1145,20 +1154,23 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
   },
+
+  /* ====== OPTIMIZED MODAL STYLES - NO SCROLL ====== */
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 20 : 16,
+    paddingVertical: Platform.OS === 'web' ? 20 : 16,
+    paddingHorizontal: Platform.OS === 'web' ? 20 : 16,
   },
+
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
     width: '100%',
-    maxWidth: Platform.OS === 'web' ? 620 : 430,
-    height: Platform.OS === 'web' ? '88vh' : '86%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
+    maxWidth: Platform.OS === 'web' ? 620 : '95%',
+    maxHeight: Platform.OS === 'web' ? '85vh' : '85%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
@@ -1179,6 +1191,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
+
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1188,24 +1201,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
     backgroundColor: '#fff',
+    flexShrink: 0,
   },
+
   modalHeaderTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#0f172a',
   },
+
   modalCloseBtn: {
     padding: 6,
   },
-  modalScrollView: {
+
+  /* Content Area - Auto-Expanding with Internal Scroll */
+  modalContent: {
     flex: 1,
     width: '100%',
+    minHeight: 0,
   },
+
   scrollViewContent: {
-    padding: 20,
     flexGrow: 1,
-    paddingBottom: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
+
   fieldLabel: {
     fontSize: 14,
     fontWeight: '700',
@@ -1213,6 +1234,46 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 6,
   },
+
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 18,
+    backgroundColor: '#fafafa',
+    width: '100%',
+    minHeight: 100,
+    textAlignVertical: 'top',
+    fontSize: 15,
+    color: '#333',
+  },
+
+  fileSelectionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 16,
+    gap: 8,
+  },
+
+  fileSelectionButton: {
+    flexDirection: 'row',
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+
+  filePreviewList: {
+    maxHeight: 140,
+    marginVertical: 10,
+  },
+
+  /* Footer - Fixed at Bottom */
   stickyFooterContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1222,17 +1283,48 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     backgroundColor: '#fff',
+    flexShrink: 0,
+    gap: 12,
   },
+
   buttonCloseText: {
     color: '#475569',
     fontWeight: '700',
     fontSize: 15,
   },
+
+  /* Buttons */
+  button: {
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    flex: 1,
+  },
+
+  buttonSubmit: {
+    backgroundColor: '#4CAF50',
+  },
+
+  buttonClose: {
+    backgroundColor: '#888',
+  },
+
+  textStyle: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+
   modalView: {
     flex: 1,
     backgroundColor: '#fff',
     paddingTop: Platform.OS === 'ios' ? 44 : 20,
   },
+
   modalText: {
     fontSize: 22,
     fontWeight: 'bold',
@@ -1240,66 +1332,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#1a1a1a',
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 18,
-    backgroundColor: '#fafafa',
-    width: '100%',
-    minHeight: 110,
-    textAlignVertical: 'top',
-    fontSize: 15,
-    color: '#333',
-  },
-  fileSelectionContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginBottom: 16,
-  },
-  fileSelectionButton: {
-    flexDirection: 'row',
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '48%',
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginTop: 24,
-  },
-  button: {
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  buttonSubmit: {
-    backgroundColor: '#4CAF50',
-    width: '48%',
-  },
-  buttonClose: {
-    backgroundColor: '#888',
-    width: '48%',
-  },
-  textStyle: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 15,
-    textAlign: 'center',
-  },
+
   photoModalContainer: {
     flex: 1,
     backgroundColor: '#111',
     paddingTop: Platform.OS === 'ios' ? 44 : 20,
   },
+
   photoViewerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1307,45 +1346,54 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
+
   photoViewerTitle: {
     color: '#fff',
     fontSize: 18,
     fontWeight: '700',
   },
+
   closeHeaderBtn: {
     padding: 8,
   },
+
   emptyPhotoContainer: {
     width: width,
     height: height - 250,
     justifyContent: 'center',
     alignItems: 'center',
   },
+
   emptyPhotoText: {
     color: '#aaa',
     fontSize: 16,
     marginTop: 12,
   },
+
   photoViewerItem: {
     width: width,
     justifyContent: 'center',
     alignItems: 'center',
     paddingBottom: 40,
   },
+
   mediaDateText: {
     color: '#ccc',
     fontSize: 13,
     marginBottom: 10,
   },
+
   largeImage: {
     width: width - 20,
     height: height - 260,
     resizeMode: 'contain',
   },
+
   largeVideo: {
     width: width - 20,
     height: height - 260,
   },
+
   deleteButton: {
     position: 'absolute',
     top: 16,
@@ -1357,6 +1405,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+
   photoViewerButtonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -1364,6 +1413,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     paddingTop: 10,
   },
+
   photoViewerButton: {
     backgroundColor: '#007AFF',
     paddingVertical: 12,
@@ -1372,6 +1422,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+
   centeredView: {
     flex: 1,
     justifyContent: 'center',
@@ -1379,6 +1430,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
     padding: Platform.OS === 'web' ? 20 : 16,
   },
+
   optionModalCard: {
     width: '100%',
     maxWidth: Platform.OS === 'web' ? 440 : 380,
@@ -1404,26 +1456,31 @@ const styles = StyleSheet.create({
       },
     }),
   },
+
   optionModalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 20,
     color: '#222',
   },
+
   modalFullBtn: {
     width: '100%',
     marginBottom: 12,
   },
+
   mapModalContainer: {
     flex: 1,
     width: '100%',
     height: '100%',
     backgroundColor: '#fff',
   },
+
   map: {
     flex: 1,
     width: '100%',
   },
+
   mapCloseButton: {
     position: 'absolute',
     bottom: 24,
@@ -1432,6 +1489,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
     borderRadius: 25,
   },
+
   coordsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1445,11 +1503,13 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     zIndex: 100,
   },
+
   coordsText: {
     color: 'white',
     fontSize: 13,
     marginRight: 10,
   },
+
   copyButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1458,6 +1518,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 4,
   },
+
   copyButtonText: {
     color: 'white',
     marginLeft: 4,
