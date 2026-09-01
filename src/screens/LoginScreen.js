@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -16,12 +15,16 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
 import { ActivityIndicator } from 'react-native';
+import { showAlert } from '../utils/alertUtils';
+import PreLoginFooter from '../components/PreLoginFooter';
+import PortalsMenuModal from '../components/PortalsMenuModal';
 
 export default function LoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
   const onAuthSuccess = route.params?.onAuthSuccess;
 
   const handleGoogleLogin = async () => {
@@ -34,10 +37,10 @@ export default function LoginScreen({ navigation, route }) {
         }
         navigation.dispatch(StackActions.replace('ProductTabs', { session: res.session, user: res.user }));
       } else if (res.error) {
-        Alert.alert('Google Sign-In Failed', res.error);
+        showAlert('Google Sign-In Failed', res.error);
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Google sign-in failed');
+      showAlert('Error', err.message || 'Google sign-in failed');
     } finally {
       setGoogleLoading(false);
     }
@@ -45,7 +48,7 @@ export default function LoginScreen({ navigation, route }) {
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showAlert('Error', 'Please fill in all fields');
       return;
     }
 
@@ -58,7 +61,7 @@ export default function LoginScreen({ navigation, route }) {
       });
 
       if (error) {
-        Alert.alert('Login Error', error.message);
+        showAlert('Login Error', error.message);
       } else {
         console.log('Login successful:', data.user);
 
@@ -69,7 +72,7 @@ export default function LoginScreen({ navigation, route }) {
         navigation.dispatch(StackActions.replace('ProductTabs', { session: data.session, user: data.user }));
       }
     } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred');
+      showAlert('Error', 'An unexpected error occurred');
       console.error('Login error:', error);
     } finally {
       setLoading(false);
@@ -78,16 +81,16 @@ export default function LoginScreen({ navigation, route }) {
 
   const handleForgotPassword = () => {
     if (!email) {
-      Alert.alert('Error', 'Please enter your email first');
+      showAlert('Error', 'Please enter your email first');
       return;
     }
 
     supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: getAuthRedirectUrl(),
     }).then(() => {
-      Alert.alert('Success', 'Password reset email sent. Please check your inbox.');
+      showAlert('Success', 'Password reset email sent. Please check your inbox.');
     }).catch((error) => {
-      Alert.alert('Error', error.message);
+      showAlert('Error', error.message);
     });
   };
 
@@ -96,94 +99,116 @@ export default function LoginScreen({ navigation, route }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <TouchableOpacity 
-        style={styles.closeButton} 
-        onPress={() => navigation.goBack()}
-      >
-        <Icon name="close" size={28} color="#000" />
-      </TouchableOpacity>
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <View style={styles.header}>
-          <Text style={styles.icon}>📍</Text>
-          <Text style={styles.title}>{Constants?.expoConfig?.extra?.ORG_NAME || process.env.EXPO_PUBLIC_ORG_NAME || 'NeedsTracker'}</Text>
-          <Text style={styles.subtitle}>Sign in to track your location</Text>
-        </View>
+      <View style={styles.topRightActions}>
+        <TouchableOpacity 
+          style={styles.actionIconButton} 
+          onPress={() => setIsMenuVisible(true)}
+          accessibilityLabel="Portals Menu"
+        >
+          <Icon name="ellipsis-horizontal" size={22} color="#1E293B" />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.actionIconButton} 
+          onPress={() => navigation.goBack()}
+        >
+          <Icon name="close" size={24} color="#1E293B" />
+        </TouchableOpacity>
+      </View>
 
-        <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+        <View style={styles.authCard}>
+          <View style={styles.header}>
+            <View style={styles.iconBox}>
+              <Text style={styles.icon}>🔐</Text>
+            </View>
+            <Text style={styles.title}>Welcome Back</Text>
+            <Text style={styles.subtitle}>Sign in to your account</Text>
           </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
+          <View style={styles.form}>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your email"
+                placeholderTextColor="#94A3B8"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
 
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading || googleLoading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? 'Signing In...' : 'Sign In'}
-            </Text>
-          </TouchableOpacity>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Password</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                placeholderTextColor="#94A3B8"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+              />
+            </View>
 
-          <View style={styles.dividerContainer}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.googleButton, googleLoading && styles.buttonDisabled]}
-            onPress={handleGoogleLogin}
-            disabled={loading || googleLoading}
-          >
-            {googleLoading ? (
-              <ActivityIndicator size="small" color="#4285F4" />
-            ) : (
-              <View style={styles.googleButtonContent}>
-                <FontAwesome name="google" size={20} color="#EA4335" style={{ marginRight: 10 }} />
-                <Text style={styles.googleButtonText}>Sign in with Google</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.forgotPassword}
-            onPress={handleForgotPassword}
-          >
-            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-          </TouchableOpacity>
-
-          <View style={styles.signupContainer}>
-            <Text style={styles.signupText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-              <Text style={styles.signupLink}>Sign Up</Text>
+            <TouchableOpacity
+              style={[styles.button, loading && styles.buttonDisabled]}
+              onPress={handleLogin}
+              disabled={loading || googleLoading}
+            >
+              <Text style={styles.buttonText}>
+                {loading ? 'Signing In...' : 'Sign In'}
+              </Text>
             </TouchableOpacity>
+
+            <View style={styles.dividerContainer}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>OR</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.googleButton, googleLoading && styles.buttonDisabled]}
+              onPress={handleGoogleLogin}
+              disabled={loading || googleLoading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator size="small" color="#4285F4" />
+              ) : (
+                <View style={styles.googleButtonContent}>
+                  <FontAwesome name="google" size={18} color="#EA4335" style={{ marginRight: 10 }} />
+                  <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.forgotPassword}
+              onPress={handleForgotPassword}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
+            <View style={styles.signupContainer}>
+              <Text style={styles.signupText}>Don't have an account? </Text>
+              <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
+                <Text style={styles.signupLink}>Sign Up</Text>
+              </TouchableOpacity>
+            </View>
           </View>
+
+          <PreLoginFooter containerStyle={{ marginTop: 16, paddingHorizontal: 0 }} />
         </View>
       </ScrollView>
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2025 {Constants?.expoConfig?.extra?.ORG_NAME || process.env.EXPO_PUBLIC_ORG_NAME || 'NeedsTracking'}. Version 1.0</Text>
-      </View>
+
+      {/* Portals & Pre-login 3-dots Menu Modal */}
+      <PortalsMenuModal
+        visible={isMenuVisible}
+        onClose={() => setIsMenuVisible(false)}
+        navigation={navigation}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -191,108 +216,158 @@ export default function LoginScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8FAFC',
   },
-  closeButton: {
+  topRightActions: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 60 : 40,
-    right: 20,
+    top: Platform.OS === 'ios' ? 56 : 36,
+    right: 18,
     zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  actionIconButton: {
     padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
+    alignItems: 'center',
+    padding: Platform.OS === 'web' ? 24 : 16,
+    paddingTop: Platform.OS === 'ios' ? 80 : 64,
+    paddingBottom: 40,
+  },
+  authCard: {
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 440 : 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.08,
+        shadowRadius: 20,
+      },
+      android: {
+        elevation: 4,
+      },
+      web: {
+        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+      },
+    }),
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 24,
+  },
+  iconBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
   },
   icon: {
-    fontSize: 48,
-    marginBottom: 16,
+    fontSize: 28,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    marginBottom: 8,
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#8E8E93',
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
   },
   form: {
     width: '100%',
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   label: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#1C1C1E',
-    marginBottom: 8,
+    color: '#334155',
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    backgroundColor: '#F2F2F7',
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    fontSize: 15,
+    backgroundColor: '#F8FAFC',
+    color: '#0F172A',
   },
   button: {
     backgroundColor: '#007AFF',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 8,
+    elevation: 2,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   buttonDisabled: {
-    backgroundColor: '#C7C7CC',
+    opacity: 0.6,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  forgotPassword: {
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  forgotPasswordText: {
-    color: '#007AFF',
     fontSize: 16,
+    fontWeight: '700',
   },
   dividerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 18,
+    marginVertical: 16,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E5E5EA',
+    backgroundColor: '#E2E8F0',
   },
   dividerText: {
     marginHorizontal: 12,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8E8E93',
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94A3B8',
   },
   googleButton: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 12,
-    padding: 15,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.04,
     shadowRadius: 2,
     elevation: 1,
   },
@@ -302,33 +377,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   googleButtonText: {
-    color: '#1C1C1E',
-    fontSize: 16,
+    color: '#1E293B',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  forgotPassword: {
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  forgotPasswordText: {
+    color: '#007AFF',
+    fontSize: 14,
     fontWeight: '600',
   },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 30,
+    marginTop: 20,
   },
   signupText: {
-    fontSize: 16,
-    color: '#8E8E93',
+    fontSize: 14,
+    color: '#64748B',
   },
   signupLink: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#007AFF',
-    fontWeight: '600',
-  },
-  footer: {
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E5EA',
-    backgroundColor: '#F2F2F7',
-  },
-  footerText: {
-    fontSize: 12,
-    color: '#8E8E93',
+    fontWeight: '700',
   },
 });

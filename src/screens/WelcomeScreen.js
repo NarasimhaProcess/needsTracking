@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,22 +6,25 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
+  ScrollView,
   Image,
   Dimensions,
   Platform,
-  Alert,
 } from 'react-native';
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../services/supabase';
 import { showAlert } from '../utils/alertUtils';
+import PreLoginFooter from '../components/PreLoginFooter';
+import PortalsMenuModal from '../components/PortalsMenuModal';
 
 const { width } = Dimensions.get('window');
 
 export default function WelcomeScreen() {
   const navigation = useNavigation();
   const { user, role } = useCart();
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
 
   // Role-based automatic redirection if logged in
   useEffect(() => {
@@ -68,6 +71,19 @@ export default function WelcomeScreen() {
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Top Header Bar with 3-dots button */}
+        <View style={styles.topHeaderBar}>
+          <View />
+          <TouchableOpacity
+            style={styles.menuDotsBtn}
+            onPress={() => setIsMenuVisible(true)}
+            activeOpacity={0.75}
+            accessibilityLabel="Open Portals Menu"
+          >
+            <Icon name="ellipsis-h" size={20} color="#1E293B" />
+          </TouchableOpacity>
+        </View>
+
         {/* Upper Brand / Logo Section */}
         <View style={styles.brandContainer}>
           <View style={styles.logoIconBox}>
@@ -161,6 +177,9 @@ export default function WelcomeScreen() {
           </View>
         </View>
 
+        {/* Pre-login Business Setup Footer */}
+        <PreLoginFooter containerStyle={{ marginTop: 20 }} />
+
         {/* Footer Info / Logout */}
         <View style={styles.footer}>
           {user ? (
@@ -178,6 +197,13 @@ export default function WelcomeScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Portals & Pre-login 3-dots Menu Modal */}
+      <PortalsMenuModal
+        visible={isMenuVisible}
+        onClose={() => setIsMenuVisible(false)}
+        navigation={navigation}
+      />
     </SafeAreaView>
   );
 }
@@ -186,6 +212,38 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  topHeaderBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 10 : 16,
+    paddingBottom: 4,
+  },
+  menuDotsBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      },
+      web: {
+        boxShadow: '0 2px 6px rgba(15, 23, 42, 0.06)',
+      },
+    }),
   },
   scrollView: {
     flex: 1,
@@ -199,7 +257,7 @@ const styles = StyleSheet.create({
   brandContainer: {
     alignItems: 'center',
     paddingHorizontal: 24,
-    marginTop: Platform.OS === 'ios' ? 24 : 36,
+    marginTop: 10,
   },
   logoIconBox: {
     width: 96,

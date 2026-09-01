@@ -1,21 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   FlatList,
   ActivityIndicator,
   Image,
   Modal,
+  ScrollView,
+  RefreshControl,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase, getProductsWithDetails, deleteProductMedia, deleteProduct } from '../services/supabase';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { showAlert } from '../utils/alertUtils';
-// import { Video } from 'expo-av'; // Temporarily commented out
-
 import ProductFormModal from '../components/ProductFormModal';
+import PreLoginFooter from '../components/PreLoginFooter';
+import PortalsMenuModal from '../components/PortalsMenuModal';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -29,72 +31,83 @@ const isImageMedia = (media) => {
 };
 
 const ProductScreen = ({ route, navigation }) => {
-  const { session: initialSession } = route?.params || {};
+  const { session: initialSession, userId: initialUserId } = route?.params || {};
   const [session, setSession] = useState(initialSession || null);
-  const [userId, setUserId] = useState(null);
-
-  useEffect(() => {
-    const initSession = async () => {
-      let currentSession = initialSession;
-      if (!currentSession) {
-        const { data: { session: activeSession } } = await supabase.auth.getSession();
-        currentSession = activeSession;
-        setSession(activeSession);
-      } else {
-        setSession(initialSession);
-      }
-
-      const user = currentSession?.user ? currentSession.user : currentSession;
-
-      if (!user) {
-        console.log('ProductScreen: User is missing.');
-        setUserId(null);
-        setProducts([]);
-        return;
-      }
-
-      const id = user.id;
-      setUserId(id);
-      console.log('ProductScreen: User ID set:', id);
-      fetchProducts(id);
-    };
-
-    initSession();
-  }, [initialSession]);
-  
+  const [userId, setUserId] = useState(initialUserId || null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [products, setProducts] = useState([]); // Stores fetched products
   const [showProductModal, setShowProductModal] = useState(false);
   const [productToEdit, setProductToEdit] = useState(null);
-  const [customerMediaUrl, setCustomerMediaUrl] = useState(null); // Renamed from customerBucketUrl
+  const [customerMediaUrl, setCustomerMediaUrl] = useState(null);
   const [showMediaViewer, setShowMediaViewer] = useState(false);
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
   const [allMediaForViewer, setAllMediaForViewer] = useState([]);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
 
-  // Define fetchProductsAndMediaUrl outside useEffect to ensure stable reference
-  const fetchProducts = async (currentUserId) => { // Accept userId as parameter
-    console.log('ProductScreen: fetchProducts called. Current userId:', currentUserId);
-    const user = session?.user ? session.user : session;
+  // Robust fetchProducts that accurately resolves current seller's user ID
+  const fetchProducts = useCallback(async (explicitUserId) => {
+    let activeUserId = explicitUserId || userId || initialUserId || route?.params?.userId;
 
-    if (!user || !currentUserId) { // Use currentUserId
-      console.log('ProductScreen: Skipping fetchProducts due to missing user or userId.');
+    if (!activeUserId) {
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (currentSession?.user?.id) {
+          activeUserId = currentSession.user.id;
+          setSession(currentSession);
+          setUserId(activeUserId);
+        } else {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user?.id) {
+            activeUserId = user.id;
+            setUserId(activeUserId);
+          }
+        }
+      } catch (authErr) {
+        console.warn('ProductScreen: Error retrieving active auth user:', authErr);
+      }
+    }
+
+    if (!activeUserId) {
+      console.log('ProductScreen: Skipping fetchProducts due to missing activeUserId.');
       setLoading(false);
+      setRefreshing(false);
       return;
     }
+
+    setUserId(activeUserId);
     setLoading(true);
     try {
-      const data = await getProductsWithDetails(currentUserId); // Use currentUserId
-      console.log('ProductScreen: Data received from getProductsWithDetails:', data);
+      console.log('ProductScreen: Fetching products for userId:', activeUserId);
+      const data = await getProductsWithDetails(activeUserId);
+      console.log('ProductScreen: Data received from getProductsWithDetails count:', data?.length || 0);
       if (data) {
         setProducts(data);
-        console.log('ProductScreen: products state after setProducts:', data);
       }
     } catch (error) {
       console.error("ProductScreen: Error in fetching products:", error.message);
       showAlert("Error", "An unexpected error occurred while fetching data.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }, [userId, initialUserId, route?.params?.userId]);
+
+  // Initial load
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
+  // Refresh whenever screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      fetchProducts();
+    }, [fetchProducts])
+  );
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchProducts();
   };
 
   
@@ -165,9 +178,14 @@ const ProductScreen = ({ route, navigation }) => {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.productsListTitle}>Your Products</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('ProductMapScreen', { userId })}>
-          <Icon name="map" size={24} color="#007AFF" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <TouchableOpacity onPress={() => navigation.navigate('ProductMapScreen', { userId })}>
+            <Icon name="map" size={22} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setIsMenuVisible(true)} accessibilityLabel="Portals Menu">
+            <Icon name="ellipsis-h" size={20} color="#1E293B" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
@@ -227,15 +245,38 @@ const ProductScreen = ({ route, navigation }) => {
             }}
             keyExtractor={(item) => item.id.toString()}
             style={styles.productsList}
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 80 }}
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 140 }}
             showsVerticalScrollIndicator={true}
             keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#007AFF']} tintColor="#007AFF" />
+            }
+            ListFooterComponent={<PreLoginFooter containerStyle={{ marginVertical: 20, width: '100%' }} />}
           />
         </View>
       ) : (
-        <View style={styles.center}>
-            <Text>No products found.</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20, paddingBottom: 140 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#007AFF']} tintColor="#007AFF" />
+          }
+        >
+          <View style={styles.center}>
+            <Icon name="shopping-bag" size={54} color="#CBD5E1" style={{ marginBottom: 16 }} />
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#1E293B', marginBottom: 8 }}>No products added yet</Text>
+            <Text style={{ fontSize: 14, color: '#64748B', marginBottom: 20, textAlign: 'center' }}>
+              Add products to your store so buyers can view and order them.
+            </Text>
+            <TouchableOpacity
+              style={styles.addFirstProductBtn}
+              onPress={() => { setProductToEdit(null); setShowProductModal(true); }}
+            >
+              <Icon name="plus" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <Text style={styles.addFirstProductBtnText}>Add Your First Product</Text>
+            </TouchableOpacity>
+          </View>
+          <PreLoginFooter containerStyle={{ marginTop: 24, width: '100%' }} />
+        </ScrollView>
       )}
 
       <ProductFormModal
@@ -304,6 +345,13 @@ const ProductScreen = ({ route, navigation }) => {
       >
         <Icon name="plus" size={24} color="white" />
       </TouchableOpacity>
+
+      {/* Portals & Pre-login 3-dots Menu Modal */}
+      <PortalsMenuModal
+        visible={isMenuVisible}
+        onClose={() => setIsMenuVisible(false)}
+        navigation={navigation}
+      />
     </View>
   );
 };
@@ -455,6 +503,25 @@ const styles = StyleSheet.create({
     flex: 0.5,
     alignItems: 'flex-start',
     paddingLeft: 5,
+  },
+  addFirstProductBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    elevation: 2,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  addFirstProductBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

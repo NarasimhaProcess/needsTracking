@@ -24,6 +24,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase, setSellerProductsActiveStatus } from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
+import PreLoginFooter from '../components/PreLoginFooter';
+import PortalsMenuModal from '../components/PortalsMenuModal';
 
 const { width } = Dimensions.get('window');
 
@@ -70,6 +72,7 @@ const CatalogScreen = ({ navigation, route }) => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [selectedVariantFilter, setSelectedVariantFilter] = useState(null);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
 
   const getProductCombinations = useCallback((product) => {
     if (!product) return [];
@@ -782,9 +785,18 @@ const CatalogScreen = ({ navigation, route }) => {
           <Text style={styles.headerTitle}>Catalog</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {/* Top-right 3-dots Menu Button */}
+          <TouchableOpacity
+            style={{ marginRight: 14, padding: 4 }}
+            onPress={() => setIsMenuVisible(true)}
+            accessibilityLabel="Portals Menu"
+          >
+            <Icon name="ellipsis-h" size={20} color="#1E293B" />
+          </TouchableOpacity>
+
           {user && (
             <TouchableOpacity
-              style={{ marginRight: 15 }}
+              style={{ marginRight: 14 }}
               onPress={() => {
                 showAlert('Logout', 'Are you sure you want to log out?', [
                   { text: 'Cancel', style: 'cancel' },
@@ -880,29 +892,37 @@ const CatalogScreen = ({ navigation, route }) => {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.container,
-          { flexGrow: 1, paddingBottom: cartTotals.totalItems > 0 ? 155 : 95 }
+          { flexGrow: 1, paddingBottom: cartTotals.totalItems > 0 ? 190 : 130 }
         ]}
         extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory }}
+        ListFooterComponent={
+          !loading && filteredProducts.length > 0 ? (
+            <PreLoginFooter containerStyle={{ marginVertical: 20, width: '100%' }} />
+          ) : null
+        }
         ListEmptyComponent={
           !loading && (
-            <View style={styles.emptySearchContainer}>
-              <Icon name="search" size={40} color="#ccc" style={{ marginBottom: 12 }} />
-              <Text style={styles.emptySearchTitle}>
-                {searchQuery.trim() || selectedCategory !== 'all'
-                  ? `No products found matching ${searchQuery.trim() ? `"${searchQuery}"` : ''} ${selectedCategory !== 'all' ? `in category "${getCategoryLabel(selectedCategory)}"` : ''}`
-                  : 'No products available in catalog'}
-              </Text>
-              {(searchQuery.trim().length > 0 || selectedCategory !== 'all') && (
-                <TouchableOpacity
-                  style={styles.clearSearchBtn}
-                  onPress={() => {
-                    setSearchQuery('');
-                    setSelectedCategory('all');
-                  }}
-                >
-                  <Text style={styles.clearSearchBtnText}>Reset Filters</Text>
-                </TouchableOpacity>
-              )}
+            <View style={{ width: '100%' }}>
+              <View style={styles.emptySearchContainer}>
+                <Icon name="search" size={40} color="#ccc" style={{ marginBottom: 12 }} />
+                <Text style={styles.emptySearchTitle}>
+                  {searchQuery.trim() || selectedCategory !== 'all'
+                    ? `No products found matching ${searchQuery.trim() ? `"${searchQuery}"` : ''} ${selectedCategory !== 'all' ? `in category "${getCategoryLabel(selectedCategory)}"` : ''}`
+                    : 'No products available in catalog'}
+                </Text>
+                {(searchQuery.trim().length > 0 || selectedCategory !== 'all') && (
+                  <TouchableOpacity
+                    style={styles.clearSearchBtn}
+                    onPress={() => {
+                      setSearchQuery('');
+                      setSelectedCategory('all');
+                    }}
+                  >
+                    <Text style={styles.clearSearchBtnText}>Reset Filters</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <PreLoginFooter containerStyle={{ marginVertical: 20, width: '100%' }} />
             </View>
           )
         }
@@ -910,7 +930,7 @@ const CatalogScreen = ({ navigation, route }) => {
 
       {selectedProduct && (
         <Modal
-          animationType="slide"
+          animationType="fade"
           transparent={true}
           visible={isProductModalVisible}
           onRequestClose={closeProductModal}
@@ -1167,7 +1187,7 @@ const CatalogScreen = ({ navigation, route }) => {
       )}
 
       <Modal
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         visible={isCartModalVisible}
         onRequestClose={() => setIsCartModalVisible(!isCartModalVisible)}
@@ -1251,6 +1271,13 @@ const CatalogScreen = ({ navigation, route }) => {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      {/* Portals & Pre-login 3-dots Menu Modal */}
+      <PortalsMenuModal
+        visible={isMenuVisible}
+        onClose={() => setIsMenuVisible(false)}
+        navigation={navigation}
+      />
     </View>
   );
 };
@@ -1447,24 +1474,38 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 16 : 0,
+    padding: Platform.OS === 'web' ? 20 : 16,
   },
   modalContent: {
-    backgroundColor: 'white',
+    backgroundColor: '#FFFFFF',
     padding: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    borderRadius: 24,
     width: '100%',
-    maxWidth: 600,
-    height: Platform.OS === 'web' ? '88vh' : '85%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '85%',
+    maxWidth: Platform.OS === 'web' ? 560 : 420,
+    height: Platform.OS === 'web' ? '88vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 24,
+      },
+      android: {
+        elevation: 12,
+      },
+      web: {
+        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
+      },
+    }),
   },
   cartFooterContainer: {
     paddingTop: 12,
@@ -1477,7 +1518,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
     paddingVertical: 14,
     paddingHorizontal: 20,
-    borderRadius: 10,
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1493,16 +1534,30 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   productModalContent: {
-    backgroundColor: 'white',
+    backgroundColor: '#FFFFFF',
     padding: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    borderRadius: 24,
     width: '100%',
-    maxWidth: 700,
-    height: Platform.OS === 'web' ? '90vh' : '90%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+    maxWidth: Platform.OS === 'web' ? 680 : 440,
+    height: Platform.OS === 'web' ? '88vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 24,
+      },
+      android: {
+        elevation: 12,
+      },
+      web: {
+        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
+      },
+    }),
   },
   modalTitle: {
     fontSize: 20,
@@ -1655,19 +1710,33 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
   },
   swiggyModalContent: {
-    backgroundColor: '#ffffff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderRadius: Platform.OS === 'web' ? 20 : 0,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
     width: '100%',
-    maxWidth: 720,
-    height: Platform.OS === 'web' ? '90vh' : '92%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '92%',
+    maxWidth: Platform.OS === 'web' ? 700 : 440,
+    height: Platform.OS === 'web' ? '88vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
     paddingTop: 16,
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 24,
+      },
+      android: {
+        elevation: 12,
+      },
+      web: {
+        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
+      },
+    }),
   },
   swiggyHeaderSection: {
     paddingHorizontal: 16,

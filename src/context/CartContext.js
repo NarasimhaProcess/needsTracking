@@ -1,7 +1,7 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { supabase } from '../services/supabase';
-import { Alert } from 'react-native';
-import { getCart, updateCartItem, removeCartItem } from '../services/supabase'; // Assuming these are in supabase.js
+import { getCart, updateCartItem, removeCartItem } from '../services/supabase';
+import { showAlert } from '../utils/alertUtils';
 
 const CartContext = createContext();
 
@@ -112,7 +112,7 @@ export const CartProvider = ({ children }) => {
 
   const removeItem = async (cartItemId) => {
     if (!user) return; // Should not happen
-    Alert.alert(
+    showAlert(
       "Remove Item",
       "Are you sure you want to remove this item from your cart?",
       [

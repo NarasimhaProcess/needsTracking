@@ -8,7 +8,6 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  Alert,
   Switch,
   Platform,
 } from 'react-native';
@@ -20,6 +19,7 @@ import {
   printTestReceipt,
   DEFAULT_PRINTER_CONFIG,
 } from '../services/printerService';
+import { showAlert } from '../utils/alertUtils';
 
 const PrinterSettingsModal = ({ visible, onClose }) => {
   const [config, setConfig] = useState(DEFAULT_PRINTER_CONFIG);
@@ -48,10 +48,10 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
   const handleSave = async () => {
     try {
       await savePrinterConfig(config);
-      Alert.alert('Saved', 'Printer settings saved successfully.');
+      showAlert('Saved', 'Printer settings saved successfully.');
       onClose();
     } catch (err) {
-      Alert.alert('Error', 'Failed to save printer settings.');
+      showAlert('Error', 'Failed to save printer settings.');
     }
   };
 
@@ -62,22 +62,22 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
         if (typeof navigator !== 'undefined' && navigator.bluetooth) {
           const result = await scanAndConnectWebBluetooth();
           setConfig(result.config);
-          Alert.alert('Connected!', `Successfully connected to ${result.deviceName}.`);
+          showAlert('Connected!', `Successfully connected to ${result.deviceName}.`);
         } else {
-          Alert.alert(
+          showAlert(
             'Web Bluetooth Notice',
             'Direct Bluetooth pairing from the browser is only supported in Chrome, Edge, and Opera (on PC and Android) over HTTPS.\n\nYou can still print receipts directly using your browser\'s Print / PDF dialog!'
           );
         }
       } else {
-        Alert.alert(
+        showAlert(
           'Bluetooth Pairing',
           '1. Ensure your Bluetooth printer is turned ON.\n2. Open your phone\'s Bluetooth Settings and pair with your printer (PIN: 0000 or 1234).\n3. Enter the printer name or MAC address below and tap Save.'
         );
       }
     } catch (err) {
       if (err.name !== 'NotFoundError') {
-        Alert.alert('Bluetooth Scan', err.message || 'Could not discover Bluetooth devices.');
+        showAlert('Bluetooth Scan', err.message || 'Could not discover Bluetooth devices.');
       }
     } finally {
       setScanning(false);
@@ -104,13 +104,13 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
     };
     setConfig(updated);
     await savePrinterConfig(updated);
-    Alert.alert('Disconnected', 'Printer unlinked.');
+    showAlert('Disconnected', 'Printer unlinked.');
   };
 
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       onRequestClose={onClose}
     >
@@ -344,24 +344,37 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 16 : 0,
+    padding: Platform.OS === 'web' ? 20 : 16,
   },
   modalContainer: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderRadius: Platform.OS === 'web' ? 16 : 0,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
     width: '100%',
-    maxWidth: 600,
-    height: Platform.OS === 'web' ? '88vh' : '90%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '90%',
-    paddingBottom: Platform.OS === 'ios' ? 16 : 8,
+    maxWidth: Platform.OS === 'web' ? 560 : 420,
+    height: Platform.OS === 'web' ? '88vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 24,
+      },
+      android: {
+        elevation: 12,
+      },
+      web: {
+        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
+      },
+    }),
   },
   header: {
     flexDirection: 'row',

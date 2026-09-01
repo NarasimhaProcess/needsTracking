@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  Alert,
   ScrollView,
   Image,
   FlatList,
@@ -461,7 +460,7 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 
   return (
     <Modal
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       visible={isVisible}
       onRequestClose={onClose}
@@ -836,28 +835,39 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 16 : 0,
+    padding: Platform.OS === 'web' ? 20 : 16,
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     padding: 20,
     width: '100%',
-    maxWidth: 720,
-    height: Platform.OS === 'web' ? '90vh' : '88%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '88%',
-    borderRadius: 16,
+    maxWidth: Platform.OS === 'web' ? 680 : 440,
+    height: Platform.OS === 'web' ? '88vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
+    borderRadius: 24,
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 24,
+      },
+      android: {
+        elevation: 12,
+      },
+      web: {
+        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
+      },
+    }),
   },
   scrollView: {
     flex: 1,

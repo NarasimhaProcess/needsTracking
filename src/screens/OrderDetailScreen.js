@@ -7,7 +7,6 @@ import {
   ScrollView,
   FlatList,
   TouchableOpacity,
-  Alert,
   Image,
   Linking,
   Platform,
@@ -18,6 +17,7 @@ import { supabase, getOrderById, updateOrderStatus } from '../services/supabase'
 import { printReceipt, extractOrderNumbers } from '../services/printerService';
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
+import { showAlert } from '../utils/alertUtils';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
 
 const OrderDetailScreen = ({ navigation, route }) => {
@@ -128,9 +128,9 @@ const OrderDetailScreen = ({ navigation, route }) => {
       const success = await updateOrderStatus(orderId, selectedStatus);
       if (success) {
         setOrder({ ...order, status: selectedStatus });
-        Alert.alert('Success', 'Order status updated successfully.');
+        showAlert('Success', 'Order status updated successfully.');
       } else {
-        Alert.alert('Error', 'Failed to update order status.');
+        showAlert('Error', 'Failed to update order status.');
       }
       setLoading(false);
     }
@@ -138,7 +138,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
 
   const handleCallPartner = (phone) => {
     if (!phone) {
-      Alert.alert('No Phone', 'No phone number available for delivery partner.');
+      showAlert('No Phone', 'No phone number available for delivery partner.');
       return;
     }
     Linking.openURL(`tel:${phone}`);

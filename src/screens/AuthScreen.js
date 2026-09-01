@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -14,6 +13,9 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, getAuthRedirectUrl } from '../services/supabase';
 import { StackActions } from '@react-navigation/native';
+import { showAlert } from '../utils/alertUtils';
+import PreLoginFooter from '../components/PreLoginFooter';
+import PortalsMenuModal from '../components/PortalsMenuModal';
 
 export default function AuthScreen({ navigation, route }) {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -23,6 +25,7 @@ export default function AuthScreen({ navigation, route }) {
   const [mobile, setMobile] = useState('');
   const [userType, setUserType] = useState('buyer'); // 'buyer' | 'seller' | 'delivery_partner'
   const [loading, setLoading] = useState(false);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
 
   const onAuthSuccess = route.params?.onAuthSuccess;
 
@@ -44,7 +47,7 @@ export default function AuthScreen({ navigation, route }) {
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Required Fields', 'Please enter your email and password.');
+      showAlert('Required Fields', 'Please enter your email and password.');
       return;
     }
 
@@ -56,7 +59,7 @@ export default function AuthScreen({ navigation, route }) {
       });
 
       if (error) {
-        Alert.alert('Login Failed', error.message);
+        showAlert('Login Failed', error.message);
         setLoading(false);
         return;
       }
@@ -79,11 +82,11 @@ export default function AuthScreen({ navigation, route }) {
         });
       } catch (_) {}
 
-      Alert.alert('Welcome Back', `Logged in successfully as ${role.toUpperCase().replace('_', ' ')}`);
+      showAlert('Welcome Back', `Logged in successfully as ${role.toUpperCase().replace('_', ' ')}`);
       redirectUserByRole(role, user);
     } catch (err) {
       console.error('Login error:', err);
-      Alert.alert('Error', 'An unexpected error occurred during login.');
+      showAlert('Error', 'An unexpected error occurred during login.');
     } finally {
       setLoading(false);
     }
@@ -91,12 +94,12 @@ export default function AuthScreen({ navigation, route }) {
 
   const handleSignUp = async () => {
     if (!email || !password || !fullName) {
-      Alert.alert('Required Fields', 'Please fill in Full Name, Email, and Password.');
+      showAlert('Required Fields', 'Please fill in Full Name, Email, and Password.');
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert('Weak Password', 'Password must be at least 6 characters long.');
+      showAlert('Weak Password', 'Password must be at least 6 characters long.');
       return;
     }
 
@@ -119,7 +122,7 @@ export default function AuthScreen({ navigation, route }) {
       });
 
       if (error) {
-        Alert.alert('Sign Up Failed', error.message);
+        showAlert('Sign Up Failed', error.message);
         setLoading(false);
         return;
       }
@@ -154,12 +157,12 @@ export default function AuthScreen({ navigation, route }) {
           console.error('Error creating profile entry:', profileError.message);
         }
 
-        Alert.alert('Account Created', `Registration successful! Welcome as ${userType.toUpperCase().replace('_', ' ')}.`);
+        showAlert('Account Created', `Registration successful! Welcome as ${userType.toUpperCase().replace('_', ' ')}.`);
         redirectUserByRole(userType, user);
       }
     } catch (err) {
       console.error('SignUp error:', err);
-      Alert.alert('Error', 'An unexpected error occurred during sign up.');
+      showAlert('Error', 'An unexpected error occurred during sign up.');
     } finally {
       setLoading(false);
     }
@@ -170,14 +173,25 @@ export default function AuthScreen({ navigation, route }) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-        {/* Header Back Button */}
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Icon name="arrow-left" size={20} color="#1E293B" />
+      <View style={styles.topRightActions}>
+        <TouchableOpacity 
+          style={styles.actionIconButton} 
+          onPress={() => setIsMenuVisible(true)}
+          accessibilityLabel="Portals Menu"
+        >
+          <Icon name="ellipsis-h" size={20} color="#1E293B" />
         </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.actionIconButton} 
+          onPress={() => navigation.goBack()}
+        >
+          <Icon name="times" size={20} color="#1E293B" />
+        </TouchableOpacity>
+      </View>
 
+      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View style={styles.card}>
-          <Text style={styles.title}>E-Commerce Portal</Text>
+          <Text style={styles.title}>Unified Portal</Text>
           <Text style={styles.subtitle}>
             {isSignUp ? 'Create your new account' : 'Log in to continue'}
           </Text>
@@ -208,7 +222,7 @@ export default function AuthScreen({ navigation, route }) {
                   style={[styles.userTypeButton, userType === 'buyer' && styles.userTypeSelected]}
                   onPress={() => setUserType('buyer')}
                 >
-                  <Icon name="shopping-bag" size={18} color={userType === 'buyer' ? '#FFF' : '#64748B'} />
+                  <Icon name="shopping-bag" size={16} color={userType === 'buyer' ? '#FFF' : '#64748B'} />
                   <Text style={[styles.userTypeText, userType === 'buyer' && styles.userTypeTextSelected]}>
                     Buyer
                   </Text>
@@ -218,7 +232,7 @@ export default function AuthScreen({ navigation, route }) {
                   style={[styles.userTypeButton, userType === 'seller' && styles.userTypeSelected]}
                   onPress={() => setUserType('seller')}
                 >
-                  <Icon name="store" size={18} color={userType === 'seller' ? '#FFF' : '#64748B'} />
+                  <Icon name="home" size={16} color={userType === 'seller' ? '#FFF' : '#64748B'} />
                   <Text style={[styles.userTypeText, userType === 'seller' && styles.userTypeTextSelected]}>
                     Seller
                   </Text>
@@ -228,7 +242,7 @@ export default function AuthScreen({ navigation, route }) {
                   style={[styles.userTypeButton, userType === 'delivery_partner' && styles.userTypeSelected]}
                   onPress={() => setUserType('delivery_partner')}
                 >
-                  <Icon name="truck" size={18} color={userType === 'delivery_partner' ? '#FFF' : '#64748B'} />
+                  <Icon name="truck" size={16} color={userType === 'delivery_partner' ? '#FFF' : '#64748B'} />
                   <Text style={[styles.userTypeText, userType === 'delivery_partner' && styles.userTypeTextSelected]}>
                     Delivery
                   </Text>
@@ -239,6 +253,7 @@ export default function AuthScreen({ navigation, route }) {
               <TextInput
                 style={styles.input}
                 placeholder="Enter your full name"
+                placeholderTextColor="#94A3B8"
                 value={fullName}
                 onChangeText={setFullName}
               />
@@ -247,6 +262,7 @@ export default function AuthScreen({ navigation, route }) {
               <TextInput
                 style={styles.input}
                 placeholder="Enter mobile number"
+                placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
                 value={mobile}
                 onChangeText={setMobile}
@@ -259,6 +275,7 @@ export default function AuthScreen({ navigation, route }) {
           <TextInput
             style={styles.input}
             placeholder="name@example.com"
+            placeholderTextColor="#94A3B8"
             keyboardType="email-address"
             autoCapitalize="none"
             value={email}
@@ -269,6 +286,7 @@ export default function AuthScreen({ navigation, route }) {
           <TextInput
             style={styles.input}
             placeholder="Enter password"
+            placeholderTextColor="#94A3B8"
             secureTextEntry
             value={password}
             onChangeText={setPassword}
@@ -288,8 +306,17 @@ export default function AuthScreen({ navigation, route }) {
               </Text>
             )}
           </TouchableOpacity>
+
+          <PreLoginFooter containerStyle={{ marginTop: 16, paddingHorizontal: 0 }} />
         </View>
       </ScrollView>
+
+      {/* Portals & Pre-login 3-dots Menu Modal */}
+      <PortalsMenuModal
+        visible={isMenuVisible}
+        onClose={() => setIsMenuVisible(false)}
+        navigation={navigation}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -299,33 +326,61 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
+  topRightActions: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 56 : 36,
+    right: 18,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  actionIconButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
   scrollContainer: {
-    padding: 20,
+    padding: Platform.OS === 'web' ? 24 : 16,
+    paddingTop: Platform.OS === 'ios' ? 80 : 64,
+    paddingBottom: 40,
     flexGrow: 1,
     justifyContent: 'center',
-  },
-  backButton: {
-    marginBottom: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#E2E8F0',
     alignItems: 'center',
-    justifyContent: 'center',
   },
   card: {
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 440 : 420,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 24,
     padding: 24,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.08,
+        shadowRadius: 20,
+      },
+      android: {
+        elevation: 4,
+      },
+      web: {
+        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+      },
+    }),
   },
   title: {
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#0F172A',
     textAlign: 'center',
   },
@@ -339,7 +394,7 @@ const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: '#F1F5F9',
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 4,
     marginBottom: 20,
   },
@@ -347,7 +402,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 10,
   },
   activeTab: {
     backgroundColor: '#FFFFFF',
@@ -364,9 +419,10 @@ const styles = StyleSheet.create({
   },
   activeTabText: {
     color: '#0F172A',
+    fontWeight: '700',
   },
   label: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: '#334155',
     marginBottom: 6,
@@ -376,9 +432,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
     fontSize: 15,
     color: '#0F172A',
   },
@@ -394,15 +450,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 12,
     paddingHorizontal: 6,
-    borderRadius: 10,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#E2E8F0',
     backgroundColor: '#F8FAFC',
     gap: 4,
   },
   userTypeSelected: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
   },
   userTypeText: {
     fontSize: 12,
@@ -411,17 +467,23 @@ const styles = StyleSheet.create({
   },
   userTypeTextSelected: {
     color: '#FFFFFF',
+    fontWeight: '700',
   },
   submitButton: {
-    backgroundColor: '#4F46E5',
-    borderRadius: 10,
+    backgroundColor: '#007AFF',
+    borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 20,
+    elevation: 2,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   submitButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });
