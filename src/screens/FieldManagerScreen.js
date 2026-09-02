@@ -678,85 +678,54 @@ const FieldManagerScreen = ({ navigation, route }) => {
       {/* New Report Modal */}
       <Modal
         animationType="slide"
-        transparent={true}
+        transparent={false}
         visible={modalVisible}
         onRequestClose={() => {
           setModalVisible(!modalVisible);
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalHeaderTitle}>New Damage Report</Text>
-              <TouchableOpacity
-                style={styles.modalCloseBtn}
-                onPress={() => setModalVisible(!modalVisible)}
-              >
-                <Icon name="times" size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={styles.modalScrollView}
-              contentContainerStyle={styles.scrollViewContent}
-              showsVerticalScrollIndicator={true}
-              keyboardShouldPersistTaps="handled"
-            >
-              <Text style={styles.fieldLabel}>Damage Description</Text>
+        <View style={styles.modalView}>
+            <ScrollView contentContainerStyle={styles.scrollViewContent}>
+              <Text style={styles.modalText}>New Damage Report</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Describe the damage in detail..."
-                placeholderTextColor="#999"
+                placeholder="Describe the damage..."
                 value={description}
                 onChangeText={setDescription}
                 multiline
-                numberOfLines={4}
               />
-              <Text style={styles.fieldLabel}>Attach Photos or Videos</Text>
               <View style={styles.fileSelectionContainer}>
                 <TouchableOpacity style={styles.fileSelectionButton} onPress={pickFiles}>
-                  <Icon name="folder-open" size={16} color="#fff" style={{ marginRight: 6 }} />
                   <Text style={styles.textStyle}>Select from Gallery</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.fileSelectionButton} onPress={takePhoto}>
-                  <Icon name="camera" size={16} color="#fff" style={{ marginRight: 6 }} />
                   <Text style={styles.textStyle}>Take Photo</Text>
                 </TouchableOpacity>
               </View>
-              {files.length > 0 && (
-                <FlatList
-                  data={files}
-                  keyExtractor={(file) => file.uri}
-                  renderItem={renderFilePreview}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={{ maxHeight: 120, marginVertical: 10 }}
-                />
-              )}
+              <FlatList
+                data={files}
+                keyExtractor={(file) => file.uri}
+                renderItem={renderFilePreview}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+              />
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonSubmit]}
+                  onPress={handleSubmit}
+                  disabled={loading}
+                >
+                  <Text style={styles.textStyle}>{loading ? "Submitting..." : "Submit Report"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonClose]}
+                  onPress={() => setModalVisible(!modalVisible)}
+                >
+                  <Text style={styles.textStyle}>Close</Text>
+                </TouchableOpacity>
+              </View>
             </ScrollView>
-
-            <View style={styles.stickyFooterContainer}>
-              <TouchableOpacity
-                style={[styles.button, styles.buttonClose]}
-                onPress={() => setModalVisible(!modalVisible)}
-                disabled={loading}
-              >
-                <Text style={styles.buttonCloseText}>Close</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.button, styles.buttonSubmit]}
-                onPress={handleSubmit}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.textStyle}>Submit Report</Text>
-                )}
-              </TouchableOpacity>
-            </View>
           </View>
-        </View>
       </Modal>
       
       {/* Photo Viewer Modal */}
@@ -810,42 +779,36 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
       {/* Add File Options Modal */}
       <Modal
-        animationType="fade"
+        animationType="slide"
         transparent={true}
         visible={addFileOptionModalVisible}
         onRequestClose={() => {
           setAddFileOptionModalVisible(!addFileOptionModalVisible);
         }}
       >
-        <TouchableOpacity
-          style={styles.centeredView}
-          activeOpacity={1}
-          onPress={() => setAddFileOptionModalVisible(false)}
-        >
-          <View style={styles.optionModalCard} onStartShouldSetResponder={() => true}>
-            <Text style={styles.optionModalTitle}>Add Photo or Video</Text>
+        <View style={styles.centeredView}>
+          <View style={styles.modalView}>
+            <Text style={styles.modalText}>Add Photo</Text>
             <TouchableOpacity
-              style={[styles.button, styles.buttonSubmit, styles.modalFullBtn]}
+              style={[styles.button, styles.buttonSubmit]}
               onPress={pickFilesForExistingReport}
             >
-              <Icon name="folder-open" size={16} color="#fff" style={{ marginRight: 8 }} />
               <Text style={styles.textStyle}>Select from Gallery</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.button, styles.buttonSubmit, styles.modalFullBtn, { backgroundColor: '#0288D1' }]}
+              style={[styles.button, styles.buttonSubmit]}
               onPress={takePhotoForExistingReport}
             >
-              <Icon name="camera" size={16} color="#fff" style={{ marginRight: 8 }} />
               <Text style={styles.textStyle}>Take Photo</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.button, styles.buttonClose, styles.modalFullBtn]}
+              style={[styles.button, styles.buttonClose]}
               onPress={() => setAddFileOptionModalVisible(!addFileOptionModalVisible)}
             >
-              <Text style={styles.buttonCloseText}>Cancel</Text>
+              <Text style={styles.textStyle}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Map Modal */}
@@ -1019,99 +982,6 @@ const styles = StyleSheet.create({
     color: '#666',
     fontWeight: '500',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
-    alignItems: 'center',
-    padding: Platform.OS === 'web' ? 16 : 0,
-  },
-  modalCard: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderRadius: Platform.OS === 'web' ? 20 : 0,
-    width: '100%',
-    maxWidth: 640,
-    height: Platform.OS === 'web' ? '88vh' : '90%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '90%',
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    backgroundColor: '#fff',
-  },
-  modalHeaderTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  modalCloseBtn: {
-    padding: 6,
-  },
-  modalScrollView: {
-    flex: 1,
-    width: '100%',
-  },
-  scrollViewContent: {
-    padding: 20,
-    flexGrow: 1,
-    paddingBottom: 24,
-  },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#334155',
-    marginBottom: 8,
-    marginTop: 6,
-  },
-  stickyFooterContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#fff',
-  },
-  buttonCloseText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  optionModalCard: {
-    width: width * 0.85,
-    maxWidth: 420,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    maxHeight: '85%',
-  },
-  optionModalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#222',
-  },
-  modalFullBtn: {
-    width: '100%',
-    marginBottom: 12,
-  },
   modalView: {
     flex: 1,
     justifyContent: "center",
@@ -1122,7 +992,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    marginTop: 22,
+  },
+  scrollViewContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexGrow: 1,
   },
   buttonContainer: {
     flexDirection: 'row',
@@ -1131,19 +1006,17 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   button: {
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    borderRadius: 20,
+    padding: 10,
+    elevation: 2,
+    width: 120,
     alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    width: '48%',
   },
   buttonSubmit: {
     backgroundColor: "#4CAF50",
   },
   buttonClose: {
-    backgroundColor: "#64748B",
+    backgroundColor: "#f44336",
   },
   textStyle: {
     color: "white",
@@ -1158,16 +1031,12 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 18,
-    backgroundColor: '#fafafa',
-    width: '100%',
-    minHeight: 110,
-    textAlignVertical: 'top',
-    fontSize: 15,
-    color: '#333',
+    borderColor: '#ccc',
+    borderRadius: 5,
+    padding: 10,
+    marginBottom: 15,
+    backgroundColor: '#fff',
+    width: width * 0.8,
   },
   fileSelectionContainer: {
     flexDirection: 'row',

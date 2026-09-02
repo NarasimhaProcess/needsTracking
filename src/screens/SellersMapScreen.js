@@ -2043,139 +2043,130 @@ export default function SellersMapScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView
-              style={styles.menuScrollView}
-              contentContainerStyle={styles.menuScrollContent}
-              showsVerticalScrollIndicator={true}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* If user is logged in, show user profile summary and quick links */}
-              {user && (
-                <View style={styles.userSection}>
-                  <View style={styles.userProfileRow}>
-                    <View style={styles.userAvatar}>
-                      <Text style={styles.userAvatarText}>
-                        {(user.email || user.phone || "U").charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={styles.userInfo}>
-                      <Text style={styles.userEmail} numberOfLines={1}>
-                        {user.email || user.phone || "Signed In User"}
-                      </Text>
-                      <View style={styles.roleTag}>
-                        <Text style={styles.roleTagText}>
-                          {role ? role.toUpperCase() : "USER"}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.userQuickLinks}>
-                    <TouchableOpacity
-                      style={styles.quickLinkItem}
-                      onPress={() => safeNavigate("OrderList")}
-                    >
-                      <Icon name="list-alt" size={15} color="#007AFF" />
-                      <Text style={styles.quickLinkText}>My Orders</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.quickLinkItem}
-                      onPress={() => safeNavigate("Cart")}
-                    >
-                      <Icon name="shopping-cart" size={15} color="#007AFF" />
-                      <Text style={styles.quickLinkText}>My Cart</Text>
-                    </TouchableOpacity>
-
-                    {(role === "seller" || role === "admin") && (
-                      <TouchableOpacity
-                        style={styles.quickLinkItem}
-                        onPress={() => safeNavigate("ProductTabs")}
-                      >
-                        <Icon name="cubes" size={15} color="#10B981" />
-                        <Text style={styles.quickLinkText}>Manage Store</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              )}
-
-              {/* Role Portals Options: Buyer, Seller, Delivery */}
-              <Text style={styles.portalsHeading}>Portals</Text>
-
-              {/* 1. Buyer Portal */}
-              <TouchableOpacity
-                style={styles.portalItem}
-                activeOpacity={0.7}
-                onPress={() => safeNavigate("BuyerLogin")}
-              >
-                <View style={[styles.portalIconBox, { backgroundColor: "#EFF6FF" }]}>
-                  <Icon name="shopping-cart" size={20} color="#007AFF" />
-                </View>
-                <View style={styles.portalDetails}>
-                  <Text style={styles.portalTitle}>Buyer Portal</Text>
-                  <Text style={styles.portalDesc}>Browse nearby sellers & place orders</Text>
-                </View>
-                <Icon name="chevron-right" size={14} color="#94A3B8" />
-              </TouchableOpacity>
-
-              {/* 2. Seller Portal */}
-              <TouchableOpacity
-                style={styles.portalItem}
-                activeOpacity={0.7}
-                onPress={() => safeNavigate("SellerLogin")}
-              >
-                <View style={[styles.portalIconBox, { backgroundColor: "#ECFDF5" }]}>
-                  <Icon name="home" size={20} color="#10B981" />
-                </View>
-                <View style={styles.portalDetails}>
-                  <Text style={styles.portalTitle}>Seller Portal</Text>
-                  <Text style={styles.portalDesc}>Manage products, pricing & inventory</Text>
-                </View>
-                <Icon name="chevron-right" size={14} color="#94A3B8" />
-              </TouchableOpacity>
-
-              {/* 3. Delivery Manager Portal */}
-              <TouchableOpacity
-                style={styles.portalItem}
-                activeOpacity={0.7}
-                onPress={() => safeNavigate("DeliveryManagerLogin")}
-              >
-                <View style={[styles.portalIconBox, { backgroundColor: "#FAF5FF" }]}>
-                  <Icon name="truck" size={18} color="#8B5CF6" />
-                </View>
-                <View style={styles.portalDetails}>
-                  <Text style={styles.portalTitle}>Delivery Portal</Text>
-                  <Text style={styles.portalDesc}>Real-time delivery management & tracking</Text>
-                </View>
-                <Icon name="chevron-right" size={14} color="#94A3B8" />
-              </TouchableOpacity>
-
-              {/* 4. About & Welcome Page */}
-              <TouchableOpacity
-                style={styles.portalItem}
-                activeOpacity={0.7}
-                onPress={() => safeNavigate("Welcome")}
-              >
-                <View style={[styles.portalIconBox, { backgroundColor: "#F1F5F9" }]}>
-                  <Icon name="info-circle" size={18} color="#64748B" />
-                </View>
-                <View style={styles.portalDetails}>
-                  <Text style={styles.portalTitle}>About & Overview</Text>
-                  <Text style={styles.portalDesc}>Platform info and features</Text>
-                </View>
-                <Icon name="chevron-right" size={14} color="#94A3B8" />
-              </TouchableOpacity>
-            </ScrollView>
-
-            {/* Sticky Footer for Logout Button if signed in */}
+            {/* If user is logged in, show user profile summary and quick links */}
             {user && (
-              <View style={styles.menuFooterContainer}>
-                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-                  <Icon name="sign-out" size={16} color="#EF4444" />
-                  <Text style={styles.logoutButtonText}>Log Out</Text>
-                </TouchableOpacity>
+              <View style={styles.userSection}>
+                <View style={styles.userProfileRow}>
+                  <View style={styles.userAvatar}>
+                    <Text style={styles.userAvatarText}>
+                      {(user.email || user.phone || "U").charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.userInfo}>
+                    <Text style={styles.userEmail} numberOfLines={1}>
+                      {user.email || user.phone || "Signed In User"}
+                    </Text>
+                    <View style={styles.roleTag}>
+                      <Text style={styles.roleTagText}>
+                        {role ? role.toUpperCase() : "USER"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.userQuickLinks}>
+                  <TouchableOpacity
+                    style={styles.quickLinkItem}
+                    onPress={() => safeNavigate("OrderList")}
+                  >
+                    <Icon name="list-alt" size={15} color="#007AFF" />
+                    <Text style={styles.quickLinkText}>My Orders</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.quickLinkItem}
+                    onPress={() => safeNavigate("Cart")}
+                  >
+                    <Icon name="shopping-cart" size={15} color="#007AFF" />
+                    <Text style={styles.quickLinkText}>My Cart</Text>
+                  </TouchableOpacity>
+
+                  {(role === "seller" || role === "admin") && (
+                    <TouchableOpacity
+                      style={styles.quickLinkItem}
+                      onPress={() => safeNavigate("ProductTabs")}
+                    >
+                      <Icon name="cubes" size={15} color="#10B981" />
+                      <Text style={styles.quickLinkText}>Manage Store</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
+            )}
+
+            {/* Role Portals Options: Buyer, Seller, Delivery */}
+            <Text style={styles.portalsHeading}>Portals</Text>
+
+            {/* 1. Buyer Portal */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => safeNavigate("BuyerLogin")}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: "#EFF6FF" }]}>
+                <Icon name="shopping-cart" size={20} color="#007AFF" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>Buyer Portal</Text>
+                <Text style={styles.portalDesc}>Browse nearby sellers & place orders</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* 2. Seller Portal */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => safeNavigate("SellerLogin")}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: "#ECFDF5" }]}>
+                <Icon name="home" size={20} color="#10B981" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>Seller Portal</Text>
+                <Text style={styles.portalDesc}>Manage products, pricing & inventory</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* 3. Delivery Manager Portal */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => safeNavigate("DeliveryManagerLogin")}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: "#FAF5FF" }]}>
+                <Icon name="truck" size={18} color="#8B5CF6" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>Delivery Portal</Text>
+                <Text style={styles.portalDesc}>Real-time delivery management & tracking</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* 4. About & Welcome Page */}
+            <TouchableOpacity
+              style={styles.portalItem}
+              activeOpacity={0.7}
+              onPress={() => safeNavigate("Welcome")}
+            >
+              <View style={[styles.portalIconBox, { backgroundColor: "#F1F5F9" }]}>
+                <Icon name="info-circle" size={18} color="#64748B" />
+              </View>
+              <View style={styles.portalDetails}>
+                <Text style={styles.portalTitle}>About & Overview</Text>
+                <Text style={styles.portalDesc}>Platform info and features</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* Logout Button if signed in */}
+            {user && (
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                <Icon name="sign-out" size={16} color="#EF4444" />
+                <Text style={styles.logoutButtonText}>Log Out</Text>
+              </TouchableOpacity>
             )}
           </View>
         </TouchableOpacity>
@@ -3095,45 +3086,20 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(15, 23, 42, 0.5)",
-    justifyContent: Platform.OS === "web" ? "center" : "flex-end",
-    alignItems: "center",
-    padding: Platform.OS === "web" ? 16 : 0,
+    justifyContent: "flex-end",
   },
   menuCard: {
     backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    borderRadius: Platform.OS === "web" ? 24 : 0,
-    borderBottomLeftRadius: Platform.OS === "web" ? 24 : 0,
-    borderBottomRightRadius: Platform.OS === "web" ? 24 : 0,
-    width: "100%",
-    maxWidth: 540,
-    maxHeight: Platform.OS === "web" ? "88vh" : "85%",
-    height: Platform.OS === "web" ? "88vh" : "85%",
-    padding: 20,
-    paddingBottom: Platform.OS === "ios" ? 34 : 16,
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
+    padding: 24,
+    paddingBottom: Platform.OS === "ios" ? 40 : 24,
+    maxHeight: "80%",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.15,
     shadowRadius: 16,
     elevation: 10,
-  },
-  menuScrollView: {
-    flex: 1,
-    width: "100%",
-  },
-  menuScrollContent: {
-    flexGrow: 1,
-    paddingBottom: 16,
-  },
-  menuFooterContainer: {
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#E2E8F0",
-    backgroundColor: "#FFFFFF",
   },
   menuHeader: {
     flexDirection: "row",

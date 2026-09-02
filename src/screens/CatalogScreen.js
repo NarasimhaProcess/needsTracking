@@ -1183,31 +1183,17 @@ const CatalogScreen = ({ navigation, route }) => {
             <Text style={styles.modalTitle}>Your Cart</Text>
             {cartItems && cartItems.length > 0 ? (
               <FlatList
-                style={{ flex: 1, width: '100%' }}
-                contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
-                showsVerticalScrollIndicator={true}
                 data={cartItems}
                 renderItem={renderCartItem}
                 keyExtractor={(item) => (user ? item.id.toString() : item.product_variant_combination_id.toString())}
               />
             ) : (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                <Icon name="shopping-cart" size={48} color="#cbd5e1" />
-                <Text style={styles.emptyCartText}>Your cart is empty.</Text>
-              </View>
+              <Text style={styles.emptyCartText}>Your cart is empty.</Text>
             )}
-            <View style={styles.cartFooterContainer}>
-              <TouchableOpacity
-                style={styles.checkoutButton}
-                onPress={() => {
-                  setIsCartModalVisible(false);
-                  navigation.navigate('Checkout', { cart: user ? cart : { cart_items: guestCart } });
-                }}
-              >
-                <Text style={styles.checkoutButtonText}>Proceed to Checkout</Text>
-                <Icon name="arrow-right" size={16} color="#ffffff" style={{ marginLeft: 8 }} />
-              </TouchableOpacity>
-            </View>
+            <Button title="Checkout" onPress={() => {
+              setIsCartModalVisible(false);
+              navigation.navigate('Checkout', { cart: user ? cart : { cart_items: guestCart } });
+            }} />
           </View>
         </View>
       </Modal>
@@ -1460,37 +1446,9 @@ const styles = StyleSheet.create({
     borderRadius: Platform.OS === 'web' ? 16 : 0,
     width: '100%',
     maxWidth: 600,
-    height: Platform.OS === 'web' ? '88vh' : '85%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '85%',
+    height: Platform.OS === 'web' ? '85%' : '80%',
+    maxHeight: Platform.OS === 'web' ? '85%' : '80%',
     overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  cartFooterContainer: {
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#fff',
-    marginTop: 8,
-  },
-  checkoutButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 2,
-    shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  checkoutButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
   },
   productModalContent: {
     backgroundColor: 'white',
@@ -1661,8 +1619,8 @@ const styles = StyleSheet.create({
     borderRadius: Platform.OS === 'web' ? 20 : 0,
     width: '100%',
     maxWidth: 720,
-    height: Platform.OS === 'web' ? '90vh' : '92%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '92%',
+    height: Platform.OS === 'web' ? '90%' : '92%',
+    maxHeight: Platform.OS === 'web' ? '90%' : '92%',
     paddingTop: 16,
     overflow: 'hidden',
     display: 'flex',
