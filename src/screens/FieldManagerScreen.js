@@ -163,12 +163,25 @@ const FieldManagerScreen = ({ navigation, route }) => {
         console.warn('Location initialization error:', locErr);
       }
     })();
-  }, [areaId]);
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchDamageReports();
   };
+
+    // Optional: Network monitoring
+    /*
+    const unsubscribe = NetInfo.addEventListener(state => {
+      if (!state.isConnected) {
+        Alert.alert('No Internet', 'Map tiles may not load without internet connection');
+      }
+    });
+
+    return () => unsubscribe();
+    */
+
+  }, [areaId]);
 
   const pickFiles = async () => {
     try {
@@ -616,7 +629,6 @@ const FieldManagerScreen = ({ navigation, route }) => {
       <FlatList
         data={damageReports}
         keyExtractor={(item) => item.id.toString()}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item }) => {
           const lat = Number(item.latitude);
           const lon = Number(item.longitude);
@@ -664,91 +676,83 @@ const FieldManagerScreen = ({ navigation, route }) => {
         <Text style={styles.fabIcon}>+</Text>
       </TouchableOpacity>
       
-      {/* New Report Modal - PORTAL STYLE (NO SCROLLING) */}
+      {/* New Report Modal */}
       <Modal
         animationType="fade"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(!modalVisible)}
+        onRequestClose={() => {
+          setModalVisible(!modalVisible);
+        }}
       >
-        <View style={styles.centeredView}>
-          <View style={styles.portalModalCard}>
-            {/* Header */}
-            <View style={styles.portalModalHeader}>
-              <Text style={styles.portalModalTitle}>New Damage Report</Text>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalHeaderTitle}>New Damage Report</Text>
               <TouchableOpacity
-                style={styles.closeButtonCircle}
+                style={styles.modalCloseBtn}
                 onPress={() => setModalVisible(!modalVisible)}
               >
-                <Icon name="times" size={20} color="#64748B" />
+                <Icon name="times" size={18} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            {/* Content - Scrollable */}
             <ScrollView
-              style={styles.portalModalContent}
-              contentContainerStyle={styles.portalScrollContent}
+              style={styles.modalScrollView}
+              contentContainerStyle={styles.scrollViewContent}
               showsVerticalScrollIndicator={true}
               keyboardShouldPersistTaps="handled"
             >
               <Text style={styles.fieldLabel}>Damage Description</Text>
               <TextInput
-                style={styles.textInput}
+                style={styles.input}
                 placeholder="Describe the damage in detail..."
                 placeholderTextColor="#999"
                 value={description}
                 onChangeText={setDescription}
                 multiline
-                numberOfLines={3}
+                numberOfLines={4}
               />
-
-              <Text style={styles.fieldLabel}>Add Photos or Videos</Text>
-              <View style={styles.buttonRow}>
-                <TouchableOpacity style={[styles.actionButton, styles.galleryButton]} onPress={pickFiles}>
-                  <Icon name="folder-open" size={16} color="#fff" />
-                  <Text style={styles.buttonText}>Gallery</Text>
+              <Text style={styles.fieldLabel}>Attach Photos or Videos</Text>
+              <View style={styles.fileSelectionContainer}>
+                <TouchableOpacity style={styles.fileSelectionButton} onPress={pickFiles}>
+                  <Icon name="folder-open" size={16} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.textStyle}>Select from Gallery</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionButton, styles.cameraButton]} onPress={takePhoto}>
-                  <Icon name="camera" size={16} color="#fff" />
-                  <Text style={styles.buttonText}>Camera</Text>
+                <TouchableOpacity style={styles.fileSelectionButton} onPress={takePhoto}>
+                  <Icon name="camera" size={16} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.textStyle}>Take Photo</Text>
                 </TouchableOpacity>
               </View>
-
               {files.length > 0 && (
-                <View>
-                  <Text style={styles.fieldLabel}>Selected ({files.length})</Text>
-                  <FlatList
-                    data={files}
-                    keyExtractor={(file) => file.uri}
-                    renderItem={renderFilePreview}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    scrollEnabled={true}
-                    nestedScrollEnabled={true}
-                    style={styles.fileList}
-                  />
-                </View>
+                <FlatList
+                  data={files}
+                  keyExtractor={(file) => file.uri}
+                  renderItem={renderFilePreview}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ maxHeight: 120, marginVertical: 10 }}
+                />
               )}
             </ScrollView>
 
-            {/* Footer Buttons */}
-            <View style={styles.portalModalFooter}>
+            <View style={styles.stickyFooterContainer}>
               <TouchableOpacity
-                style={[styles.footerButton, styles.cancelButton]}
+                style={[styles.button, styles.buttonClose]}
                 onPress={() => setModalVisible(!modalVisible)}
                 disabled={loading}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={styles.buttonCloseText}>Close</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.footerButton, styles.submitButton]}
+                style={[styles.button, styles.buttonSubmit]}
                 onPress={handleSubmit}
                 disabled={loading}
               >
                 {loading ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={styles.submitButtonText}>Submit</Text>
+                  <Text style={styles.textStyle}>Submit Report</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -761,7 +765,9 @@ const FieldManagerScreen = ({ navigation, route }) => {
         animationType="slide"
         transparent={false}
         visible={photoModalVisible}
-        onRequestClose={() => setPhotoModalVisible(!photoModalVisible)}
+        onRequestClose={() => {
+          setPhotoModalVisible(!photoModalVisible);
+        }}
       >
         <View style={styles.modalView}>
           <FlatList
@@ -808,34 +814,36 @@ const FieldManagerScreen = ({ navigation, route }) => {
         animationType="fade"
         transparent={true}
         visible={addFileOptionModalVisible}
-        onRequestClose={() => setAddFileOptionModalVisible(!addFileOptionModalVisible)}
+        onRequestClose={() => {
+          setAddFileOptionModalVisible(!addFileOptionModalVisible);
+        }}
       >
         <TouchableOpacity
           style={styles.centeredView}
           activeOpacity={1}
           onPress={() => setAddFileOptionModalVisible(false)}
         >
-          <View style={styles.optionCard} onStartShouldSetResponder={() => true}>
-            <Text style={styles.optionTitle}>Add Media</Text>
+          <View style={styles.optionModalCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.optionModalTitle}>Add Photo or Video</Text>
             <TouchableOpacity
-              style={[styles.actionButton, styles.galleryButton, { marginBottom: 12 }]}
+              style={[styles.button, styles.buttonSubmit, styles.modalFullBtn]}
               onPress={pickFilesForExistingReport}
             >
-              <Icon name="folder-open" size={16} color="#fff" />
-              <Text style={styles.buttonText}>Select from Gallery</Text>
+              <Icon name="folder-open" size={16} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.textStyle}>Select from Gallery</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionButton, styles.cameraButton, { marginBottom: 12 }]}
+              style={[styles.button, styles.buttonSubmit, styles.modalFullBtn, { backgroundColor: '#0288D1' }]}
               onPress={takePhotoForExistingReport}
             >
-              <Icon name="camera" size={16} color="#fff" />
-              <Text style={styles.buttonText}>Take Photo</Text>
+              <Icon name="camera" size={16} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.textStyle}>Take Photo</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionButton, styles.cancelButton]}
-              onPress={() => setAddFileOptionModalVisible(false)}
+              style={[styles.button, styles.buttonClose, styles.modalFullBtn]}
+              onPress={() => setAddFileOptionModalVisible(!addFileOptionModalVisible)}
             >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={styles.buttonCloseText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -846,7 +854,9 @@ const FieldManagerScreen = ({ navigation, route }) => {
         animationType="slide"
         transparent={false}
         visible={showMapModal}
-        onRequestClose={() => setShowMapModal(false)}
+        onRequestClose={() => {
+          setShowMapModal(false);
+        }}
       >
         <View style={styles.mapModalContainer}>
           {selectedMapCoords && (
@@ -878,10 +888,10 @@ const FieldManagerScreen = ({ navigation, route }) => {
             </View>
           )}
           <TouchableOpacity
-            style={styles.mapCloseButton}
+            style={[styles.button, styles.buttonClose, styles.mapCloseButton]}
             onPress={() => setShowMapModal(false)}
           >
-            <Text style={styles.buttonText}>Close Map</Text>
+            <Text style={styles.textStyle}>Close Map</Text>
           </TouchableOpacity>
         </View>
       </Modal>
@@ -948,6 +958,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginLeft: 3,
   },
+  mapModalContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#fff',
+  },
   label: {
     fontSize: 16,
     fontWeight: 'bold',
@@ -971,47 +987,53 @@ const styles = StyleSheet.create({
   },
   largeImage: {
     width: width,
-    height: height - 200,
+    height: height - 200, // Adjust height to leave space for buttons and date
     resizeMode: 'contain',
   },
   largeVideo: {
     width: width,
-    height: height - 200,
+    height: height - 200, // Adjust height to leave space for buttons and date
   },
   map: {
     flex: 1,
     width: '100%',
   },
-  mapModalContainer: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#fff',
-  },
   mapCloseButton: {
     position: 'absolute',
     bottom: 20,
     alignSelf: 'center',
-    backgroundColor: '#64748B',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
+    width: 150,
   },
-
-  /* ====== PORTAL-STYLE MODAL (NO SCROLLING) ====== */
-  centeredView: {
-    flex: 1,
+  mapLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1000,
+  },
+  mapLoadingText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: Platform.OS === 'web' ? 20 : 16,
   },
-  portalModalCard: {
-    width: '100%',
-    maxWidth: Platform.OS === 'web' ? 520 : '90%',
-    maxHeight: '80%',
+  modalCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 620 : 430,
+    height: Platform.OS === 'web' ? '88vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
@@ -1032,123 +1054,63 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  portalModalHeader: {
+  modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
     backgroundColor: '#fff',
-    flexShrink: 0,
   },
-  portalModalTitle: {
-    fontSize: 16,
+  modalHeaderTitle: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#0f172a',
   },
-  closeButtonCircle: {
+  modalCloseBtn: {
     padding: 6,
   },
-  portalModalContent: {
+  modalScrollView: {
     flex: 1,
     width: '100%',
   },
-  portalScrollContent: {
+  scrollViewContent: {
+    padding: 20,
     flexGrow: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  portalModalFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#fff',
-    flexShrink: 0,
-    gap: 10,
+    paddingBottom: 24,
   },
   fieldLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#334155',
     marginBottom: 8,
-    marginTop: 8,
+    marginTop: 6,
   },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    backgroundColor: '#f8fafc',
-    fontSize: 14,
-    color: '#333',
-    textAlignVertical: 'top',
-  },
-  buttonRow: {
+  stickyFooterContainer: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#fff',
   },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    gap: 6,
-    flex: 1,
-  },
-  galleryButton: {
-    backgroundColor: '#0288D1',
-  },
-  cameraButton: {
-    backgroundColor: '#00796B',
-  },
-  buttonText: {
+  buttonCloseText: {
     color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
+    fontWeight: '700',
+    fontSize: 15,
   },
-  fileList: {
-    marginBottom: 8,
-  },
-  footerButton: {
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-  },
-  cancelButton: {
-    backgroundColor: '#E2E8F0',
-  },
-  cancelButtonText: {
-    color: '#475569',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  submitButton: {
-    backgroundColor: '#10B981',
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  optionCard: {
+  optionModalCard: {
     width: '100%',
-    maxWidth: Platform.OS === 'web' ? 400 : 340,
+    maxWidth: Platform.OS === 'web' ? 440 : 380,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
+    borderRadius: 24,
+    padding: 24,
     alignItems: 'center',
+    maxHeight: '85%',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     ...Platform.select({
@@ -1166,11 +1128,86 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  optionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 16,
-    color: '#0f172a',
+  optionModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    color: '#222',
+  },
+  modalFullBtn: {
+    width: '100%',
+    marginBottom: 12,
+  },
+  modalView: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "white",
+  },
+  centeredView: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    padding: Platform.OS === 'web' ? 20 : 16,
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginTop: 20,
+  },
+  button: {
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    width: '48%',
+  },
+  buttonSubmit: {
+    backgroundColor: "#4CAF50",
+  },
+  buttonClose: {
+    backgroundColor: "#64748B",
+  },
+  textStyle: {
+    color: "white",
+    fontWeight: "bold",
+    textAlign: "center"
+  },
+  modalText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 18,
+    backgroundColor: '#fafafa',
+    width: '100%',
+    minHeight: 110,
+    textAlignVertical: 'top',
+    fontSize: 15,
+    color: '#333',
+  },
+  fileSelectionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 15,
+  },
+  fileSelectionButton: {
+    backgroundColor: '#03A9F4',
+    padding: 10,
+    borderRadius: 5,
+    alignItems: 'center',
+    width: '45%',
   },
   fab: {
     position: 'absolute',
@@ -1232,7 +1269,7 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     padding: 8,
     position: 'absolute',
-    top: 20,
+    top: 20, // Adjust as needed
     alignSelf: 'center',
     zIndex: 100,
   },
@@ -1253,17 +1290,6 @@ const styles = StyleSheet.create({
     color: 'white',
     marginLeft: 5,
     fontSize: 14,
-  },
-  modalView: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "white",
-  },
-  textStyle: {
-    color: "white",
-    fontWeight: "bold",
-    textAlign: "center"
   },
 });
 
