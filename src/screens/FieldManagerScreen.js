@@ -14,6 +14,7 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
+  Linking,
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
@@ -637,22 +638,56 @@ const FieldManagerScreen = ({ navigation, route }) => {
             <TouchableOpacity onPress={() => openPhotoViewer(item)}>
               <View style={styles.reportItem}>
                 <View style={styles.reportHeader}>
-                  <Text style={styles.label}>Description: {item.description}</Text>
-                  {hasLocation ? (
-                    <TouchableOpacity 
-                      onPress={() => handleShowMap(item.latitude, item.longitude)} 
-                      style={styles.mapIconContainer}
-                      accessibilityLabel="View location on map"
+                  <Text style={[styles.label, { flex: 1, marginRight: 8 }]}>Description: {item.description}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {hasLocation ? (
+                      <>
+                        <View
+                          onStartShouldSetResponder={() => true}
+                          onTouchEnd={(e) => {
+                            e.stopPropagation();
+                            handleShowMap(item.latitude, item.longitude);
+                          }}
+                          style={[styles.mapIconContainer, { marginRight: 6 }]}
+                          accessibilityLabel="View location on map"
+                        >
+                          <Icon name="map-marker" size={18} color="#007AFF" />
+                          <Text style={styles.mapIconText}>Map</Text>
+                        </View>
+                        <View
+                          onStartShouldSetResponder={() => true}
+                          onTouchEnd={(e) => {
+                            e.stopPropagation();
+                            const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+                            Linking.openURL(url).catch(() =>
+                              Alert.alert('Error', 'Could not open Google Maps.')
+                            );
+                          }}
+                          style={[styles.mapIconContainer, { marginRight: 6, backgroundColor: '#FFF3E0', borderColor: '#FFD0A0' }]}
+                          accessibilityLabel="Get directions"
+                        >
+                          <Icon name="location-arrow" size={16} color="#FF9500" />
+                          <Text style={[styles.mapIconText, { color: '#FF9500' }]}>Directions</Text>
+                        </View>
+                      </>
+                    ) : (
+                      <View style={[styles.noLocationContainer, { marginRight: 6 }]}>
+                        <Icon name="map-marker" size={14} color="#999" />
+                        <Text style={styles.noLocationText}>No Location</Text>
+                      </View>
+                    )}
+                    <View
+                      onStartShouldSetResponder={() => true}
+                      onTouchEnd={(e) => {
+                        e.stopPropagation();
+                        handleDeleteReport(item.id);
+                      }}
+                      style={styles.deleteReportBtn}
+                      accessibilityLabel="Delete report"
                     >
-                      <Icon name="map-marker" size={18} color="#007AFF" />
-                      <Text style={styles.mapIconText}>View on Map</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <View style={styles.noLocationContainer}>
-                      <Icon name="map-marker" size={14} color="#999" />
-                      <Text style={styles.noLocationText}>No Location</Text>
+                      <Icon name="trash-o" size={18} color="#f44336" />
                     </View>
-                  )}
+                  </View>
                 </View>
                 <Text style={styles.reportDateText}>Reported At: {new Date(item.reported_at).toLocaleString()}</Text>
                 <FlatList
@@ -919,6 +954,15 @@ const styles = StyleSheet.create({
     color: '#999',
     fontSize: 11,
     marginLeft: 3,
+  },
+  deleteReportBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#FFF0F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FFCDD2',
   },
   mapModalContainer: {
     flex: 1,

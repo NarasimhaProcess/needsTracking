@@ -14,6 +14,7 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
+  Linking,
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as DocumentPicker from 'expo-document-picker';
@@ -666,13 +667,17 @@ const CustomerDamageScreen = ({ navigation, route }) => {
               >
                 <View style={styles.reportHeader}>
                   <Text style={styles.reportDescription}>{item.description}</Text>
-                  <TouchableOpacity
+                  <View
+                    onStartShouldSetResponder={() => true}
+                    onTouchEnd={(e) => {
+                      e.stopPropagation();
+                      handleDeleteReport(item.id);
+                    }}
                     style={styles.deleteReportBtn}
-                    onPress={() => handleDeleteReport(item.id)}
                     accessibilityLabel="Delete report"
                   >
                     <Icon name="trash-o" size={18} color="#f44336" />
-                  </TouchableOpacity>
+                  </View>
                 </View>
 
                 <View style={styles.metaRow}>
@@ -680,14 +685,29 @@ const CustomerDamageScreen = ({ navigation, route }) => {
                     <Icon name="clock-o" size={12} color="#888" /> {new Date(item.reported_at).toLocaleString()}
                   </Text>
                   {hasLocation ? (
-                    <TouchableOpacity
-                      onPress={() => handleShowMap(item.latitude, item.longitude)}
-                      style={styles.mapIconContainer}
-                      accessibilityLabel="View location on map"
-                    >
-                      <Icon name="map-marker" size={14} color="#007AFF" />
-                      <Text style={styles.mapIconText}>View Map</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => handleShowMap(item.latitude, item.longitude)}
+                        style={styles.mapIconContainer}
+                        accessibilityLabel="View location on map"
+                      >
+                        <Icon name="map-marker" size={14} color="#007AFF" />
+                        <Text style={styles.mapIconText}>View Map</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+                          Linking.openURL(url).catch(() =>
+                            Alert.alert('Error', 'Could not open Google Maps.')
+                          );
+                        }}
+                        style={[styles.mapIconContainer, { backgroundColor: '#FFF3E0', borderColor: '#FFD0A0' }]}
+                        accessibilityLabel="Get directions"
+                      >
+                        <Icon name="location-arrow" size={14} color="#FF9500" />
+                        <Text style={[styles.mapIconText, { color: '#FF9500' }]}>Directions</Text>
+                      </TouchableOpacity>
+                    </View>
                   ) : (
                     <View style={styles.noLocationContainer}>
                       <Icon name="map-marker" size={12} color="#999" />

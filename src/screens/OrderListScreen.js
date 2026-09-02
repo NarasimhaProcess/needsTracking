@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Linking } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
 import { printReceipt, extractOrderNumbers } from '../services/printerService';
 import Icon from 'react-native-vector-icons/FontAwesome';
@@ -164,6 +164,29 @@ const OrderListScreen = ({ navigation, route }) => {
     );
   };
 
+  const openMapsDirections = (shippingAddress) => {
+    if (!shippingAddress) {
+      showAlert('No Address', 'This order has no delivery address.');
+      return;
+    }
+    const parts = [
+      shippingAddress.address,
+      shippingAddress.city,
+      shippingAddress.postalCode,
+      shippingAddress.country,
+    ].filter(Boolean);
+    if (parts.length === 0) {
+      showAlert('No Address', 'This order has no delivery address.');
+      return;
+    }
+    const query = encodeURIComponent(parts.join(', '));
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${query}`;
+    Linking.openURL(url).catch(() => {
+      showAlert('Error', 'Could not open maps. Please check if Google Maps is installed.');
+    });
+  };
+
+
   const renderOrderItem = ({ item }) => {
     const { orderNumber, dayOrderNo } = extractOrderNumbers(item);
     return (
@@ -197,6 +220,15 @@ const OrderListScreen = ({ navigation, route }) => {
           <TouchableOpacity onPress={() => handleDeleteOrder(item.id)}>
             <Icon name="trash" size={20} color="#FF3B30" style={styles.actionIcon} />
           </TouchableOpacity>
+          {item.order_type !== 'shop-order' && item.shipping_address && (
+            <TouchableOpacity
+              onPress={() => openMapsDirections(item.shipping_address)}
+              style={{ marginLeft: 8 }}
+              accessibilityLabel="Get Directions"
+            >
+              <Icon name="map-marker" size={20} color="#FF9500" style={styles.actionIcon} />
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );
