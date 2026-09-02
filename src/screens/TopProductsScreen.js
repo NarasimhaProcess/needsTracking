@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Modal,
   Button,
+  Alert,
   ScrollView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
@@ -18,9 +19,6 @@ import { Video } from 'expo-av';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { useCart } from '../context/CartContext';
-import { showAlert } from '../utils/alertUtils';
-import PreLoginFooter from '../components/PreLoginFooter';
-import PortalsMenuModal from '../components/PortalsMenuModal';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -47,7 +45,6 @@ const TopProductsScreen = ({ navigation, route }) => {
   const [user, setUser] = useState(null);
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for full screen image viewer
   const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
-  const [isMenuVisible, setIsMenuVisible] = useState(false);
 
   useEffect(() => {
     const fetchUserAndCustomerId = async () => {
@@ -119,7 +116,7 @@ const TopProductsScreen = ({ navigation, route }) => {
   const handleAddToCart = async () => {
     const combination = getVariantCombination();
     if (!combination) {
-      showAlert('Error', 'Product information is incomplete.');
+      Alert.alert('Error', 'Product information is incomplete.');
       return;
     }
 
@@ -144,14 +141,14 @@ const TopProductsScreen = ({ navigation, route }) => {
       const cartData = await getCart(currentUser.id);
       setCart(cartData);
       setIsProductDetailModalVisible(false);
-      showAlert('Success', 'Item added to cart!');
+      Alert.alert('Success', 'Item added to cart!');
       if (role === 'buyer' || role === 'customer') {
         navigation.goBack();
       } else {
         setIsCartModalVisible(true);
       }
     } else {
-      showAlert('Error', 'Failed to add item to cart.');
+      Alert.alert('Error', 'Failed to add item to cart.');
     }
   };
 
@@ -257,33 +254,6 @@ const TopProductsScreen = ({ navigation, route }) => {
 
   return (
     <View style={{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }}>
-      {/* Top Header */}
-      <View style={styles.topHeader}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity
-            style={{ marginRight: 12 }}
-            onPress={() => {
-              if (navigation.canGoBack()) {
-                navigation.goBack();
-              } else {
-                navigation.navigate('Welcome');
-              }
-            }}
-          >
-            <Icon name="arrow-left" size={18} color="#007AFF" />
-          </TouchableOpacity>
-          <Text style={styles.topHeaderTitle}>Featured Products</Text>
-        </View>
-
-        <TouchableOpacity
-          style={{ padding: 4 }}
-          onPress={() => setIsMenuVisible(true)}
-          accessibilityLabel="Portals Menu"
-        >
-          <Icon name="ellipsis-h" size={20} color="#1E293B" />
-        </TouchableOpacity>
-      </View>
-
       <FlatList
         data={products}
         renderItem={renderProduct}
@@ -292,14 +262,13 @@ const TopProductsScreen = ({ navigation, route }) => {
         style={{ flex: 1, width: '100%' }}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[styles.container, { flexGrow: 1, paddingBottom: 120 }]}
-        ListFooterComponent={<PreLoginFooter containerStyle={{ marginVertical: 20, width: '100%' }} />}
+        contentContainerStyle={[styles.container, { flexGrow: 1, paddingBottom: 60 }]}
       />
 
       {/* Product Detail Modal */}
       {selectedProduct && (
         <Modal
-          animationType="fade"
+          animationType="slide"
           transparent={true}
           visible={isProductDetailModalVisible}
           onRequestClose={() => {
@@ -446,7 +415,7 @@ const TopProductsScreen = ({ navigation, route }) => {
 
       {/* Cart Modal */}
       <Modal
-        animationType="fade"
+        animationType="slide"
         transparent={true}
         visible={isCartModalVisible}
         onRequestClose={() => {
@@ -496,33 +465,11 @@ const TopProductsScreen = ({ navigation, route }) => {
       <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
         <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
       </Modal>
-
-      {/* Portals & Pre-login 3-dots Menu Modal */}
-      <PortalsMenuModal
-        visible={isMenuVisible}
-        onClose={() => setIsMenuVisible(false)}
-        navigation={navigation}
-      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  topHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  topHeaderTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#0F172A',
-  },
   container: {
     padding: 10,
   },
@@ -560,38 +507,24 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 20 : 16,
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'white',
     padding: 20,
-    borderRadius: 24,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderRadius: Platform.OS === 'web' ? 16 : 0,
     width: '100%',
-    maxWidth: Platform.OS === 'web' ? 580 : 420,
-    height: Platform.OS === 'web' ? '88vh' : '86%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
+    maxWidth: 650,
+    height: Platform.OS === 'web' ? '88vh' : '88%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '88%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 24,
-      },
-      android: {
-        elevation: 12,
-      },
-      web: {
-        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
-      },
-    }),
   },
   scrollView: {
     flex: 1,

@@ -8,14 +8,13 @@ import {
   ScrollView,
   Image,
   TouchableOpacity,
+  Alert,
   Modal,
 } from 'react-native';
 import { Video } from 'expo-av';
 import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { addToCart, supabase } from '../services/supabase';
-import { showAlert } from '../utils/alertUtils';
-import PreLoginFooter from '../components/PreLoginFooter';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -120,7 +119,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
   const handleAddToCart = async () => {
     const combination = getVariantCombination();
     if (!combination) {
-      showAlert('Error', 'Product information is incomplete.');
+      Alert.alert('Error', 'Product information is incomplete.');
       return;
     }
 
@@ -136,9 +135,9 @@ const ProductDetailScreen = ({ navigation, route }) => {
 
     const result = await addToCart(currentUser.id, combination.id, quantity);
     if (result) {
-      showAlert('Success', `${quantity} item(s) added to cart.`);
+      Alert.alert('Success', `${quantity} item(s) added to cart.`);
     } else {
-      showAlert('Error', 'Failed to add item to cart.');
+      Alert.alert('Error', 'Failed to add item to cart.');
     }
   };
 
@@ -280,8 +279,6 @@ const ProductDetailScreen = ({ navigation, route }) => {
             <Text style={styles.addToCartButtonText}>Add to Cart</Text>
           </TouchableOpacity>
         </View>
-
-        <PreLoginFooter containerStyle={{ marginTop: 24 }} />
       </ScrollView>
 
       <Modal visible={isModalVisible} transparent={true} onRequestClose={() => setIsModalVisible(false)}>
@@ -306,7 +303,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 80,
+    paddingBottom: 24,
   },
   swiper: {
     height: 300,

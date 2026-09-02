@@ -9,18 +9,15 @@ import {
   TouchableOpacity,
   TextInput,
   Button,
+  Alert
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import { Picker } from '@react-native-picker/picker';
 import debounce from 'lodash.debounce';
-import Icon from 'react-native-vector-icons/FontAwesome';
 import InventoryHistory from '../components/InventoryHistory';
-import { showAlert } from '../utils/alertUtils';
-import PortalsMenuModal from '../components/PortalsMenuModal';
 
-const InventoryScreen = ({ route, navigation }) => {
-  const { session, userId: routeUserId } = route.params || {};
-  const [currentUserId, setCurrentUserId] = useState(routeUserId || session?.user?.id || null);
+
+const InventoryScreen = ({ route }) => {
+  const { session, userId } = route.params || {};
   const [loading, setLoading] = useState(true);
   const [inventory, setInventory] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -28,26 +25,15 @@ const InventoryScreen = ({ route, navigation }) => {
   const [quantityChange, setQuantityChange] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('adjust'); // 'adjust' or 'restock'
-  const [isMenuVisible, setIsMenuVisible] = useState(false);
 
-  const resolveUserId = useCallback(async () => {
-    if (currentUserId) return currentUserId;
-    if (routeUserId) {
-      setCurrentUserId(routeUserId);
-      return routeUserId;
+  useEffect(() => {
+    if (userId) {
+      fetchInventory();
     }
-    const { data: { session: activeSession } } = await supabase.auth.getSession();
-    const id = activeSession?.user?.id;
-    if (id) {
-      setCurrentUserId(id);
-      return id;
-    }
-    return null;
-  }, [currentUserId, routeUserId]);
+  }, [userId]);
 
-  const fetchInventory = useCallback(async (query = '') => {
-    const id = await resolveUserId();
-    if (!id) {
+  const fetchInventory = async (query = '') => {
+    if (!userId) {
       setInventory([]);
       setLoading(false);
       return;
@@ -62,7 +48,7 @@ const InventoryScreen = ({ route, navigation }) => {
         quantity,
         products!inner(product_name, user_id)
       `)
-      .eq('products.user_id', id);
+      .eq('products.user_id', userId);
 
     if (query) {
       supabaseQuery = supabaseQuery.ilike('products.product_name', `%${query}%`);
@@ -72,18 +58,12 @@ const InventoryScreen = ({ route, navigation }) => {
 
     if (error) {
       console.error('Error fetching inventory:', error.message);
-      showAlert('Error', 'Failed to fetch inventory.');
+      Alert.alert('Error', 'Failed to fetch inventory.');
     } else {
-      setInventory(data || []);
+      setInventory(data);
     }
     setLoading(false);
-  }, [resolveUserId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      fetchInventory(searchQuery);
-    }, [fetchInventory, searchQuery])
-  );
+  };
 
   const debouncedFetchInventory = useCallback(debounce(fetchInventory, 300), [userId]);
 
@@ -95,7 +75,7 @@ const InventoryScreen = ({ route, navigation }) => {
 
   const handleAdjustQuantity = async () => {
     if (!selectedItem || !quantityChange || isNaN(parseInt(quantityChange))) {
-      showAlert('Invalid Input', 'Please select an item and enter a valid quantity.');
+      Alert.alert('Invalid Input', 'Please select an item and enter a valid quantity.');
       return;
     }
 
@@ -110,7 +90,7 @@ const InventoryScreen = ({ route, navigation }) => {
 
     if (updateError) {
       console.error('Error updating quantity:', updateError.message);
-      showAlert('Error', 'Failed to update quantity.');
+      Alert.alert('Error', 'Failed to update quantity.');
     } else {
       // Record in inventory_history
       const { error: historyError } = await supabase
@@ -127,7 +107,7 @@ const InventoryScreen = ({ route, navigation }) => {
         console.error('Error recording inventory history:', historyError.message);
       }
 
-      showAlert('Success', 'Inventory updated successfully!');
+      Alert.alert('Success', 'Inventory updated successfully!');
       setQuantityChange('');
       fetchInventory(searchQuery); // Refresh inventory list
     }
@@ -141,7 +121,7 @@ const InventoryScreen = ({ route, navigation }) => {
 
   const restockProduct = async (product_variant_combination_id, quantity) => {
     if (!quantity || isNaN(parseInt(quantity))) {
-      showAlert('Invalid Input', 'Please enter a valid quantity.');
+      Alert.alert('Invalid Input', 'Please enter a valid quantity.');
       return;
     }
     setLoading(true);
@@ -152,7 +132,7 @@ const InventoryScreen = ({ route, navigation }) => {
       .eq('id', product_variant_combination_id);
 
     if (error) {
-      showAlert('Error', `Failed to restock product: ${error.message}`);
+      Alert.alert('Error', `Failed to restock product: ${error.message}`);
     } else {
       // Record in inventory_history
       const { error: historyError } = await supabase
@@ -168,7 +148,7 @@ const InventoryScreen = ({ route, navigation }) => {
       if (historyError) {
         console.error('Error recording inventory history:', historyError.message);
       }
-      showAlert('Success', 'Product restocked successfully!');
+      Alert.alert('Success', 'Product restocked successfully!');
       setQuantityChange('');
       fetchInventory(searchQuery);
     }
@@ -187,9 +167,6 @@ const InventoryScreen = ({ route, navigation }) => {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Inventory Management</Text>
-        <TouchableOpacity onPress={() => setIsMenuVisible(true)} accessibilityLabel="Portals Menu">
-          <Icon name="ellipsis-h" size={20} color="#1E293B" />
-        </TouchableOpacity>
       </View>
       <View style={styles.filtersContainer}>
         <TextInput
@@ -256,7 +233,7 @@ const InventoryScreen = ({ route, navigation }) => {
                   <Text style={styles.modalTitle}>Restock Inventory for {selectedItem.products ? selectedItem.products.product_name : 'Product not found'} - {selectedItem.combination_string}</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="Quantity to Add"
+                    placeholder="Restock Quantity"
                     keyboardType="numeric"
                     value={quantityChange}
                     onChangeText={setQuantityChange}
@@ -273,13 +250,6 @@ const InventoryScreen = ({ route, navigation }) => {
           <InventoryHistory product_variant_combination_id={selectedItemId} />
         </View>
       </View>
-
-      {/* Portals & Pre-login 3-dots Menu Modal */}
-      <PortalsMenuModal
-        visible={isMenuVisible}
-        onClose={() => setIsMenuVisible(false)}
-        navigation={navigation}
-      />
     </View>
   );
 };

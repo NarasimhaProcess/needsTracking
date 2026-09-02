@@ -1,9 +1,9 @@
+// src/services/printerService.js
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import * as Print from 'expo-print';
 import { supabase } from './supabase';
 import { announceOrderPrint } from './speechService';
-import { showAlert } from '../utils/alertUtils';
 
 const PRINTER_STORAGE_KEY = '@printer_config_v1';
 
@@ -688,7 +688,7 @@ export const printDataPayload = async (dataPayload) => {
  */
 export const printReceipt = async (orderDetails, options = {}) => {
   if (!orderDetails) {
-    showAlert('Error', 'No order details available to print.');
+    Alert.alert('Error', 'No order details available to print.');
     return { success: false, error: 'No order details provided' };
   }
 
@@ -866,7 +866,7 @@ export const printReceipt = async (orderDetails, options = {}) => {
     return result;
   } catch (err) {
     console.error('[PrinterService] printReceipt error:', err);
-    showAlert(
+    Alert.alert(
       'Print Failed',
       `Could not print receipt: ${err.message || err}.\n\nPlease ensure your printer is powered on or select printer settings.`,
       [{ text: 'OK' }]
@@ -882,7 +882,7 @@ export const printReceipt = async (orderDetails, options = {}) => {
  */
 export const printPreBill = async (cart) => {
   if (!cart || !cart.cart_items || cart.cart_items.length === 0) {
-    showAlert('Empty Cart', 'There are no items to print a pre-bill for.');
+    Alert.alert('Empty Cart', 'There are no items to print a pre-bill for.');
     return;
   }
 
@@ -923,7 +923,7 @@ export const printPreBill = async (cart) => {
     const result = await printDataPayload(payload);
     return result;
   } catch (err) {
-    showAlert('Print Failed', `Could not print pre-bill: ${err.message || err}`);
+    Alert.alert('Print Failed', `Could not print pre-bill: ${err.message || err}`);
     return { success: false, error: err };
   }
 };
@@ -952,10 +952,10 @@ export const printTestReceipt = async () => {
 
   try {
     const result = await printDataPayload(payload);
-    showAlert('Test Print Sent', `Test slip successfully sent to ${config.printerName || 'Printer'}.`);
+    Alert.alert('Test Print Sent', `Test slip successfully sent to ${config.printerName || 'Printer'}.`);
     return result;
   } catch (err) {
-    showAlert('Test Print Error', err.message || 'Failed to print test slip.');
+    Alert.alert('Test Print Error', err.message || 'Failed to print test slip.');
   }
 };
 

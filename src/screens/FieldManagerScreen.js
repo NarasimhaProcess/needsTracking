@@ -27,7 +27,6 @@ import { Video } from 'expo-av';
 import UniversalWebView from '../components/UniversalWebView';
 import * as Clipboard from 'expo-clipboard';
 import { Buffer } from 'buffer';
-import { showAlert } from '../utils/alertUtils';
 
 const { width, height } = Dimensions.get('window');
 
@@ -194,7 +193,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
         const newFiles = [];
         for (const asset of result.assets) {
           if (asset.mimeType && asset.mimeType.startsWith('video') && asset.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
-            showAlert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+            Alert.alert('Video Too Large', `Video file ${asset.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
             continue;
           }
           newFiles.push(asset);
@@ -210,7 +209,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        showAlert('Permission Required', 'Camera permission is required to take photos.');
+        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
         return;
       }
 
@@ -326,7 +325,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
 
   const handleSubmit = async () => {
     if (!description.trim()) {
-      showAlert('Missing Information', 'Please provide a description of the damage.');
+      Alert.alert('Missing Information', 'Please provide a description of the damage.');
       return;
     }
 
@@ -335,7 +334,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       const { data: { user } } = await supabase.auth.getUser();
 
       if (!user) {
-        showAlert('Authentication Error', 'User not logged in. Please sign in to submit a damage report.');
+        Alert.alert('Authentication Error', 'User not logged in. Please sign in to submit a damage report.');
         setLoading(false);
         return;
       }
@@ -396,14 +395,14 @@ const FieldManagerScreen = ({ navigation, route }) => {
         }
       }
 
-      showAlert('Success', 'Damage report submitted successfully!');
+      Alert.alert('Success', 'Damage report submitted successfully!');
       setDescription('');
       setFiles([]);
       setModalVisible(false);
       await fetchDamageReports();
     } catch (error) {
       console.error('Error submitting report:', error.message || error);
-      showAlert('Submission Error', `Failed to submit report: ${error.message || 'Unknown error'}`);
+      Alert.alert('Submission Error', `Failed to submit report: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -424,7 +423,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       if (result.canceled === false && result.assets) {
         for (const file of result.assets) {
           if (file.mimeType && file.mimeType.startsWith('video') && file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
-            showAlert('Video Too Large', `Video file ${file.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
+            Alert.alert('Video Too Large', `Video file ${file.name} exceeds the maximum size of ${MAX_VIDEO_SIZE_MB} MB.`);
             continue;
           }
           const fileUrl = await uploadFile(file);
@@ -452,7 +451,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       }
     } catch (err) {
       console.error('Error adding new files:', err.message);
-      showAlert('Error', 'Could not add new files.');
+      Alert.alert('Error', 'Could not add new files.');
     }
   };
 
@@ -461,7 +460,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        showAlert('Permission Required', 'Camera permission is required to take photos.');
+        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
         return;
       }
 
@@ -502,7 +501,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       }
     } catch (err) {
       console.error('Error adding photo:', err.message);
-      showAlert('Error', 'Could not add new photo.');
+      Alert.alert('Error', 'Could not add new photo.');
     }
   };
 
@@ -536,12 +535,12 @@ const FieldManagerScreen = ({ navigation, route }) => {
       }
     } catch (err) {
       console.error('Error deleting file:', err.message);
-      showAlert('Error', 'Could not delete file.');
+      Alert.alert('Error', 'Could not delete file.');
     }
   };
 
   const handleDeleteReport = (reportId) => {
-    showAlert(
+    Alert.alert(
       'Delete Damage Report',
       'Are you sure you want to delete this damage report and its attached media?',
       [
@@ -559,10 +558,10 @@ const FieldManagerScreen = ({ navigation, route }) => {
                 setPhotoModalVisible(false);
                 setSelectedReport(null);
               }
-              showAlert('Success', 'Damage report deleted.');
+              Alert.alert('Success', 'Damage report deleted.');
             } catch (err) {
               console.error('Error deleting report:', err.message);
-              showAlert('Error', 'Could not delete report.');
+              Alert.alert('Error', 'Could not delete report.');
             }
           },
         },
@@ -574,7 +573,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
     const lat = Number(latitude);
     const lon = Number(longitude);
     if (isNaN(lat) || isNaN(lon)) {
-      showAlert('Location Error', 'Invalid coordinates for this report');
+      Alert.alert('Location Error', 'Invalid coordinates for this report');
       return;
     }
     
@@ -678,7 +677,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
       
       {/* New Report Modal */}
       <Modal
-        animationType="fade"
+        animationType="slide"
         transparent={true}
         visible={modalVisible}
         onRequestClose={() => {
@@ -879,7 +878,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
                 onPress={async () => {
                   const coordsString = `${selectedMapCoords.latitude},${selectedMapCoords.longitude}`;
                   await Clipboard.setStringAsync(coordsString);
-                  showAlert('Copied!', 'Coordinates copied to clipboard.');
+                  Alert.alert('Copied!', 'Coordinates copied to clipboard.');
                 }}
               >
                 <Icon name="copy" size={16} color="white" />
@@ -1022,37 +1021,28 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 20 : 16,
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderRadius: Platform.OS === 'web' ? 20 : 0,
     width: '100%',
-    maxWidth: Platform.OS === 'web' ? 620 : 430,
-    height: Platform.OS === 'web' ? '88vh' : '86%',
-    maxHeight: Platform.OS === 'web' ? '88vh' : '86%',
+    maxWidth: 640,
+    height: Platform.OS === 'web' ? '88vh' : '90%',
+    maxHeight: Platform.OS === 'web' ? '88vh' : '90%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 24,
-      },
-      android: {
-        elevation: 12,
-      },
-      web: {
-        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
-      },
-    }),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1104,29 +1094,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   optionModalCard: {
-    width: '100%',
-    maxWidth: Platform.OS === 'web' ? 440 : 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    width: width * 0.85,
+    maxWidth: 420,
+    backgroundColor: '#fff',
+    borderRadius: 16,
     padding: 24,
     alignItems: 'center',
     maxHeight: '85%',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 24,
-      },
-      android: {
-        elevation: 12,
-      },
-      web: {
-        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
-      },
-    }),
   },
   optionModalTitle: {
     fontSize: 18,
@@ -1148,8 +1122,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    padding: Platform.OS === 'web' ? 20 : 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   buttonContainer: {
     flexDirection: 'row',
