@@ -72,7 +72,7 @@ function getRawDistanceKm(lat1, lon1, lat2, lon2) {
   }
 }
 
-export default function SellersMapScreen() {
+export default function SellersMapScreen({ route }) {
   const navigation = useNavigation();
   const { user, role } = useCart();
   const { width: windowWidth } = useWindowDimensions();
@@ -299,6 +299,8 @@ export default function SellersMapScreen() {
             avatar_url: null,
             firstPhoto: custFirstPhoto,
             mediaList: custProdMedia,
+            is_store_active: true,
+            is_map_active: true,
             isProfile: false,
           };
         });
@@ -321,6 +323,8 @@ export default function SellersMapScreen() {
             hasExactCoordinates: true,
             productCount: 12,
             avatar_url: null,
+            is_store_active: true,
+            is_map_active: true,
             isProfile: true,
           },
           {
@@ -336,6 +340,8 @@ export default function SellersMapScreen() {
             hasExactCoordinates: true,
             productCount: 8,
             avatar_url: null,
+            is_store_active: true,
+            is_map_active: true,
             isProfile: true,
           },
           {
@@ -351,6 +357,8 @@ export default function SellersMapScreen() {
             hasExactCoordinates: true,
             productCount: 15,
             avatar_url: null,
+            is_store_active: true,
+            is_map_active: true,
             isProfile: true,
           },
         ];
@@ -397,15 +405,38 @@ export default function SellersMapScreen() {
     return null;
   }, []);
 
-  // Active sellers for interactive map (only sellers where is_map_active === true)
+  // Active sellers for interactive map (sellers where map is not explicitly disabled, or who have products)
   const mapActiveSellers = useMemo(() => {
-    return sellers.filter((s) => s.is_map_active === true);
+    return sellers.filter((s) => s.is_map_active !== false || (s.productCount && s.productCount > 0));
   }, [sellers]);
 
-  // Active sellers for store directory list (only sellers where is_store_active === true)
+  // Active sellers for store directory list (sellers where store is not explicitly disabled, or who have products)
   const storeActiveSellers = useMemo(() => {
-    return sellers.filter((s) => s.is_store_active === true);
+    return sellers.filter((s) => s.is_store_active !== false || (s.productCount && s.productCount > 0));
   }, [sellers]);
+
+  // Handle direct navigation to a specific seller via route params
+  useEffect(() => {
+    const targetId = route?.params?.selectedSellerId || route?.params?.sellerId;
+    if (targetId && sellers.length > 0) {
+      const match = sellers.find((s) => String(s.id) === String(targetId));
+      if (match) {
+        setSelectedSeller(match);
+        if (match.latitude && match.longitude) {
+          sendMapMessage({
+            type: "SET_VIEW",
+            latitude: match.latitude,
+            longitude: match.longitude,
+            zoom: 16,
+          });
+          sendMapMessage({
+            type: "OPEN_SELLER",
+            sellerId: match.id,
+          });
+        }
+      }
+    }
+  }, [route?.params?.selectedSellerId, route?.params?.sellerId, sellers, sendMapMessage]);
 
   // Initialize data
   const initData = useCallback(async () => {
@@ -414,14 +445,28 @@ export default function SellersMapScreen() {
       const fetchedSellers = await fetchSellersData();
 
       if (fetchedSellers && fetchedSellers.length > 0) {
-        const firstActive = fetchedSellers.find((s) => s.is_store_active === true || s.is_map_active === true) || fetchedSellers[0];
+        const targetId = route?.params?.selectedSellerId || route?.params?.sellerId;
+        const targetSeller = targetId ? fetchedSellers.find((s) => String(s.id) === String(targetId)) : null;
+        const firstActive = targetSeller || fetchedSellers.find((s) => s.is_store_active !== false || s.is_map_active !== false || (s.productCount && s.productCount > 0)) || fetchedSellers[0];
         setSelectedSeller(firstActive);
+        if (targetSeller && targetSeller.latitude && targetSeller.longitude) {
+          sendMapMessage({
+            type: "SET_VIEW",
+            latitude: targetSeller.latitude,
+            longitude: targetSeller.longitude,
+            zoom: 16,
+          });
+          sendMapMessage({
+            type: "OPEN_SELLER",
+            sellerId: targetSeller.id,
+          });
+        }
       }
 
       // Non-blocking location fetch
       fetchLocationData().then((coords) => {
         if (coords && fetchedSellers && fetchedSellers.length > 0) {
-          const mapActive = fetchedSellers.filter((s) => s.is_map_active === true);
+          const mapActive = fetchedSellers.filter((s) => s.is_map_active !== false || (s.productCount && s.productCount > 0));
           const sorted = [...mapActive].sort((a, b) => {
             return (
               getRawDistanceKm(coords.latitude, coords.longitude, a.latitude, a.longitude) -
@@ -429,7 +474,11 @@ export default function SellersMapScreen() {
             );
           });
           if (sorted.length > 0) {
-            setSelectedSeller(sorted[0]);
+            const targetId = route?.params?.selectedSellerId || route?.params?.sellerId;
+            const targetSeller = targetId ? sorted.find((s) => String(s.id) === String(targetId)) : null;
+            if (!targetSeller) {
+              setSelectedSeller(sorted[0]);
+            }
           }
           sendMapMessage({
             type: "UPDATE_DATA",
@@ -444,7 +493,7 @@ export default function SellersMapScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [fetchSellersData, fetchLocationData, sendMapMessage]);
+  }, [fetchSellersData, fetchLocationData, sendMapMessage, route?.params?.selectedSellerId, route?.params?.sellerId]);
 
   useEffect(() => {
     initData();

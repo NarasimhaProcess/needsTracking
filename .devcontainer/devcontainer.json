@@ -1,0 +1,10 @@
+{
+  "name": "My AI Codespace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "continue.continue"
+      ]
+    }
+  }
+}
