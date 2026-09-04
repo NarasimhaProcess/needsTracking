@@ -210,6 +210,14 @@ export default function BuyerLoginScreen({ navigation, route }) {
           </TouchableOpacity>
 
           <TouchableOpacity
+            style={styles.guestButton}
+            onPress={() => navigation.navigate('Catalog')}
+          >
+            <FontAwesome name="shopping-bag" size={16} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={styles.guestButtonText}>Browse Catalog as Guest</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={styles.forgotPassword}
             onPress={handleForgotPassword}
           >
@@ -343,6 +351,22 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontSize: 16,
     fontWeight: '600',
+  },
+  guestButton: {
+    flexDirection: 'row',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: 10,
+    padding: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+  },
+  guestButtonText: {
+    color: '#007AFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
   forgotPassword: {
     alignItems: 'center',

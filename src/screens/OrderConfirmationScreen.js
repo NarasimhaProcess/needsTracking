@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { printReceipt, extractOrderNumbers } from '../services/printerService';
+import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
 
 const OrderConfirmationScreen = ({ navigation, route }) => {
@@ -39,6 +39,14 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
           >
             <Icon name="print" size={20} color="#fff" />
             <Text style={styles.printButtonText}>Print Receipt</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsIconBtn}
+            onPress={() => announceOrderPrint(order)}
+            accessibilityLabel="Announce Order Aloud"
+          >
+            <Icon name="volume-up" size={22} color="#007AFF" />
           </TouchableOpacity>
 
           <TouchableOpacity

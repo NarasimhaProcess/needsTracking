@@ -1,5 +1,6 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createStackNavigator } from '@react-navigation/stack';
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import { useCart } from '../context/CartContext';
 
@@ -9,12 +10,111 @@ import InventoryScreen from '../screens/InventoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import CatalogScreen from '../screens/CatalogScreen';
 import OrderListScreen from '../screens/OrderListScreen';
+import OrderDetailScreen from '../screens/OrderDetailScreen';
+import OrderEditScreen from '../screens/OrderEditScreen';
 import CustomerDamageScreen from '../screens/CustomerDamageScreen';
 import CustomerMapScreen from '../screens/CustomerMapScreen';
 import SellersMapScreen from '../screens/SellersMapScreen';
+import CheckoutScreen from '../screens/CheckoutScreen';
+import UpiQrScreen from '../screens/UpiQrScreen';
+import OrderConfirmationScreen from '../screens/OrderConfirmationScreen';
 import CartScreen from '../screens/CartScreen';
 
 const Tab = createBottomTabNavigator();
+const OrdersStack = createStackNavigator();
+const CartStack = createStackNavigator();
+const CatalogStack = createStackNavigator();
+
+function OrdersStackNavigator({ route }) {
+  return (
+    <OrdersStack.Navigator screenOptions={{ headerShown: false }}>
+      <OrdersStack.Screen
+        name="OrderList"
+        component={OrderListScreen}
+        initialParams={route?.params}
+      />
+      <OrdersStack.Screen
+        name="OrderDetail"
+        component={OrderDetailScreen}
+        initialParams={route?.params}
+      />
+      <OrdersStack.Screen
+        name="OrderEdit"
+        component={OrderEditScreen}
+        initialParams={route?.params}
+      />
+    </OrdersStack.Navigator>
+  );
+}
+
+function CartStackNavigator({ route }) {
+  return (
+    <CartStack.Navigator screenOptions={{ headerShown: false }}>
+      <CartStack.Screen
+        name="Cart"
+        component={CartScreen}
+        initialParams={route?.params}
+      />
+      <CartStack.Screen
+        name="Checkout"
+        component={CheckoutScreen}
+        initialParams={route?.params}
+      />
+      <CartStack.Screen
+        name="UpiQr"
+        component={UpiQrScreen}
+        initialParams={route?.params}
+      />
+      <CartStack.Screen
+        name="OrderConfirmation"
+        component={OrderConfirmationScreen}
+        initialParams={route?.params}
+      />
+      <CartStack.Screen
+        name="OrderDetail"
+        component={OrderDetailScreen}
+        initialParams={route?.params}
+      />
+    </CartStack.Navigator>
+  );
+}
+
+function CatalogStackNavigator({ route }) {
+  return (
+    <CatalogStack.Navigator screenOptions={{ headerShown: false }}>
+      <CatalogStack.Screen
+        name="Catalog"
+        component={CatalogScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="Cart"
+        component={CartScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="Checkout"
+        component={CheckoutScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="UpiQr"
+        component={UpiQrScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="OrderConfirmation"
+        component={OrderConfirmationScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="OrderDetail"
+        component={OrderDetailScreen}
+        initialParams={route?.params}
+      />
+    </CatalogStack.Navigator>
+  );
+}
 
 function ProductTabNavigator({ route }) {
   const { session } = route.params || {};
@@ -74,13 +174,13 @@ function ProductTabNavigator({ route }) {
         <>
           <Tab.Screen
             name="CatalogTab"
-            component={CatalogScreen}
+            component={CatalogStackNavigator}
             options={{ title: 'Catalog' }}
-            initialParams={{ session, userId, customerId }}
+            initialParams={{ session }}
           />
           <Tab.Screen
             name="CartTab"
-            component={CartScreen}
+            component={CartStackNavigator}
             options={{
               title: 'Cart',
               tabBarBadge: cartItemCount > 0 ? cartItemCount : undefined,
@@ -90,7 +190,7 @@ function ProductTabNavigator({ route }) {
           />
           <Tab.Screen
             name="OrdersTab"
-            component={OrderListScreen}
+            component={OrdersStackNavigator}
             options={{ title: 'My Orders' }}
             initialParams={{ session, userId, customerId }}
           />
@@ -112,13 +212,13 @@ function ProductTabNavigator({ route }) {
         <>
           <Tab.Screen
             name="CatalogTab"
-            component={CatalogScreen}
+            component={CatalogStackNavigator}
             options={{
               title: 'Catalog',
               tabBarBadge: cartItemCount > 0 ? cartItemCount : undefined,
               tabBarBadgeStyle: { backgroundColor: '#10B981', color: '#FFFFFF', fontSize: 10 },
             }}
-            initialParams={{ session, userId, customerId }}
+            initialParams={{ session, userId, sellerId: userId, customerId }}
           />
           <Tab.Screen
             name="ProductsTab"
@@ -128,7 +228,7 @@ function ProductTabNavigator({ route }) {
           />
           <Tab.Screen
             name="OrdersTab"
-            component={OrderListScreen}
+            component={OrdersStackNavigator}
             options={{ title: 'Orders' }}
             initialParams={{ session, userId, customerId }}
           />

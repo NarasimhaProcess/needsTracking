@@ -720,6 +720,7 @@ export default function WelcomeScreen() {
                       <View style={styles.dirMediaSection}>
                         <ScrollView
                           horizontal
+                          nestedScrollEnabled={true}
                           showsHorizontalScrollIndicator={false}
                           contentContainerStyle={styles.dirMediaScroll}
                         >
@@ -887,6 +888,7 @@ export default function WelcomeScreen() {
               <Text style={styles.viewerThumbScrollTitle}>Option Images ({viewerMediaList.length}):</Text>
               <ScrollView
                 horizontal
+                nestedScrollEnabled={true}
                 showsHorizontalScrollIndicator={true}
                 contentContainerStyle={styles.viewerThumbScrollContent}
               >
@@ -930,15 +932,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+    height: Platform.OS === 'web' ? '100%' : undefined,
   },
   scrollView: {
     flex: 1,
     width: '100%',
+    ...(Platform.OS === 'web' ? { overflowY: 'auto' } : {}),
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'space-between',
-    paddingBottom: 30,
+    paddingBottom: 40,
   },
   brandContainer: {
     alignItems: 'center',

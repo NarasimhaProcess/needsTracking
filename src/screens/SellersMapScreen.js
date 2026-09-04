@@ -936,10 +936,10 @@ export default function SellersMapScreen({ route }) {
                 box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.4);
             }
             .custom-popup .leaflet-popup-content-wrapper {
-                border-radius: 16px;
+                border-radius: 20px;
                 padding: 0px;
-                box-shadow: 0 12px 32px rgba(15,23,42,0.28);
-                border: 1px solid #E2E8F0;
+                box-shadow: 0 16px 36px rgba(15,23,42,0.24);
+                border: 1px solid rgba(226, 232, 240, 0.9);
                 overflow: hidden;
                 background: #FFFFFF;
             }
@@ -1072,9 +1072,9 @@ export default function SellersMapScreen({ route }) {
                 background: #007AFF;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 9px;
-                padding: 8px 12px;
-                font-size: 12px;
+                border-radius: 12px;
+                padding: 10px 14px;
+                font-size: 13px;
                 font-weight: 700;
                 cursor: pointer;
                 display: flex;
@@ -1082,26 +1082,31 @@ export default function SellersMapScreen({ route }) {
                 justify-content: center;
                 gap: 6px;
                 margin-top: 8px;
-                box-shadow: 0 4px 10px rgba(0,122,255,0.3);
+                box-shadow: 0 4px 12px rgba(0,122,255,0.3);
+                transition: background-color 0.2s;
             }
             .popup-btn-primary:active {
                 background: #0056b3;
             }
             .popup-btn-secondary {
                 width: 100%;
-                background: #F1F5F9;
+                background: #F8FAFC;
                 color: #334155;
-                border: 1px solid #CBD5E1;
-                border-radius: 9px;
-                padding: 7px 12px;
-                font-size: 11px;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+                padding: 9px 14px;
+                font-size: 12px;
                 font-weight: 600;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 gap: 6px;
-                margin-top: 5px;
+                margin-top: 6px;
+                transition: background-color 0.2s;
+            }
+            .popup-btn-secondary:active {
+                background: #F1F5F9;
             }
         </style>
     </head>
@@ -1477,6 +1482,7 @@ export default function SellersMapScreen({ route }) {
           <View style={styles.dirMediaSection}>
             <ScrollView
               horizontal
+              nestedScrollEnabled={true}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.dirMediaScroll}
             >
@@ -1611,7 +1617,12 @@ export default function SellersMapScreen({ route }) {
   );
 
   const renderFilterChips = () => (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipsRow}>
+    <ScrollView
+      horizontal
+      nestedScrollEnabled={true}
+      showsHorizontalScrollIndicator={false}
+      style={styles.filterChipsRow}
+    >
       <TouchableOpacity
         style={[styles.chipBtn, activeFilter === "all" && styles.chipBtnActive]}
         onPress={() => setActiveFilter("all")}
@@ -1660,10 +1671,14 @@ export default function SellersMapScreen({ route }) {
       data={displayedSellers}
       keyExtractor={(item) => String(item.id)}
       renderItem={renderSellerDirectoryCard}
-      style={{ flex: 1, width: "100%", height: "100%" }}
-      contentContainerStyle={[styles.directoryListContent, { flexGrow: 1, paddingBottom: 80 }]}
+      style={[
+        styles.directoryFlatList,
+        Platform.OS === 'web' ? { overflowY: 'auto' } : null,
+      ]}
+      contentContainerStyle={[styles.directoryListContent, { flexGrow: 1, paddingBottom: 100 }]}
       showsVerticalScrollIndicator={true}
       keyboardShouldPersistTaps="handled"
+      nestedScrollEnabled={true}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#007AFF"]} />
       }
@@ -1715,151 +1730,6 @@ export default function SellersMapScreen({ route }) {
       >
         <Icon name="crosshairs" size={20} color="#007AFF" />
       </TouchableOpacity>
-
-      {/* Floating Selected Seller Card */}
-      {selectedSeller && (
-        <View style={styles.sellerCard}>
-          <View style={styles.sellerCardHeader}>
-            {selectedSeller.firstPhoto ? (
-              <Image
-                source={{ uri: selectedSeller.firstPhoto }}
-                style={styles.sellerAvatarImg}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.sellerAvatarBox}>
-                <Text style={styles.sellerAvatarLetter}>
-                  {(selectedSeller.full_name || "S").charAt(0).toUpperCase()}
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.sellerDetails}>
-              <View style={styles.sellerNameRow}>
-                <Text style={styles.sellerName} numberOfLines={1}>
-                  {selectedSeller.full_name}
-                </Text>
-                <View style={styles.verifiedTag}>
-                  <Icon name="check-circle" size={10} color="#0284C7" style={{ marginRight: 2 }} />
-                  <Text style={styles.verifiedTagText}>Seller</Text>
-                </View>
-              </View>
-
-              <Text style={styles.sellerLocation} numberOfLines={1}>
-                {selectedSeller.city || selectedSeller.address || "Seller Store"}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => setSelectedSeller(null)}
-              style={styles.closeCardButton}
-            >
-              <Icon name="times" size={16} color="#94A3B8" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Photos & Videos Gallery Preview Strip in Bottom Sheet */}
-          {selectedSeller.mediaList && selectedSeller.mediaList.length > 0 && (
-            <View style={styles.cardMediaSection}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.cardMediaScroll}
-              >
-                {selectedSeller.mediaList
-                  .filter((m) => m && m.uri)
-                  .map((media, idx) => (
-                  <TouchableOpacity
-                    key={`sel-media-${idx}-${media.uri}`}
-                    style={styles.cardMediaThumbWrap}
-                    activeOpacity={0.85}
-                    onPress={() => setViewerMediaItem(media)}
-                  >
-                    {media.type === "video" ? (
-                      <View style={styles.cardVideoThumbBox}>
-                        <View style={styles.cardVideoPlayBadge}>
-                          <Text style={styles.cardVideoPlayIcon}>▶</Text>
-                        </View>
-                        <View style={styles.cardVideoBadge}>
-                          <Text style={styles.cardVideoBadgeText}>🎥 Video</Text>
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={styles.cardPhotoThumbBox}>
-                        <Image source={{ uri: media.uri }} style={styles.cardMediaThumb} resizeMode="cover" />
-                        <View style={styles.cardPhotoBadge}>
-                          <Text style={styles.cardPhotoBadgeText}>
-                            {idx === 0 ? "Profile" : `Photo ${idx + 1}`}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* Meta Badges */}
-          <View style={styles.sellerMetaRow}>
-            {calculatedDistance && (
-              <View style={styles.metaBadge}>
-                <Icon name="location-arrow" size={12} color="#007AFF" />
-                <Text style={styles.metaBadgeText}>{calculatedDistance} away</Text>
-              </View>
-            )}
-            <View style={[styles.metaBadge, selectedSeller.productCount > 0 && styles.metaBadgeSuccess]}>
-              <Icon name="cubes" size={12} color={selectedSeller.productCount > 0 ? "#10B981" : "#64748B"} />
-              <Text style={[styles.metaBadgeText, selectedSeller.productCount > 0 && styles.metaBadgeTextSuccess]}>
-                {selectedSeller.productCount > 0 ? `${selectedSeller.productCount} Products` : "Catalog"}
-              </Text>
-            </View>
-            {selectedSeller.mobile ? (
-              <TouchableOpacity
-                style={styles.metaBadge}
-                onPress={() => {
-                  try {
-                    Linking.openURL(`tel:${selectedSeller.mobile}`).catch(() => {});
-                  } catch (_) {}
-                }}
-              >
-                <Icon name="phone" size={12} color="#64748B" />
-                <Text style={styles.metaBadgeText}>{selectedSeller.mobile}</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.sellerActions}>
-            <TouchableOpacity
-              style={styles.primaryActionButton}
-              onPress={() =>
-                safeNavigate("Catalog", {
-                  userId: selectedSeller.id,
-                  sellerId: selectedSeller.id,
-                  sellerName: selectedSeller.full_name,
-                })
-              }
-            >
-              <Icon name="shopping-bag" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.primaryActionText}>Browse Store / Catalog</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryActionButton}
-              onPress={() =>
-                handleOpenDirections(
-                  selectedSeller.latitude,
-                  selectedSeller.longitude,
-                  selectedSeller.full_name
-                )
-              }
-            >
-              <Icon name="compass" size={18} color="#1E293B" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
     </View>
   );
 
@@ -1934,10 +1804,10 @@ export default function SellersMapScreen({ route }) {
             <View style={styles.headerQuickPortals}>
               <TouchableOpacity
                 style={styles.quickPortalBtn}
-                onPress={() => safeNavigate(user ? "Catalog" : "BuyerLogin")}
+                onPress={() => safeNavigate("Catalog")}
               >
                 <Icon name="shopping-cart" size={13} color="#007AFF" style={{ marginRight: 5 }} />
-                <Text style={styles.quickPortalBtnText}>Buyer</Text>
+                <Text style={styles.quickPortalBtnText}>Catalog</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -2099,6 +1969,7 @@ export default function SellersMapScreen({ route }) {
       )}
 
       {/* 3 Horizontal Dots Menu Modal (Buyer, Seller, Delivery Portals) */}
+      {/* 3 Horizontal Dots Menu Modal (Centered Floating Card) */}
       <Modal
         visible={isMenuVisible}
         transparent={true}
@@ -2112,144 +1983,351 @@ export default function SellersMapScreen({ route }) {
         >
           <View style={styles.menuCard} onStartShouldSetResponder={() => true}>
             <View style={styles.menuHeader}>
-              <View>
-                <Text style={styles.menuHeaderTitle}>Needs Tracker</Text>
-                <Text style={styles.menuHeaderSubtitle}>Access Portals & Services</Text>
+              <View style={styles.menuHeaderLeft}>
+                <View style={styles.menuHeaderLogoBox}>
+                  <Icon name="compass" size={17} color="#007AFF" />
+                </View>
+                <View>
+                  <Text style={styles.menuHeaderTitle}>Needs Tracker</Text>
+                  <Text style={styles.menuHeaderSubtitle}>Portals & Quick Navigation</Text>
+                </View>
               </View>
               <TouchableOpacity
                 onPress={() => setIsMenuVisible(false)}
                 style={styles.menuCloseBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Close menu"
               >
-                <Icon name="times" size={18} color="#64748B" />
+                <Icon name="times" size={14} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            {/* If user is logged in, show user profile summary and quick links */}
-            {user && (
-              <View style={styles.userSection}>
-                <View style={styles.userProfileRow}>
-                  <View style={styles.userAvatar}>
-                    <Text style={styles.userAvatarText}>
-                      {(user.email || user.phone || "U").charAt(0).toUpperCase()}
-                    </Text>
+            <ScrollView
+              style={styles.menuScrollView}
+              contentContainerStyle={styles.menuScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* If user is logged in, show user profile summary and quick links */}
+              {user && (
+                <View style={styles.userSection}>
+                  <View style={styles.userProfileRow}>
+                    <View style={styles.userAvatar}>
+                      <Text style={styles.userAvatarText}>
+                        {(user.email || user.phone || "U").charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.userInfo}>
+                      <Text style={styles.userEmail} numberOfLines={1}>
+                        {user.email || user.phone || "Signed In User"}
+                      </Text>
+                      <View style={styles.roleTag}>
+                        <Text style={styles.roleTagText}>
+                          {role ? role.toUpperCase() : "USER"}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-                  <View style={styles.userInfo}>
-                    <Text style={styles.userEmail} numberOfLines={1}>
-                      {user.email || user.phone || "Signed In User"}
-                    </Text>
-                    <View style={styles.roleTag}>
-                      <Text style={styles.roleTagText}>
-                        {role ? role.toUpperCase() : "USER"}
+
+                  <View style={styles.userQuickLinks}>
+                    <TouchableOpacity
+                      style={styles.quickLinkItem}
+                      onPress={() => safeNavigate("OrderList")}
+                    >
+                      <Icon name="list-alt" size={13} color="#007AFF" />
+                      <Text style={styles.quickLinkText}>My Orders</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.quickLinkItem}
+                      onPress={() => safeNavigate("Cart")}
+                    >
+                      <Icon name="shopping-cart" size={13} color="#007AFF" />
+                      <Text style={styles.quickLinkText}>My Cart</Text>
+                    </TouchableOpacity>
+
+                    {(role === "seller" || role === "admin") && (
+                      <TouchableOpacity
+                        style={styles.quickLinkItem}
+                        onPress={() => safeNavigate("ProductTabs")}
+                      >
+                        <Icon name="cubes" size={13} color="#10B981" />
+                        <Text style={styles.quickLinkText}>Store</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              )}
+
+              {/* Role Portals Options: Buyer, Seller, Delivery */}
+              <Text style={styles.portalsHeading}>Portals & Access</Text>
+
+              {/* 0. Product Catalog */}
+              <TouchableOpacity
+                style={styles.portalItem}
+                activeOpacity={0.7}
+                onPress={() => safeNavigate("Catalog")}
+              >
+                <View style={[styles.portalIconBox, { backgroundColor: "#F0FDF4" }]}>
+                  <Icon name="book" size={17} color="#16A34A" />
+                </View>
+                <View style={styles.portalDetails}>
+                  <Text style={styles.portalTitle}>Product Catalog</Text>
+                  <Text style={styles.portalDesc}>Browse all products & shop items</Text>
+                </View>
+                <Icon name="chevron-right" size={12} color="#CBD5E1" />
+              </TouchableOpacity>
+
+              {/* 1. Buyer Portal */}
+              <TouchableOpacity
+                style={styles.portalItem}
+                activeOpacity={0.7}
+                onPress={() => safeNavigate("BuyerLogin")}
+              >
+                <View style={[styles.portalIconBox, { backgroundColor: "#EFF6FF" }]}>
+                  <Icon name="shopping-bag" size={17} color="#007AFF" />
+                </View>
+                <View style={styles.portalDetails}>
+                  <Text style={styles.portalTitle}>Buyer Portal</Text>
+                  <Text style={styles.portalDesc}>Browse nearby sellers & place orders</Text>
+                </View>
+                <Icon name="chevron-right" size={12} color="#CBD5E1" />
+              </TouchableOpacity>
+
+              {/* 2. Seller Portal */}
+              <TouchableOpacity
+                style={styles.portalItem}
+                activeOpacity={0.7}
+                onPress={() => safeNavigate("SellerLogin")}
+              >
+                <View style={[styles.portalIconBox, { backgroundColor: "#ECFDF5" }]}>
+                  <Icon name="home" size={17} color="#10B981" />
+                </View>
+                <View style={styles.portalDetails}>
+                  <Text style={styles.portalTitle}>Seller Portal</Text>
+                  <Text style={styles.portalDesc}>Manage products, pricing & inventory</Text>
+                </View>
+                <Icon name="chevron-right" size={12} color="#CBD5E1" />
+              </TouchableOpacity>
+
+              {/* 3. Delivery Manager Portal */}
+              <TouchableOpacity
+                style={styles.portalItem}
+                activeOpacity={0.7}
+                onPress={() => safeNavigate("DeliveryManagerLogin")}
+              >
+                <View style={[styles.portalIconBox, { backgroundColor: "#FAF5FF" }]}>
+                  <Icon name="truck" size={16} color="#8B5CF6" />
+                </View>
+                <View style={styles.portalDetails}>
+                  <Text style={styles.portalTitle}>Delivery Portal</Text>
+                  <Text style={styles.portalDesc}>Real-time delivery management & tracking</Text>
+                </View>
+                <Icon name="chevron-right" size={12} color="#CBD5E1" />
+              </TouchableOpacity>
+
+              {/* 4. About & Welcome Page */}
+              <TouchableOpacity
+                style={styles.portalItem}
+                activeOpacity={0.7}
+                onPress={() => safeNavigate("Welcome")}
+              >
+                <View style={[styles.portalIconBox, { backgroundColor: "#F8FAFC" }]}>
+                  <Icon name="info-circle" size={17} color="#64748B" />
+                </View>
+                <View style={styles.portalDetails}>
+                  <Text style={styles.portalTitle}>About & Overview</Text>
+                  <Text style={styles.portalDesc}>Platform info and features</Text>
+                </View>
+                <Icon name="chevron-right" size={12} color="#CBD5E1" />
+              </TouchableOpacity>
+
+              {/* Logout Button if signed in */}
+              {user && (
+                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                  <Icon name="sign-out" size={15} color="#EF4444" />
+                  <Text style={styles.logoutButtonText}>Log Out</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Browse Store Details Modal (Centered Floating Card) */}
+      <Modal
+        visible={!!selectedSeller}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSelectedSeller(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedSeller(null)}
+        >
+          {selectedSeller && (
+            <View style={styles.sellerModalCard} onStartShouldSetResponder={() => true}>
+              {/* Header */}
+              <View style={styles.sellerModalHeader}>
+                <View style={styles.sellerModalHeaderLeft}>
+                  {selectedSeller.firstPhoto ? (
+                    <Image
+                      source={{ uri: selectedSeller.firstPhoto }}
+                      style={styles.sellerModalAvatarImg}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.sellerModalAvatarBox}>
+                      <Text style={styles.sellerModalAvatarLetter}>
+                        {(selectedSeller.full_name || "S").charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.sellerModalInfo}>
+                    <View style={styles.sellerModalTitleRow}>
+                      <Text style={styles.sellerModalTitle} numberOfLines={1}>
+                        {selectedSeller.full_name || "Seller Store"}
+                      </Text>
+                      <View style={styles.verifiedTag}>
+                        <Icon name="check-circle" size={10} color="#0284C7" style={{ marginRight: 2 }} />
+                        <Text style={styles.verifiedTagText}>Seller</Text>
+                      </View>
+                    </View>
+                    <View style={styles.sellerModalSubtitleRow}>
+                      <Icon name="map-marker" size={11} color="#64748B" style={{ marginRight: 4 }} />
+                      <Text style={styles.sellerModalSubtitle} numberOfLines={1}>
+                        {selectedSeller.city || selectedSeller.address || "Verified Store"}
                       </Text>
                     </View>
                   </View>
                 </View>
 
-                <View style={styles.userQuickLinks}>
-                  <TouchableOpacity
-                    style={styles.quickLinkItem}
-                    onPress={() => safeNavigate("OrderList")}
-                  >
-                    <Icon name="list-alt" size={15} color="#007AFF" />
-                    <Text style={styles.quickLinkText}>My Orders</Text>
-                  </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setSelectedSeller(null)}
+                  style={styles.menuCloseBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Close store popup"
+                >
+                  <Icon name="times" size={14} color="#64748B" />
+                </TouchableOpacity>
+              </View>
 
-                  <TouchableOpacity
-                    style={styles.quickLinkItem}
-                    onPress={() => safeNavigate("Cart")}
-                  >
-                    <Icon name="shopping-cart" size={15} color="#007AFF" />
-                    <Text style={styles.quickLinkText}>My Cart</Text>
-                  </TouchableOpacity>
-
-                  {(role === "seller" || role === "admin") && (
-                    <TouchableOpacity
-                      style={styles.quickLinkItem}
-                      onPress={() => safeNavigate("ProductTabs")}
+              <ScrollView
+                style={styles.sellerModalScrollView}
+                contentContainerStyle={styles.sellerModalScrollContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {/* Store Photos & Videos Gallery Preview Strip */}
+                {selectedSeller.mediaList && selectedSeller.mediaList.length > 0 && (
+                  <View style={styles.cardMediaSection}>
+                    <Text style={styles.sellerSectionLabel}>Store Photos & Media</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.cardMediaScroll}
+                      nestedScrollEnabled={true}
                     >
-                      <Icon name="cubes" size={15} color="#10B981" />
-                      <Text style={styles.quickLinkText}>Manage Store</Text>
-                    </TouchableOpacity>
+                      {selectedSeller.mediaList
+                        .filter((m) => m && m.uri)
+                        .map((media, idx) => (
+                          <TouchableOpacity
+                            key={`sel-media-${idx}-${media.uri}`}
+                            style={styles.cardMediaThumbWrap}
+                            activeOpacity={0.85}
+                            onPress={() => setViewerMediaItem(media)}
+                          >
+                            {media.type === "video" ? (
+                              <View style={styles.cardVideoThumbBox}>
+                                <View style={styles.cardVideoPlayBadge}>
+                                  <Text style={styles.cardVideoPlayIcon}>▶</Text>
+                                </View>
+                                <View style={styles.cardVideoBadge}>
+                                  <Text style={styles.cardVideoBadgeText}>🎥 Video</Text>
+                                </View>
+                              </View>
+                            ) : (
+                              <View style={styles.cardPhotoThumbBox}>
+                                <Image source={{ uri: media.uri }} style={styles.cardMediaThumb} resizeMode="cover" />
+                                <View style={styles.cardPhotoBadge}>
+                                  <Text style={styles.cardPhotoBadgeText}>
+                                    {idx === 0 ? "Profile" : `Photo ${idx + 1}`}
+                                  </Text>
+                                </View>
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Store Badges & Details */}
+                <Text style={styles.sellerSectionLabel}>Store Details</Text>
+                <View style={styles.sellerMetaRow}>
+                  {calculatedDistance && (
+                    <View style={styles.metaBadge}>
+                      <Icon name="location-arrow" size={12} color="#007AFF" />
+                      <Text style={styles.metaBadgeText}>{calculatedDistance} away</Text>
+                    </View>
                   )}
+                  <View style={[styles.metaBadge, selectedSeller.productCount > 0 && styles.metaBadgeSuccess]}>
+                    <Icon name="cubes" size={12} color={selectedSeller.productCount > 0 ? "#10B981" : "#64748B"} />
+                    <Text style={[styles.metaBadgeText, selectedSeller.productCount > 0 && styles.metaBadgeTextSuccess]}>
+                      {selectedSeller.productCount > 0 ? `${selectedSeller.productCount} Products Available` : "Catalog"}
+                    </Text>
+                  </View>
+                  {selectedSeller.mobile ? (
+                    <TouchableOpacity
+                      style={styles.metaBadge}
+                      onPress={() => {
+                        try {
+                          Linking.openURL(`tel:${selectedSeller.mobile}`).catch(() => {});
+                        } catch (_) {}
+                      }}
+                    >
+                      <Icon name="phone" size={12} color="#64748B" />
+                      <Text style={styles.metaBadgeText}>{selectedSeller.mobile}</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
-              </View>
-            )}
 
-            {/* Role Portals Options: Buyer, Seller, Delivery */}
-            <Text style={styles.portalsHeading}>Portals</Text>
+                {/* Action Buttons */}
+                <View style={styles.sellerModalActions}>
+                  <TouchableOpacity
+                    style={styles.primaryActionButton}
+                    onPress={() => {
+                      const sel = selectedSeller;
+                      setSelectedSeller(null);
+                      safeNavigate("Catalog", {
+                        userId: sel.id,
+                        sellerId: sel.id,
+                        sellerName: sel.full_name,
+                      });
+                    }}
+                  >
+                    <Icon name="shopping-bag" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.primaryActionText}>Browse Store / Catalog</Text>
+                  </TouchableOpacity>
 
-            {/* 1. Buyer Portal */}
-            <TouchableOpacity
-              style={styles.portalItem}
-              activeOpacity={0.7}
-              onPress={() => safeNavigate("BuyerLogin")}
-            >
-              <View style={[styles.portalIconBox, { backgroundColor: "#EFF6FF" }]}>
-                <Icon name="shopping-cart" size={20} color="#007AFF" />
-              </View>
-              <View style={styles.portalDetails}>
-                <Text style={styles.portalTitle}>Buyer Portal</Text>
-                <Text style={styles.portalDesc}>Browse nearby sellers & place orders</Text>
-              </View>
-              <Icon name="chevron-right" size={14} color="#94A3B8" />
-            </TouchableOpacity>
-
-            {/* 2. Seller Portal */}
-            <TouchableOpacity
-              style={styles.portalItem}
-              activeOpacity={0.7}
-              onPress={() => safeNavigate("SellerLogin")}
-            >
-              <View style={[styles.portalIconBox, { backgroundColor: "#ECFDF5" }]}>
-                <Icon name="home" size={20} color="#10B981" />
-              </View>
-              <View style={styles.portalDetails}>
-                <Text style={styles.portalTitle}>Seller Portal</Text>
-                <Text style={styles.portalDesc}>Manage products, pricing & inventory</Text>
-              </View>
-              <Icon name="chevron-right" size={14} color="#94A3B8" />
-            </TouchableOpacity>
-
-            {/* 3. Delivery Manager Portal */}
-            <TouchableOpacity
-              style={styles.portalItem}
-              activeOpacity={0.7}
-              onPress={() => safeNavigate("DeliveryManagerLogin")}
-            >
-              <View style={[styles.portalIconBox, { backgroundColor: "#FAF5FF" }]}>
-                <Icon name="truck" size={18} color="#8B5CF6" />
-              </View>
-              <View style={styles.portalDetails}>
-                <Text style={styles.portalTitle}>Delivery Portal</Text>
-                <Text style={styles.portalDesc}>Real-time delivery management & tracking</Text>
-              </View>
-              <Icon name="chevron-right" size={14} color="#94A3B8" />
-            </TouchableOpacity>
-
-            {/* 4. About & Welcome Page */}
-            <TouchableOpacity
-              style={styles.portalItem}
-              activeOpacity={0.7}
-              onPress={() => safeNavigate("Welcome")}
-            >
-              <View style={[styles.portalIconBox, { backgroundColor: "#F1F5F9" }]}>
-                <Icon name="info-circle" size={18} color="#64748B" />
-              </View>
-              <View style={styles.portalDetails}>
-                <Text style={styles.portalTitle}>About & Overview</Text>
-                <Text style={styles.portalDesc}>Platform info and features</Text>
-              </View>
-              <Icon name="chevron-right" size={14} color="#94A3B8" />
-            </TouchableOpacity>
-
-            {/* Logout Button if signed in */}
-            {user && (
-              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-                <Icon name="sign-out" size={16} color="#EF4444" />
-                <Text style={styles.logoutButtonText}>Log Out</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+                  <TouchableOpacity
+                    style={styles.secondaryActionButton}
+                    onPress={() =>
+                      handleOpenDirections(
+                        selectedSeller.latitude,
+                        selectedSeller.longitude,
+                        selectedSeller.full_name
+                      )
+                    }
+                    accessibilityLabel="Get Directions"
+                  >
+                    <Icon name="compass" size={18} color="#1E293B" />
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          )}
         </TouchableOpacity>
       </Modal>
 
@@ -2308,16 +2386,18 @@ const styles = StyleSheet.create({
   mobileDirectoryContainer: {
     flex: 1,
     width: "100%",
-    height: "100%",
     backgroundColor: "#F8FAFC",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
+    minHeight: 0,
   },
   splitMainContent: {
     flex: 1,
-    height: "100%",
+    width: "100%",
     flexDirection: "row",
     overflow: "hidden",
+    minHeight: 0,
   },
   sideDirectoryPanel: {
     width: "40%",
@@ -2329,6 +2409,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
+    minHeight: 0,
+  },
+  directoryFlatList: {
+    flex: 1,
+    width: "100%",
   },
   sideMapPanel: {
     flex: 1,
@@ -2686,63 +2772,106 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
-  sellerCard: {
-    position: "absolute",
-    bottom: Platform.OS === "ios" ? 30 : 16,
-    left: 16,
-    right: 16,
+  sellerModalCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 16,
-    zIndex: 40,
+    borderRadius: 24,
+    padding: 22,
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: Platform.OS === "web" ? "88vh" : "85%",
+    overflow: "hidden",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 16,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "rgba(226, 232, 240, 0.8)",
   },
-  sellerCardHeader: {
+  sellerModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  sellerModalHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 12,
+    flex: 1,
+    marginRight: 8,
   },
-  sellerAvatarBox: {
+  sellerModalAvatarImg: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: "#007AFF",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  sellerAvatarImg: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    marginRight: 12,
-    borderWidth: 2,
+    borderRadius: 14,
+    borderWidth: 1.5,
     borderColor: "#007AFF",
     backgroundColor: "#F1F5F9",
   },
-  sellerAvatarLetter: {
+  sellerModalAvatarBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "#007AFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sellerModalAvatarLetter: {
     color: "#FFFFFF",
     fontSize: 18,
-    fontWeight: "700",
+    fontWeight: "800",
   },
-  sellerDetails: {
+  sellerModalInfo: {
     flex: 1,
   },
-  sellerNameRow: {
+  sellerModalTitleRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
+    flexWrap: "wrap",
   },
-  sellerName: {
-    fontSize: 16,
-    fontWeight: "700",
+  sellerModalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
     color: "#0F172A",
-    flexShrink: 1,
+    letterSpacing: -0.3,
+  },
+  sellerModalSubtitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 3,
+  },
+  sellerModalSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  sellerModalScrollView: {
+    flexGrow: 0,
+    width: "100%",
+  },
+  sellerModalScrollContent: {
+    paddingBottom: 8,
+  },
+  sellerSectionLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#94A3B8",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    marginTop: 10,
+    marginLeft: 2,
+  },
+  sellerModalActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 18,
+    paddingTop: 6,
   },
   verifiedTag: {
     flexDirection: "row",
@@ -2750,20 +2879,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#E0F2FE",
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   verifiedTagText: {
     fontSize: 10,
     color: "#0284C7",
     fontWeight: "700",
-  },
-  sellerLocation: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
-  },
-  closeCardButton: {
-    padding: 6,
   },
   cardMediaSection: {
     marginTop: 12,
@@ -3166,46 +3287,82 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.5)",
-    justifyContent: "flex-end",
+    backgroundColor: "rgba(15, 23, 42, 0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
   },
   menuCard: {
     backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 24,
-    paddingBottom: Platform.OS === "ios" ? 40 : 24,
-    maxHeight: "80%",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 10,
+    borderRadius: 24,
+    padding: 22,
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: Platform.OS === "web" ? "88vh" : "85%",
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 16,
+    borderWidth: 1,
+    borderColor: "rgba(226, 232, 240, 0.8)",
+  },
+  menuScrollView: {
+    flexGrow: 0,
+    width: "100%",
+  },
+  menuScrollContent: {
+    paddingBottom: 8,
   },
   menuHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  menuHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  menuHeaderLogoBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
   },
   menuHeaderTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "800",
     color: "#0F172A",
+    letterSpacing: -0.3,
   },
   menuHeaderSubtitle: {
     fontSize: 12,
     color: "#64748B",
-    marginTop: 2,
+    marginTop: 1,
   },
   menuCloseBtn: {
-    padding: 6,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
   },
   userSection: {
     backgroundColor: "#F8FAFC",
     borderRadius: 16,
     padding: 14,
-    marginBottom: 20,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
@@ -3214,39 +3371,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   userAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: "#007AFF",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
   },
   userAvatarText: {
     color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: "800",
   },
   userInfo: {
     flex: 1,
   },
   userEmail: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
     color: "#0F172A",
   },
   roleTag: {
     alignSelf: "flex-start",
     backgroundColor: "#EFF6FF",
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
     marginTop: 4,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
   },
   roleTagText: {
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "800",
     color: "#007AFF",
+    letterSpacing: 0.5,
   },
   userQuickLinks: {
     flexDirection: "row",
@@ -3264,22 +3429,23 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: "#FFFFFF",
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
   quickLinkText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#1E293B",
+    color: "#334155",
   },
   portalsHeading: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 11,
+    fontWeight: "800",
     color: "#94A3B8",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     marginBottom: 12,
+    marginLeft: 2,
   },
   portalItem: {
     flexDirection: "row",
@@ -3289,11 +3455,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#F1F5F9",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   portalIconBox: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
@@ -3303,28 +3474,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   portalTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
     color: "#0F172A",
   },
   portalDesc: {
     fontSize: 12,
     color: "#64748B",
-    marginTop: 2,
+    marginTop: 1,
   },
   logoutButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    paddingVertical: 14,
+    paddingVertical: 12,
     backgroundColor: "#FEF2F2",
-    borderRadius: 12,
-    marginTop: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#FEE2E2",
+    marginTop: 6,
+    marginBottom: 4,
   },
   logoutButtonText: {
     color: "#EF4444",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
   },
   viewerModalContainer: {

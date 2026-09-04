@@ -19,6 +19,7 @@ import {
   supabase,
   uploadQrImage,
   addQrCode,
+  updateQrCode,
   getActiveQrCode,
   uploadProfileMedia,
   setSellerProductsActiveStatus,
@@ -36,6 +37,11 @@ import { Video, ResizeMode } from 'expo-av';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
 import { showAlert } from '../utils/alertUtils';
 import { FontAwesome as Icon } from '@expo/vector-icons';
+import {
+  getVoiceSettings,
+  saveVoiceSettings,
+  testVoiceAnnouncement,
+} from '../services/speechService';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
@@ -45,6 +51,7 @@ const ProfileScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');
@@ -60,6 +67,8 @@ const ProfileScreen = ({ navigation }) => {
   const [markerLocation, setMarkerLocation] = useState(null);
   const [mapInitialRegion, setMapInitialRegion] = useState(null);
   const [upiQrCodeUrl, setUpiQrCodeUrl] = useState(null);
+  const [upiId, setUpiId] = useState('');
+  const [savingUpiId, setSavingUpiId] = useState(false);
 
   // Map Area Search & Location Picker State
   const mapRef = useRef(null);
@@ -93,9 +102,44 @@ const ProfileScreen = ({ navigation }) => {
   const [adminGlobalStoreActive, setAdminGlobalStoreActive] = useState(false);
   const [adminGlobalProductsActive, setAdminGlobalProductsActive] = useState(false);
 
+  // Voice Announcement Settings State (Male / Female)
+  const [voiceGender, setVoiceGender] = useState('female');
+  const [testingVoice, setTestingVoice] = useState(false);
+
   useEffect(() => {
     fetchProfile();
+    loadVoicePreference();
   }, []);
+
+  const loadVoicePreference = async () => {
+    try {
+      const v = await getVoiceSettings();
+      if (v?.gender) {
+        setVoiceGender(v.gender);
+      }
+    } catch (_) {}
+  };
+
+  const handleSelectVoiceGender = async (gender) => {
+    try {
+      setVoiceGender(gender);
+      await saveVoiceSettings({ gender });
+      showAlert('Voice Updated', `${gender === 'male' ? 'Male' : 'Female'} voice set for order announcements.`);
+    } catch (err) {
+      console.warn('Error saving voice preference:', err);
+    }
+  };
+
+  const handleTestVoice = async () => {
+    setTestingVoice(true);
+    try {
+      await testVoiceAnnouncement(voiceGender);
+    } catch (err) {
+      console.warn('Test voice error:', err);
+    } finally {
+      setTimeout(() => setTestingVoice(false), 1400);
+    }
+  };
 
   useEffect(() => {
     const handleNotifications = async () => {
@@ -184,6 +228,7 @@ const ProfileScreen = ({ navigation }) => {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      setCurrentUser(user || null);
 
       if (user) {
         const { data, error } = await supabase
@@ -290,6 +335,14 @@ const ProfileScreen = ({ navigation }) => {
         const activeQr = await getActiveQrCode(user.id);
         if (activeQr) {
           setUpiQrCodeUrl(activeQr.qr_image_url);
+          if (activeQr.name && activeQr.name.includes('@')) {
+            setUpiId(activeQr.name);
+          }
+        }
+        if (user.user_metadata?.upi_id) {
+          setUpiId(user.user_metadata.upi_id);
+        } else if (data?.upi_id) {
+          setUpiId(data.upi_id);
         }
       }
     } catch (err) {
@@ -739,13 +792,14 @@ const ProfileScreen = ({ navigation }) => {
         console.warn('Notice: setSellerStoreActiveStatus:', stErr);
       }
 
-      // 2. Update auth user metadata (name/full_name/profile_media/store_settings) and email if changed
+      // 2. Update auth user metadata (name/full_name/profile_media/store_settings/upi_id) and email if changed
       const authUpdates = {
         data: {
           name: trimmedName,
           full_name: trimmedName,
           avatar_url: avatarUrl,
           profile_media: finalMediaList,
+          upi_id: (upiId || '').trim(),
           store_settings: {
             is_store_active: isStoreActive,
             is_map_active: isMapActive,
@@ -753,6 +807,17 @@ const ProfileScreen = ({ navigation }) => {
           },
         },
       };
+
+      if (upiId && upiId.trim().includes('@')) {
+        try {
+          const activeQr = await getActiveQrCode(user.id);
+          if (activeQr) {
+            await updateQrCode(activeQr.id, upiId.trim(), true);
+          }
+        } catch (qrSyncErr) {
+          console.warn('Notice syncing QR code name:', qrSyncErr);
+        }
+      }
 
       if (trimmedEmail && trimmedEmail.toLowerCase() !== (user.email || '').toLowerCase()) {
         authUpdates.email = trimmedEmail;
@@ -1035,7 +1100,8 @@ const ProfileScreen = ({ navigation }) => {
         if (user) {
           const uploadedUrl = await uploadQrImage(user.id, imageUrl);
           if (uploadedUrl) {
-            await addQrCode(user.id, uploadedUrl, 'My UPI QR', true);
+            const qrName = upiId.trim() || 'My UPI QR';
+            await addQrCode(user.id, uploadedUrl, qrName, true);
             setUpiQrCodeUrl(uploadedUrl);
             showAlert('Success', 'UPI QR Code uploaded successfully.');
           } else {
@@ -1048,6 +1114,61 @@ const ProfileScreen = ({ navigation }) => {
       console.error('Error during UPI QR upload:', err);
       showAlert('Upload Failed', err.message || 'Could not pick or upload image.');
       setSaving(false);
+    }
+  };
+
+  const handleSaveUpiId = async () => {
+    const trimmed = upiId.trim();
+    if (!trimmed) {
+      showAlert('Invalid UPI ID', 'Please enter a valid UPI ID (e.g., yourname@okaxis or 9876543210@upi)');
+      return;
+    }
+    if (!trimmed.includes('@')) {
+      showAlert('Invalid UPI ID', 'A valid UPI ID must include "@" (e.g. mobile@upi or username@okhdfcbank)');
+      return;
+    }
+    try {
+      setSavingUpiId(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        showAlert('Error', 'User not authenticated.');
+        return;
+      }
+
+      // Update user metadata with UPI ID
+      await supabase.auth.updateUser({
+        data: { upi_id: trimmed },
+      });
+
+      // Try updating profiles table if column exists
+      try {
+        await supabase
+          .from('profiles')
+          .update({ upi_id: trimmed })
+          .eq('id', user.id);
+      } catch (err) {
+        // column may not exist in profiles table
+      }
+
+      // Sync with active QR code in user_qr_codes
+      const activeQr = await getActiveQrCode(user.id);
+      if (activeQr) {
+        await updateQrCode(activeQr.id, trimmed, true);
+      } else {
+        // Generate dynamic QR code URL for this UPI ID
+        const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+          `upi://pay?pa=${trimmed}&pn=${encodeURIComponent(name.trim() || 'Store')}&cu=INR`
+        )}`;
+        await addQrCode(user.id, dynamicQrUrl, trimmed, true);
+        setUpiQrCodeUrl(dynamicQrUrl);
+      }
+
+      showAlert('Success', 'UPI ID saved successfully! Customers will now see dynamic UPI QR code with their exact order bill amount at checkout.');
+    } catch (err) {
+      console.error('Error saving UPI ID:', err);
+      showAlert('Error', err.message || 'Failed to save UPI ID.');
+    } finally {
+      setSavingUpiId(false);
     }
   };
 
@@ -1064,8 +1185,8 @@ const ProfileScreen = ({ navigation }) => {
   const userRole = (
     profile?.role ||
     profile?.user_type ||
-    user?.user_metadata?.role ||
-    user?.user_metadata?.user_type ||
+    currentUser?.user_metadata?.role ||
+    currentUser?.user_metadata?.user_type ||
     ''
   ).toLowerCase().trim();
   const isAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'appadmin' || userRole === 'app_admin';
@@ -1603,19 +1724,91 @@ const ProfileScreen = ({ navigation }) => {
         )}
       </View>
 
-      {/* UPI QR Code Section */}
-      {upiQrCodeUrl && (
-        <View style={styles.qrCodeContainer}>
-          <Text style={styles.qrLabel}>Your UPI QR Code:</Text>
-          <Image source={{ uri: upiQrCodeUrl }} style={styles.upiQrImage} />
+      {/* UPI QR Code & Payment Settings Section */}
+      <View style={styles.upiSectionCard}>
+        <View style={styles.upiHeaderRow}>
+          <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
         </View>
-      )}
-
-      <TouchableOpacity style={styles.secondaryButton} onPress={handleUpiQrUpload}>
-        <Text style={styles.secondaryButtonText}>
-          {upiQrCodeUrl ? 'Update UPI QR Code' : 'Upload UPI QR Code'}
+        <Text style={styles.sectionSubtitle}>
+          Set your UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.
         </Text>
-      </TouchableOpacity>
+
+        <Text style={styles.inputLabel}>UPI ID / VPA (e.g. mobile@upi, store@okaxis)</Text>
+        <View style={styles.upiInputRow}>
+          <TextInput
+            style={[styles.input, styles.upiInputFlex]}
+            placeholder="e.g. 9876543210@upi or store@okaxis"
+            value={upiId}
+            onChangeText={setUpiId}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TouchableOpacity
+            style={[styles.saveUpiBtn, savingUpiId && styles.buttonDisabled]}
+            onPress={handleSaveUpiId}
+            disabled={savingUpiId}
+          >
+            {savingUpiId ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.saveUpiBtnText}>Save</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {upiId.trim() ? (
+          <View style={styles.dynamicPreviewContainer}>
+            <View style={styles.badgeRow}>
+              <View style={styles.dynamicBadge}>
+                <Text style={styles.dynamicBadgeText}>✓ Dynamic Amount QR Active</Text>
+              </View>
+              <Text style={styles.previewHint}>Generates QR with buyer's bill amount</Text>
+            </View>
+
+            <View style={styles.previewCard}>
+              <Image
+                source={{
+                  uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                    `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                  )}`,
+                }}
+                style={styles.previewQrImage}
+              />
+              <View style={styles.previewInfo}>
+                <Text style={styles.previewPayee}>{name.trim() || 'Your Store'}</Text>
+                <Text style={styles.previewUpiId}>{upiId.trim()}</Text>
+                <Text style={styles.previewDesc}>
+                  At checkout, QR code automatically fills customer's exact bill total.
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Custom Uploaded QR Code (Optional) */}
+        <View style={styles.customQrSection}>
+          <Text style={styles.customQrTitle}>Custom Uploaded QR Code (Optional)</Text>
+          {upiQrCodeUrl && (
+            <View style={styles.qrCodeContainer}>
+              <Image source={{ uri: upiQrCodeUrl }} style={styles.upiQrImage} />
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={handleUpiQrUpload}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#007AFF" />
+            ) : (
+              <Text style={styles.secondaryButtonText}>
+                {upiQrCodeUrl ? '📷 Update Uploaded QR Code' : '📷 Upload Custom QR Code'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Input Fields */}
       <View style={styles.formGroup}>
@@ -1714,6 +1907,87 @@ const ProfileScreen = ({ navigation }) => {
           <Text style={styles.buttonText}>Update Profile</Text>
         )}
       </TouchableOpacity>
+
+      {/* Voice Announcement Settings Card (Male / Female) */}
+      <View style={styles.voiceSectionCard}>
+        <View style={styles.voiceHeaderRow}>
+          <Icon name="volume-up" size={18} color="#007AFF" style={{ marginRight: 8 }} />
+          <Text style={styles.voiceSectionTitle}>Voice Announcement Settings</Text>
+        </View>
+        <Text style={styles.voiceSectionSub}>
+          Select your preferred voice type (Male or Female) for order printout speech and incoming order voice alerts.
+        </Text>
+
+        <View style={styles.voiceGenderRow}>
+          <TouchableOpacity
+            style={[
+              styles.voiceGenderOption,
+              voiceGender === 'female' && styles.voiceGenderOptionActive,
+            ]}
+            onPress={() => handleSelectVoiceGender('female')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select Female Voice"
+          >
+            <View style={styles.voiceOptionHeader}>
+              <Text style={styles.voiceOptionEmoji}>👩</Text>
+              <Text
+                style={[
+                  styles.voiceOptionText,
+                  voiceGender === 'female' && styles.voiceOptionTextActive,
+                ]}
+              >
+                Female Voice
+              </Text>
+              {voiceGender === 'female' && (
+                <Icon name="check-circle" size={16} color="#007AFF" style={{ marginLeft: 6 }} />
+              )}
+            </View>
+            <Text style={styles.voiceOptionSub}>Clear & Natural</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.voiceGenderOption,
+              voiceGender === 'male' && styles.voiceGenderOptionActive,
+            ]}
+            onPress={() => handleSelectVoiceGender('male')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select Male Voice"
+          >
+            <View style={styles.voiceOptionHeader}>
+              <Text style={styles.voiceOptionEmoji}>👨</Text>
+              <Text
+                style={[
+                  styles.voiceOptionText,
+                  voiceGender === 'male' && styles.voiceOptionTextActive,
+                ]}
+              >
+                Male Voice
+              </Text>
+              {voiceGender === 'male' && (
+                <Icon name="check-circle" size={16} color="#007AFF" style={{ marginLeft: 6 }} />
+              )}
+            </View>
+            <Text style={styles.voiceOptionSub}>Deep & Professional</Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={styles.voiceTestButton}
+          onPress={handleTestVoice}
+          disabled={testingVoice}
+          activeOpacity={0.8}
+        >
+          {testingVoice ? (
+            <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
+          ) : (
+            <Icon name="play" size={13} color="#007AFF" style={{ marginRight: 8 }} />
+          )}
+          <Text style={styles.voiceTestButtonText}>
+            {testingVoice ? 'Speaking Sample...' : `Test ${voiceGender === 'male' ? 'Male' : 'Female'} Voice`}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <TouchableOpacity
         style={[styles.button, styles.printerButton]}
@@ -2195,6 +2469,121 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94a3b8',
     marginTop: 2,
+  },
+  upiSectionCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  upiHeaderRow: {
+    marginBottom: 4,
+  },
+  upiInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  upiInputFlex: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  saveUpiBtn: {
+    backgroundColor: '#059669',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveUpiBtnText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  dynamicPreviewContainer: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    padding: 12,
+    marginBottom: 14,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  dynamicBadge: {
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  dynamicBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  previewHint: {
+    fontSize: 11,
+    color: '#15803d',
+    fontWeight: '500',
+  },
+  previewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 10,
+    gap: 12,
+  },
+  previewQrImage: {
+    width: 90,
+    height: 90,
+    borderRadius: 6,
+  },
+  previewInfo: {
+    flex: 1,
+  },
+  previewPayee: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  previewUpiId: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#059669',
+    marginTop: 2,
+  },
+  previewDesc: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  customQrSection: {
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 12,
+  },
+  customQrTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 8,
   },
   qrCodeContainer: {
     alignItems: 'center',
@@ -2859,6 +3248,94 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748B',
     marginRight: 2,
+  },
+  voiceSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  voiceHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  voiceSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  voiceSectionSub: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  voiceGenderRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  voiceGenderOption: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  voiceGenderOptionActive: {
+    borderColor: '#007AFF',
+    backgroundColor: '#EFF6FF',
+  },
+  voiceOptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  voiceOptionEmoji: {
+    fontSize: 20,
+    marginRight: 6,
+  },
+  voiceOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  voiceOptionTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  voiceOptionSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  voiceTestButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 10,
+    paddingVertical: 11,
+    marginTop: 4,
+  },
+  voiceTestButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#007AFF',
   },
 });
 

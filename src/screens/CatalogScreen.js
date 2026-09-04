@@ -21,7 +21,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase, setSellerProductsActiveStatus } from '../services/supabase';
+import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase, setSellerProductsActiveStatus, ensureUserProfile } from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
 
@@ -53,7 +53,27 @@ export const CATALOG_CATEGORIES = [
 ];
 
 const CatalogScreen = ({ navigation, route }) => {
-  const { userId: sellerId, customerId } = route?.params || {};
+  const {
+    userId: paramUserId,
+    sellerId: paramSellerId,
+    customerId: paramCustomerId,
+    sellerName: initialSellerName,
+  } = route?.params || {};
+
+  // Active store / seller filter state
+  const [activeSellerId, setActiveSellerId] = useState(
+    paramSellerId || (initialSellerName ? (paramUserId || paramCustomerId) : null)
+  );
+  const [activeStoreName, setActiveStoreName] = useState(initialSellerName || null);
+
+  // Sync route params if they change (e.g. user selects a different seller from Map or Welcome)
+  React.useEffect(() => {
+    const nextSellerId = paramSellerId || (initialSellerName ? (paramUserId || paramCustomerId) : null);
+    if (nextSellerId !== undefined) {
+      setActiveSellerId(nextSellerId || null);
+      setActiveStoreName(initialSellerName || null);
+    }
+  }, [paramSellerId, paramUserId, paramCustomerId, initialSellerName]);
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -243,38 +263,64 @@ const CatalogScreen = ({ navigation, route }) => {
 
   useFocusEffect(
     useCallback(() => {
+      let isMounted = true;
+
       const fetchUserAndProducts = async () => {
-        setLoading(true);
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        setUser(currentUser);
+        try {
+          setLoading(true);
+          const { data: { user: currentUser } } = await supabase.auth.getUser();
+          if (!isMounted) return;
+          setUser(currentUser);
 
-        // Determine target seller:
-        // Strictly use explicit sellerId or customerId passed via navigation (e.g. from Map)
-        const targetSellerId = sellerId || customerId || null;
+          // Check if currentUser is a buyer / customer
+          let isCustomer = false;
+          if (currentUser) {
+            try {
+              const profile = await ensureUserProfile(currentUser);
+              const r = (profile?.role || currentUser.user_metadata?.role || '').toLowerCase();
+              isCustomer = r === 'customer' || r === 'buyer';
+            } catch (_) {}
+          }
 
-        let data = [];
-        if (targetSellerId) {
-          // Strictly fetch ONLY this seller's products
-          data = await getActiveProductsWithDetails(targetSellerId);
-        } else {
-          // General browse: fetch all active products across all sellers
-          data = await getActiveProductsWithDetails();
+          // Determine target seller:
+          // Never filter a buyer's catalog by their own buyer user ID!
+          let targetSellerId = activeSellerId;
+          if (targetSellerId && currentUser && isCustomer && targetSellerId === currentUser.id) {
+            targetSellerId = null;
+          }
+
+          let data = [];
+          if (targetSellerId) {
+            data = await getActiveProductsWithDetails(targetSellerId);
+          } else {
+            data = await getActiveProductsWithDetails();
+          }
+
+          if (!isMounted) return;
+          setProducts(data || []);
+
+          if (currentUser) {
+            const cartData = await getCart(currentUser.id);
+            if (isMounted) setCart(cartData);
+          } else {
+            const guestCartData = await getGuestCart();
+            if (isMounted) setGuestCart(guestCartData);
+          }
+        } catch (fetchErr) {
+          console.warn('[CatalogScreen] Error fetching products or cart:', fetchErr);
+        } finally {
+          if (isMounted) {
+            setLoading(false);
+          }
         }
-
-        setProducts(data || []);
-
-        if (currentUser) {
-          const cartData = await getCart(currentUser.id);
-          setCart(cartData);
-        } else {
-          const guestCartData = await getGuestCart();
-          setGuestCart(guestCartData);
-        }
-        setLoading(false);
       };
 
       fetchUserAndProducts();
-    }, [sellerId, customerId])
+
+      return () => {
+        isMounted = false;
+      };
+    }, [activeSellerId])
   );
 
   const formatCombinationTitle = useCallback((combinationString, product) => {
@@ -765,21 +811,28 @@ const CatalogScreen = ({ navigation, route }) => {
   const cartItems = user ? cart?.cart_items : guestCart;
 
   return (
-    <View style={{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }}>
+    <View style={[{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }, Platform.OS === 'web' && { minHeight: 0 }]}>
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
           <TouchableOpacity
-            style={{ marginRight: 12 }}
+            style={{ marginRight: 12, padding: 4 }}
             onPress={() => {
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Welcome' }],
-              });
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                try {
+                  navigation.navigate('SellersMap');
+                } catch (_) {
+                  navigation.navigate('Welcome');
+                }
+              }
             }}
           >
-            <Icon name="home" size={22} color="#007AFF" />
+            <Icon name="arrow-left" size={20} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Catalog</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {activeStoreName ? activeStoreName : 'Product Catalog'}
+          </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {user && (
@@ -794,10 +847,15 @@ const CatalogScreen = ({ navigation, route }) => {
                     onPress: async () => {
                       try {
                         await supabase.auth.signOut();
-                        navigation.reset({
-                          index: 0,
-                          routes: [{ name: 'Welcome' }],
-                        });
+                        if (navigation.canGoBack()) {
+                          navigation.goBack();
+                        } else {
+                          try {
+                            navigation.navigate('Welcome');
+                          } catch (_) {
+                            navigation.navigate('SellersMap');
+                          }
+                        }
                       } catch (err) {
                         console.error('Logout error in CatalogScreen:', err);
                       }
@@ -810,14 +868,16 @@ const CatalogScreen = ({ navigation, route }) => {
             </TouchableOpacity>
           )}
           <TouchableOpacity
+            style={{ padding: 4 }}
             onPress={() => {
               if (navigation.canGoBack()) {
                 navigation.goBack();
               } else {
-                navigation.reset({
-                  index: 0,
-                  routes: [{ name: 'Welcome' }],
-                });
+                try {
+                  navigation.navigate('SellersMap');
+                } catch (_) {
+                  navigation.navigate('Welcome');
+                }
               }
             }}
           >
@@ -825,6 +885,28 @@ const CatalogScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Store Filter Active Banner */}
+      {(activeStoreName || activeSellerId) && (
+        <View style={styles.storeFilterBanner}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+            <Icon name="shopping-bag" size={13} color="#007AFF" style={{ marginRight: 6 }} />
+            <Text style={styles.storeFilterText} numberOfLines={1}>
+              Store: <Text style={{ fontWeight: '700' }}>{activeStoreName || 'Selected Store'}</Text>
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.clearStoreFilterBtn}
+            onPress={() => {
+              setActiveSellerId(null);
+              setActiveStoreName(null);
+            }}
+          >
+            <Text style={styles.clearStoreFilterText}>View All Stores</Text>
+            <Icon name="times" size={11} color="#007AFF" style={{ marginLeft: 4 }} />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Category Horizontal Filter Bar */}
       <View style={styles.categoryBarWrapper}>
@@ -890,17 +972,23 @@ const CatalogScreen = ({ navigation, route }) => {
               <Text style={styles.emptySearchTitle}>
                 {searchQuery.trim() || selectedCategory !== 'all'
                   ? `No products found matching ${searchQuery.trim() ? `"${searchQuery}"` : ''} ${selectedCategory !== 'all' ? `in category "${getCategoryLabel(selectedCategory)}"` : ''}`
+                  : activeStoreName
+                  ? `No products currently listed for "${activeStoreName}".`
                   : 'No products available in catalog'}
               </Text>
-              {(searchQuery.trim().length > 0 || selectedCategory !== 'all') && (
+              {(searchQuery.trim().length > 0 || selectedCategory !== 'all' || activeSellerId) && (
                 <TouchableOpacity
                   style={styles.clearSearchBtn}
                   onPress={() => {
                     setSearchQuery('');
                     setSelectedCategory('all');
+                    setActiveSellerId(null);
+                    setActiveStoreName(null);
                   }}
                 >
-                  <Text style={styles.clearSearchBtnText}>Reset Filters</Text>
+                  <Text style={styles.clearSearchBtnText}>
+                    {activeSellerId ? 'Browse All Products' : 'Reset Filters'}
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1977,6 +2065,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#475569',
+  },
+  storeFilterBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#DBEAFE',
+  },
+  storeFilterText: {
+    fontSize: 13,
+    color: '#1E40AF',
+  },
+  clearStoreFilterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  clearStoreFilterText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#007AFF',
   },
 });
 

@@ -84,10 +84,10 @@ export default function App() {
         if (!currentRoute || rootAuthScreens.includes(currentRoute)) {
           if (role === 'delivery_manager') {
             navigationRef.current?.navigate('DeliveryManagerDashboard');
-          } else if (role === 'seller') {
-            navigationRef.current?.navigate('ProductTabs', { session: currentSession });
+          } else if (role === 'seller' || role === 'admin' || role === 'superadmin') {
+            navigationRef.current?.navigate('ProductTabs', { session: currentSession, role });
           } else {
-            navigationRef.current?.navigate('Catalog');
+            navigationRef.current?.navigate('ProductTabs', { session: currentSession, role: 'customer' });
           }
         }
       } catch (err) {

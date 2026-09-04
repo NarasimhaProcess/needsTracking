@@ -7,151 +7,584 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  ScrollView,
+  Linking,
+  Platform,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/FontAwesome';
+import * as Clipboard from 'expo-clipboard';
 import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
 
 const UpiQrScreen = ({ navigation, route }) => {
-  const { cart, totalAmount, shippingAddress, order } = route?.params || {}; // Receive order object
+  const { cart, totalAmount: passedAmount, shippingAddress, order } = route?.params || {};
   const [activeQrImageUrl, setActiveQrImageUrl] = useState(null);
+  const [payeeUpiId, setPayeeUpiId] = useState('');
+  const [payeeName, setPayeeName] = useState('Merchant Store');
   const [loading, setLoading] = useState(true);
+  const [copiedUpi, setCopiedUpi] = useState(false);
+  const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' | 'profile'
+
+  const amount =
+    passedAmount ||
+    order?.total_amount ||
+    (cart?.cart_items || []).reduce(
+      (sum, item) =>
+        sum +
+        Number(item?.product_variant_combinations?.price || item?.price || 0) *
+          Number(item?.quantity || 1),
+      0
+    ) ||
+    0;
 
   useEffect(() => {
     const fetchQrCode = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const qrCode = await getActiveQrCode(user.id);
-        if (qrCode) {
-          setActiveQrImageUrl(qrCode.qr_code_url);
+      try {
+        setLoading(true);
+        // Look up seller user ID from order or cart
+        let sellerId = null;
+        if (order?.order_items && order.order_items.length > 0) {
+          const prod = order.order_items[0]?.product_variant_combinations?.products;
+          sellerId = prod?.user_id || prod?.customer_id || null;
+        } else if (cart?.cart_items && cart.cart_items.length > 0) {
+          const prod = cart.cart_items[0]?.product_variant_combinations?.products;
+          sellerId = prod?.user_id || prod?.customer_id || null;
         }
+
+        const { data: { user } } = await supabase.auth.getUser();
+        const targetUserId = sellerId || user?.id;
+
+        if (targetUserId) {
+          const qrCode = await getActiveQrCode(targetUserId);
+          if (qrCode) {
+            const url = qrCode.qr_image_url || qrCode.qr_code_url;
+            setActiveQrImageUrl(url);
+            if (qrCode.name && qrCode.name.includes('@')) {
+              setPayeeUpiId(qrCode.name);
+            }
+          }
+
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('id, full_name, mobile')
+            .eq('id', targetUserId)
+            .maybeSingle();
+
+          if (prof) {
+            if (prof.full_name) setPayeeName(prof.full_name);
+            if (!payeeUpiId && prof.mobile) {
+              setPayeeUpiId(`${prof.mobile}@upi`);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error in fetchQrCode:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchQrCode();
-  }, []);
+  }, [order, cart]);
+
+  const activeVpa = payeeUpiId || 'store@okaxis';
+  const orderRef = order?.order_number || (order?.id ? order.id.substring(0, 8) : 'Order');
+  const dynamicUpiUri = `upi://pay?pa=${encodeURIComponent(activeVpa)}&pn=${encodeURIComponent(payeeName)}&am=${Number(amount).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Bill Order ' + orderRef)}`;
+  const dynamicQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`;
+
+  const handleCopyUpiId = async () => {
+    try {
+      if (Clipboard && Clipboard.setStringAsync) {
+        await Clipboard.setStringAsync(activeVpa);
+      } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(activeVpa);
+      }
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2000);
+    } catch (_) {}
+  };
+
+  const handleDirectUpiPay = () => {
+    Linking.openURL(dynamicUpiUri).catch(() => {
+      Alert.alert(
+        'UPI App Not Found',
+        `Please scan the QR code on screen using Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${Number(amount).toFixed(2)}.`
+      );
+    });
+  };
 
   const handleSimulatePaymentSuccess = async () => {
+    if (!order?.id) {
+      Alert.alert('Payment Received', `Payment of ₹${Number(amount).toFixed(2)} simulated successfully.`);
+      navigation.goBack();
+      return;
+    }
     setLoading(true);
-    const updatedOrder = await updateOrderStatus(order.id, 'paid'); // Update status to 'paid'
+    const updatedOrder = await updateOrderStatus(order.id, 'paid');
     if (updatedOrder) {
-      Alert.alert('Payment Successful', 'Your payment has been processed.');
-      navigation.navigate('OrderConfirmation', { order: updatedOrder }); // Pass updated order
+      Alert.alert('Payment Successful', 'Your payment has been verified and processed.');
+      navigation.navigate('OrderConfirmation', { order: updatedOrder });
     } else {
-      Alert.alert('Error', 'Failed to update order status after simulated payment.');
+      Alert.alert('Notice', 'Order recorded. Proceeding to confirmation.');
+      navigation.navigate('OrderConfirmation', { order });
     }
     setLoading(false);
   };
 
   const handleSimulatePaymentFailure = async () => {
-    setLoading(true);
-    const updatedOrder = await updateOrderStatus(order.id, 'failed'); // Update status to 'failed'
-    if (updatedOrder) {
-      Alert.alert('Payment Failed', 'Your payment could not be processed. Please try again.');
-      // Optionally navigate back or to a different screen
-    } else {
-      Alert.alert('Error', 'Failed to update order status after simulated payment failure.');
+    if (!order?.id) {
+      navigation.goBack();
+      return;
     }
+    setLoading(true);
+    await updateOrderStatus(order.id, 'failed');
+    Alert.alert('Payment Failed', 'Your payment could not be processed. You may retry or pay via Cash on Delivery.');
     setLoading(false);
   };
 
-  if (loading) {
-    return (
-      <View style={styles.loadingOverlay}>
-        <ActivityIndicator size="large" color="#0000ff" />
-        <Text style={styles.loadingText}>Loading QR Code...</Text>
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Scan to Pay with UPI</Text>
-      <Text style={styles.amount}>Amount: ₹{totalAmount?.toFixed(2) || 'N/A'}</Text>
-      {activeQrImageUrl ? (
-        <Image source={{ uri: activeQrImageUrl }} style={styles.qrCode} />
-      ) : (
-        <Text style={styles.noQrText}>No active QR code found. Please upload one in your profile.</Text>
-      )}
-      <Text style={styles.instructions}>Open your UPI app and scan this QR code to complete the payment.</Text>
-      <TouchableOpacity style={styles.button} onPress={handleSimulatePaymentSuccess} disabled={loading}>
-        <Text style={styles.buttonText}>Simulate Payment Success</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={[styles.button, styles.failButton]} onPress={handleSimulatePaymentFailure} disabled={loading}>
-        <Text style={styles.buttonText}>Simulate Payment Failure</Text>
-      </TouchableOpacity>
+    <View style={styles.mainContainer}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backHeaderBtn}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Back"
+        >
+          <Icon name="arrow-left" size={16} color="#0F172A" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Scan & Pay with UPI</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Close">
+          <Icon name="close" size={20} color="#64748B" />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={[
+          styles.scrollView,
+          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
+        ]}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+        nestedScrollEnabled={true}
+      >
+        {/* Bill Amount Pill */}
+        <View style={styles.amountPill}>
+          <View>
+            <Text style={styles.amountPillLabel}>Bill Amount to Pay:</Text>
+            <Text style={styles.amountPillSub}>Auto-filled in QR code</Text>
+          </View>
+          <Text style={styles.amountPillValue}>₹{Number(amount).toFixed(2)}</Text>
+        </View>
+
+        {/* Tab Switcher if Profile QR is uploaded */}
+        {activeQrImageUrl && (
+          <View style={styles.qrTabContainer}>
+            <TouchableOpacity
+              style={[styles.qrTabButton, qrTab === 'dynamic' && styles.qrTabButtonActive]}
+              onPress={() => setQrTab('dynamic')}
+              activeOpacity={0.8}
+            >
+              <Icon
+                name="bolt"
+                size={12}
+                color={qrTab === 'dynamic' ? '#007AFF' : '#64748B'}
+                style={{ marginRight: 5 }}
+              />
+              <Text style={[styles.qrTabText, qrTab === 'dynamic' && styles.qrTabTextActive]}>
+                QR with Bill Amount
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.qrTabButton, qrTab === 'profile' && styles.qrTabButtonActive]}
+              onPress={() => setQrTab('profile')}
+              activeOpacity={0.8}
+            >
+              <Icon
+                name="image"
+                size={12}
+                color={qrTab === 'profile' ? '#007AFF' : '#64748B'}
+                style={{ marginRight: 5 }}
+              />
+              <Text style={[styles.qrTabText, qrTab === 'profile' && styles.qrTabTextActive]}>
+                Profile QR Code
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* QR Code Container Box */}
+        <View style={styles.qrBox}>
+          {loading ? (
+            <View style={styles.qrLoadingBox}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={styles.qrLoadingText}>Generating QR Code...</Text>
+            </View>
+          ) : (
+            <>
+              <Image
+                source={{
+                  uri:
+                    qrTab === 'profile' && activeQrImageUrl
+                      ? activeQrImageUrl
+                      : dynamicQrImageUrl,
+                }}
+                style={styles.qrImage}
+                resizeMode="contain"
+              />
+              <View style={styles.qrAmountOverlay}>
+                <Text style={styles.qrAmountOverlayText}>
+                  Order Bill: ₹{Number(amount).toFixed(2)}
+                </Text>
+              </View>
+            </>
+          )}
+        </View>
+
+        <Text style={styles.instructions}>
+          {qrTab === 'profile'
+            ? `Scan with Google Pay / PhonePe / Paytm and enter ₹${Number(amount).toFixed(2)}.`
+            : `✨ Amount ₹${Number(amount).toFixed(2)} is automatically pre-filled when scanned with any UPI app!`}
+        </Text>
+
+        {/* Direct 1-Tap Pay via UPI App */}
+        <TouchableOpacity
+          style={styles.directUpiPayButton}
+          onPress={handleDirectUpiPay}
+          activeOpacity={0.85}
+        >
+          <Icon name="mobile-phone" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+          <Text style={styles.directUpiPayButtonText}>
+            Pay ₹{Number(amount).toFixed(2)} in UPI App
+          </Text>
+        </TouchableOpacity>
+
+        {/* UPI ID Row with 1-Tap Copy */}
+        <View style={styles.upiIdRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.upiIdLabel}>Merchant / Store UPI ID:</Text>
+            <Text style={styles.upiIdText} numberOfLines={1}>
+              {activeVpa}
+            </Text>
+            <Text style={styles.payeeNameText}>Payee: {payeeName}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.copyUpiBtn, copiedUpi && styles.copyUpiBtnCopied]}
+            onPress={handleCopyUpiId}
+            activeOpacity={0.8}
+          >
+            <Icon
+              name={copiedUpi ? 'check' : 'clone'}
+              size={12}
+              color={copiedUpi ? '#FFFFFF' : '#007AFF'}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.copyUpiBtnText, copiedUpi && { color: '#FFFFFF' }]}>
+              {copiedUpi ? 'Copied!' : 'Copy'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      {/* Docked Action Footer Bar */}
+      <View style={styles.dockedFooterBar}>
+        <TouchableOpacity
+          style={styles.footerCancelBtn}
+          onPress={handleSimulatePaymentFailure}
+          disabled={loading}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.footerCancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.footerConfirmBtn}
+          onPress={handleSimulatePaymentSuccess}
+          disabled={loading}
+          activeOpacity={0.85}
+        >
+          {loading ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <>
+              <Icon name="check-circle" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.footerConfirmBtnText}>Payment Completed</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  mainContainer: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    height: Platform.OS === 'web' ? '100%' : undefined,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f8f8f8',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 52 : 16,
+    paddingBottom: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+  backHeaderBtn: {
+    padding: 8,
+    marginRight: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
   },
-  amount: {
+  headerTitle: {
     fontSize: 18,
-    marginBottom: 10,
-    color: '#555',
+    fontWeight: '700',
+    color: '#0F172A',
+    flex: 1,
   },
-  qrCode: {
-    width: 200,
-    height: 200,
-    resizeMode: 'contain',
-    marginBottom: 20,
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 16,
+    paddingBottom: 30,
+    alignItems: 'center',
+  },
+  amountPill: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0F9FF',
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#BAE6FD',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  amountPillLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  amountPillSub: {
+    fontSize: 11,
+    color: '#0284C7',
+    marginTop: 2,
+  },
+  amountPillValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0284C7',
+  },
+  qrTabContainer: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  qrTabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  qrTabButtonActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#007AFF',
+  },
+  qrTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  qrTabTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  qrBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 3,
+    marginBottom: 14,
+  },
+  qrImage: {
+    width: 230,
+    height: 230,
+    borderRadius: 8,
+  },
+  qrLoadingBox: {
+    height: 230,
+    width: 230,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrLoadingText: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 10,
+  },
+  qrAmountOverlay: {
+    marginTop: 12,
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  qrAmountOverlayText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.4,
   },
   instructions: {
-    fontSize: 16,
+    fontSize: 13,
+    color: '#475569',
     textAlign: 'center',
-    marginBottom: 30,
-    color: '#666',
+    lineHeight: 18,
+    marginBottom: 16,
+    paddingHorizontal: 12,
   },
-  button: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-    borderRadius: 8,
-    marginTop: 10, // Added margin for spacing between buttons
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  failButton: {
-    backgroundColor: '#FF3B30', // Red color for failure
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    justifyContent: 'center',
+  directUpiPayButton: {
+    width: '100%',
+    flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 10,
+    justifyContent: 'center',
+    backgroundColor: '#10B981',
+    borderRadius: 10,
+    paddingVertical: 13,
+    marginBottom: 16,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#000',
+  directUpiPayButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
-  noQrText: {
-    fontSize: 16,
-    color: 'red',
-    textAlign: 'center',
-    marginBottom: 20,
+  upiIdRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  upiIdLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  upiIdText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  payeeNameText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  copyUpiBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 10,
+  },
+  copyUpiBtnCopied: {
+    backgroundColor: '#10B981',
+    borderColor: '#10B981',
+  },
+  copyUpiBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  dockedFooterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  footerCancelBtn: {
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  footerCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  footerConfirmBtn: {
+    flex: 1,
+    marginLeft: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  footerConfirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
 

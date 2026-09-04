@@ -246,6 +246,69 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
                 </View>
               </View>
 
+              {/* Currency Symbol Setting */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Currency Symbol on Receipts</Text>
+                <View style={styles.paperRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.paperOption,
+                      (config.currencySymbol || 'Rs.') === 'Rs.' && styles.paperOptionSelected,
+                    ]}
+                    onPress={() => setConfig({ ...config, currencySymbol: 'Rs.' })}
+                  >
+                    <Text
+                      style={[
+                        styles.paperOptionText,
+                        (config.currencySymbol || 'Rs.') === 'Rs.' && styles.paperOptionTextSelected,
+                      ]}
+                    >
+                      Rs.
+                    </Text>
+                    <Text style={styles.paperOptionSub}>Recommended (Safe POS)</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.paperOption,
+                      config.currencySymbol === '₹' && styles.paperOptionSelected,
+                    ]}
+                    onPress={() => setConfig({ ...config, currencySymbol: '₹' })}
+                  >
+                    <Text
+                      style={[
+                        styles.paperOptionText,
+                        config.currencySymbol === '₹' && styles.paperOptionTextSelected,
+                      ]}
+                    >
+                      ₹
+                    </Text>
+                    <Text style={styles.paperOptionSub}>Rupee Symbol</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.paperOption,
+                      config.currencySymbol === 'INR' && styles.paperOptionSelected,
+                    ]}
+                    onPress={() => setConfig({ ...config, currencySymbol: 'INR' })}
+                  >
+                    <Text
+                      style={[
+                        styles.paperOptionText,
+                        config.currencySymbol === 'INR' && styles.paperOptionTextSelected,
+                      ]}
+                    >
+                      INR
+                    </Text>
+                    <Text style={styles.paperOptionSub}>Currency Code</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.helperNote}>
+                  Thermal POS printers use 'Rs.' to guarantee numbers display cleanly and prevent Chinese font glyph errors.
+                </Text>
+              </View>
+
               {/* Store & Receipt Customization */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Receipt Header & Details</Text>
@@ -497,6 +560,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94A3B8',
     marginTop: 2,
+    textAlign: 'center',
+  },
+  helperNote: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 8,
+    lineHeight: 16,
+    fontStyle: 'italic',
   },
   inputLabel: {
     fontSize: 12,

@@ -1,5 +1,6 @@
 // src/services/speechService.js
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let ExpoSpeech = null;
 try {
@@ -7,6 +8,45 @@ try {
 } catch (e) {
   // Fallback if dynamic require
 }
+
+const VOICE_SETTINGS_KEY = '@app_voice_settings';
+
+export const DEFAULT_VOICE_SETTINGS = {
+  gender: 'female', // 'female' | 'male'
+  rate: 0.95,
+  language: 'en-IN',
+};
+
+/**
+ * Loads voice preferences from AsyncStorage.
+ */
+export const getVoiceSettings = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(VOICE_SETTINGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_VOICE_SETTINGS, ...parsed };
+    }
+  } catch (err) {
+    console.warn('[SpeechService] Error loading voice settings:', err);
+  }
+  return DEFAULT_VOICE_SETTINGS;
+};
+
+/**
+ * Saves voice preferences (e.g. { gender: 'male' | 'female' }).
+ */
+export const saveVoiceSettings = async (settings = {}) => {
+  try {
+    const current = await getVoiceSettings();
+    const updated = { ...current, ...settings };
+    await AsyncStorage.setItem(VOICE_SETTINGS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (err) {
+    console.warn('[SpeechService] Error saving voice settings:', err);
+    throw err;
+  }
+};
 
 /**
  * Plays a pleasant notification chime tone via Web Audio API.
@@ -50,9 +90,10 @@ export const playNotificationChime = () => {
 /**
  * Announces text aloud via Text-to-Speech (TTS).
  * Works seamlessly on Web (Web Speech Synthesis API), Android, and iOS.
+ * Automatically respects the user's selected Male / Female voice setting.
  *
  * @param {string} text - The message to announce.
- * @param {object} options - Voice options { language, pitch, rate, playChime }.
+ * @param {object} options - Voice options { gender, language, pitch, rate, playChime }.
  */
 export const announceText = async (text, options = {}) => {
   if (!text || typeof text !== 'string') return;
@@ -61,9 +102,20 @@ export const announceText = async (text, options = {}) => {
     playNotificationChime();
   }
 
-  const lang = options.language || 'en-IN'; // Indian English default, works smoothly with numbers & currency
-  const pitch = options.pitch || 1.0;
-  const rate = options.rate || 0.95;
+  // Load configured voice gender
+  const savedSettings = await getVoiceSettings();
+  const gender = options.gender || savedSettings.gender || 'female';
+  const isMale = gender.toLowerCase() === 'male';
+
+  const lang = options.language || savedSettings.language || 'en-IN';
+  // Male voice benefits from deeper resonant pitch (0.85); Female from crisp higher pitch (1.15)
+  const defaultPitch = isMale ? 0.85 : 1.15;
+  const pitch = options.pitch !== undefined ? options.pitch : defaultPitch;
+  const rate = options.rate !== undefined ? options.rate : (savedSettings.rate || 0.95);
+
+  const maleKeywords = ['male', 'man', 'david', 'ravi', 'george', 'mark', 'alex', 'daniel', 'richard', 'james', 'guy', 'prabhat'];
+  const femaleKeywords = ['female', 'woman', 'zira', 'heera', 'samantha', 'victoria', 'karen', 'veena', 'ananya', 'priya', 'hazel', 'susan', 'catherine'];
+  const targetKeywords = isMale ? maleKeywords : femaleKeywords;
 
   // 1. Web Speech Synthesis API
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.speechSynthesis) {
@@ -76,8 +128,29 @@ export const announceText = async (text, options = {}) => {
 
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
-        const preferredVoice = voices.find(v => v.lang === 'en-IN' || v.lang === 'en_IN' || v.lang.startsWith('en')) || voices[0];
-        if (preferredVoice) utterance.voice = preferredVoice;
+        // 1. Try matching language + gender
+        let matchedVoice = voices.find(v => {
+          const isTargetLang = v.lang && (v.lang === lang || v.lang === 'en_IN' || v.lang.startsWith('en'));
+          const vName = (v.name || '').toLowerCase();
+          return isTargetLang && targetKeywords.some(k => vName.includes(k));
+        });
+
+        // 2. Try matching any language with gender keyword
+        if (!matchedVoice) {
+          matchedVoice = voices.find(v => {
+            const vName = (v.name || '').toLowerCase();
+            return targetKeywords.some(k => vName.includes(k));
+          });
+        }
+
+        // 3. Fallback to preferred language
+        if (!matchedVoice) {
+          matchedVoice = voices.find(v => v.lang === 'en-IN' || v.lang === 'en_IN' || v.lang.startsWith('en')) || voices[0];
+        }
+
+        if (matchedVoice) {
+          utterance.voice = matchedVoice;
+        }
       }
 
       window.speechSynthesis.speak(utterance);
@@ -94,10 +167,28 @@ export const announceText = async (text, options = {}) => {
     }
     if (ExpoSpeech && typeof ExpoSpeech.speak === 'function') {
       ExpoSpeech.stop();
+
+      let voiceIdentifier = undefined;
+      try {
+        if (ExpoSpeech.getAvailableVoicesAsync) {
+          const nativeVoices = await ExpoSpeech.getAvailableVoicesAsync();
+          if (nativeVoices && nativeVoices.length > 0) {
+            const match = nativeVoices.find(v => {
+              const vName = (v.name || v.identifier || '').toLowerCase();
+              return targetKeywords.some(k => vName.includes(k));
+            });
+            if (match) {
+              voiceIdentifier = match.identifier;
+            }
+          }
+        }
+      } catch (_) {}
+
       ExpoSpeech.speak(text, {
         language: lang,
         pitch,
         rate,
+        ...(voiceIdentifier ? { voice: voiceIdentifier } : {}),
         onDone: () => console.log('[SpeechService] Speech announcement finished'),
         onError: (err) => console.warn('[SpeechService] Speech error:', err),
       });
@@ -109,25 +200,69 @@ export const announceText = async (text, options = {}) => {
 };
 
 /**
- * Specifically announces an Order when printing a receipt.
+ * Tests the voice announcement with the given or saved gender.
+ */
+export const testVoiceAnnouncement = async (gender = null) => {
+  const current = await getVoiceSettings();
+  const targetGender = gender || current.gender || 'female';
+  const label = targetGender.toLowerCase() === 'male' ? 'Male' : 'Female';
+  await announceText(`This is a test of the ${label} voice. Daily Order Number 5. Total amount 250 Rupees.`, {
+    gender: targetGender,
+  });
+};
+
+/**
+ * Announces an Order aloud on demand.
+ * Works with both full order records from database/screens and prepared receipt payloads.
  * e.g. "Daily Order Number 5. Order Number 20260829-0005. Total amount 250 Rupees."
  */
 export const announceOrderPrint = async (orderDetails) => {
   if (!orderDetails) return;
 
-  const totalAmt = orderDetails.total !== undefined ? Math.round(Number(orderDetails.total)) : '';
-  const orderType = orderDetails.orderType || '';
-  const tableNo = orderDetails.tableNo || '';
+  const rawTotal =
+    orderDetails.total !== undefined && orderDetails.total !== null
+      ? orderDetails.total
+      : orderDetails.total_amount !== undefined && orderDetails.total_amount !== null
+      ? orderDetails.total_amount
+      : orderDetails.amount || 0;
+
+  const totalAmt = Math.round(Number(rawTotal) || 0);
+
+  const rawId =
+    orderDetails.orderId ||
+    orderDetails.order_number ||
+    orderDetails.orderNumber ||
+    orderDetails.id ||
+    '';
+  const orderId = rawId ? String(rawId).substring(0, 12).toUpperCase() : '';
+
+  let dayOrder =
+    orderDetails.dayOrderNo ||
+    orderDetails.dailyOrderNo ||
+    orderDetails.dailyOrderNumber ||
+    orderDetails.daily_order_number ||
+    orderDetails.day_order_no ||
+    orderDetails.token_no ||
+    orderDetails.token ||
+    null;
+
+  if (!dayOrder && orderId) {
+    const match = String(orderId).match(/[-_](\d+)$/);
+    if (match && match[1]) dayOrder = match[1];
+  }
+
+  const orderType = orderDetails.orderType || orderDetails.order_type || '';
+  const tableNo = orderDetails.tableNo || orderDetails.table_no || '';
+  const items = orderDetails.items || orderDetails.order_items || orderDetails.cart_items || [];
 
   let message = '';
-  const dayOrder = orderDetails.dayOrderNo || orderDetails.dailyOrderNo || orderDetails.dailyOrderNumber || orderDetails.dayWiseOrderNo;
   if (dayOrder) {
     message += `Daily Order Number ${String(dayOrder).replace(/^#/, '')}. `;
-    if (orderDetails.orderId && String(orderDetails.orderId) !== String(dayOrder)) {
-      message += `Order Number ${orderDetails.orderId}. `;
+    if (orderId && String(orderId) !== String(dayOrder)) {
+      message += `Order Number ${orderId}. `;
     }
-  } else if (orderDetails.orderId) {
-    message += `Order Number ${orderDetails.orderId}. `;
+  } else if (orderId) {
+    message += `Order Number ${orderId}. `;
   }
 
   if (tableNo) {
@@ -140,8 +275,8 @@ export const announceOrderPrint = async (orderDetails) => {
     message += `Total amount ${totalAmt} Rupees. `;
   }
 
-  if (orderDetails.items && orderDetails.items.length > 0) {
-    message += `${orderDetails.items.length} ${orderDetails.items.length === 1 ? 'item' : 'items'}.`;
+  if (items && items.length > 0) {
+    message += `${items.length} ${items.length === 1 ? 'item' : 'items'}.`;
   }
 
   if (message.trim()) {

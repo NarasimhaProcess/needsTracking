@@ -15,7 +15,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
-import { printReceipt, extractOrderNumbers } from '../services/printerService';
+import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
@@ -285,7 +285,7 @@ const OrderDetailScreen = ({ navigation, route }) => {
       <body>
           <div id="mapid"></div>
           <script>
-              var map = L.map('mapid', { zoomControl: true }).setView([20.5937, 78.9629], 5);
+              var map = L.map('mapid', { zoomControl: true, scrollWheelZoom: false }).setView([20.5937, 78.9629], 5);
               L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                   attribution: '&copy; OpenStreetMap',
                   maxZoom: 19
@@ -377,30 +377,48 @@ const OrderDetailScreen = ({ navigation, route }) => {
   return (
     <View style={styles.mainContainer}>
       <View style={styles.header}>
-        <View style={{ flex: 1 }}>
+        <TouchableOpacity
+          style={styles.backHeaderBtn}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Back to Orders"
+        >
+          <Icon name="arrow-left" size={17} color="#0F172A" />
+        </TouchableOpacity>
+        <View style={{ flex: 1, marginLeft: 10 }}>
           <Text style={styles.headerTitle}>Order #{orderNumber}</Text>
           {dayOrderNo ? (
             <Text style={styles.headerSubTitle}>Day Order No: #{dayOrderNo}</Text>
           ) : null}
         </View>
         <View style={styles.headerIcons}>
-          <TouchableOpacity style={{ marginRight: 16 }} onPress={() => printReceipt(order)}>
+          <TouchableOpacity
+            style={{ marginRight: 16 }}
+            onPress={() => announceOrderPrint(order)}
+            accessibilityLabel="Announce Order Aloud"
+          >
+            <Icon name="volume-up" size={22} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity style={{ marginRight: 16 }} onPress={() => printReceipt(order)} accessibilityLabel="Print Receipt">
             <Icon name="print" size={22} color="#1E293B" />
           </TouchableOpacity>
-          <TouchableOpacity style={{ marginRight: 16 }} onPress={() => setShowPrinterSettings(true)}>
+          <TouchableOpacity style={{ marginRight: 16 }} onPress={() => setShowPrinterSettings(true)} accessibilityLabel="Printer Settings">
             <Icon name="cog" size={22} color="#64748B" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
+          <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Close">
             <Icon name="times" size={22} color="#1E293B" />
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView
-        style={[styles.container, { flex: 1, width: '100%' }]}
-        contentContainerStyle={{ flexGrow: 1, paddingBottom: 60 }}
+        style={[
+          styles.container,
+          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
+        ]}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled={true}
       >
         {/* Live Tracking Map if Delivery Partner is Assigned */}
         {isDeliveryAssigned && (
@@ -528,17 +546,49 @@ const OrderDetailScreen = ({ navigation, route }) => {
         {/* Items List */}
         <Text style={styles.sectionTitle}>Order Items</Text>
         {order.order_items && order.order_items.length > 0 ? (
-          <FlatList
-            data={order.order_items}
-            keyExtractor={(item) => item.id}
-            renderItem={renderOrderItem}
-            scrollEnabled={false}
-            contentContainerStyle={styles.itemsList}
-          />
+          <View style={styles.itemsList}>
+            {order.order_items.map((item, index) => (
+              <View key={item.id || index}>
+                {renderOrderItem({ item, index })}
+              </View>
+            ))}
+          </View>
         ) : (
           <Text style={styles.noItemsText}>No items in this order.</Text>
         )}
       </ScrollView>
+
+      {/* Screen Footer Bar */}
+      <View style={styles.screenFooterBar}>
+        <TouchableOpacity
+          style={styles.footerBackBtn}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.8}
+        >
+          <Icon name="arrow-left" size={14} color="#0F172A" style={{ marginRight: 8 }} />
+          <Text style={styles.footerBackBtnText}>Back to Orders</Text>
+        </TouchableOpacity>
+
+        <View style={styles.footerRightBtns}>
+          <TouchableOpacity
+            style={styles.footerVoiceBtn}
+            onPress={() => announceOrderPrint(order)}
+            accessibilityLabel="Announce Order Aloud"
+            activeOpacity={0.8}
+          >
+            <Icon name="volume-up" size={16} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.footerPrintBtn}
+            onPress={() => printReceipt(order)}
+            accessibilityLabel="Print Receipt"
+            activeOpacity={0.8}
+          >
+            <Icon name="print" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.footerPrintBtnText}>Print</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <PrinterSettingsModal
         visible={showPrinterSettings}
@@ -560,17 +610,26 @@ const styles = StyleSheet.create({
   mainContainer: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+    height: Platform.OS === 'web' ? '100%' : undefined,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: Platform.OS === 'ios' ? 52 : 16,
-    paddingBottom: 16,
+    paddingBottom: 14,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+  },
+  backHeaderBtn: {
+    padding: 8,
+    marginRight: 4,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
   },
   headerTitle: {
     fontSize: 18,
@@ -630,7 +689,74 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+    width: '100%',
+  },
+  scrollContent: {
+    flexGrow: 1,
     padding: 16,
+    paddingBottom: 40,
+  },
+  screenFooterBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  footerBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  footerBackBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  footerRightBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  footerVoiceBtn: {
+    padding: 9,
+    borderRadius: 8,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  footerPrintBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  footerPrintBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   centered: {
     flex: 1,

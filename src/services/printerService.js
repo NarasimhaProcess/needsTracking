@@ -4,6 +4,7 @@ import { Alert, Platform } from 'react-native';
 import * as Print from 'expo-print';
 import { supabase } from './supabase';
 import { announceOrderPrint } from './speechService';
+export { announceOrderPrint };
 
 const PRINTER_STORAGE_KEY = '@printer_config_v1';
 
@@ -12,6 +13,7 @@ export const DEFAULT_PRINTER_CONFIG = {
   printerName: '',
   printerAddress: '',
   paperWidth: '58mm', // '58mm' (32 chars) or '80mm' (48 chars)
+  currencySymbol: 'Rs.', // 'Rs.' (recommended for POS thermal printers) | '₹' | 'INR'
   storeName: "LocalWala's",
   storeAddress: '',
   storeContact: '',
@@ -32,7 +34,12 @@ export const getPrinterConfig = async () => {
   try {
     const raw = await AsyncStorage.getItem(PRINTER_STORAGE_KEY);
     if (raw) {
-      return { ...DEFAULT_PRINTER_CONFIG, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_PRINTER_CONFIG,
+        ...parsed,
+        currencySymbol: parsed.currencySymbol || 'Rs.',
+      };
     }
   } catch (err) {
     console.warn('[PrinterService] Failed to load printer config:', err);
@@ -62,11 +69,65 @@ export const getLineCharWidth = (paperWidth = '58mm') => {
 };
 
 /**
+ * Safely parses any number, numeric string (with commas or symbols), or fallback.
+ */
+export const safeParseNumber = (val, defaultVal = 0) => {
+  if (val === null || val === undefined || val === '') return defaultVal;
+  if (typeof val === 'number') return isNaN(val) || !isFinite(val) ? defaultVal : val;
+  const cleaned = String(val).replace(/[^0-9.-]+/g, '');
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) || !isFinite(parsed) ? defaultVal : parsed;
+};
+
+/**
+ * Safely formats price with 2 decimal places and currency prefix.
+ */
+export const safeFormatPrice = (val, currency = 'Rs.') => {
+  const num = safeParseNumber(val, 0);
+  const prefix = currency ? `${currency}` : '';
+  return `${prefix}${num.toFixed(2)}`;
+};
+
+/**
+ * Safely formats numeric value to fixed 2-decimal string.
+ */
+export const safeFormatNumber = (val, decimals = 2) => {
+  const num = safeParseNumber(val, 0);
+  return num.toFixed(decimals);
+};
+
+/**
+ * Sanitizes text specifically for ESC/POS thermal receipt printers.
+ * Thermal POS printers use 8-bit ASCII / Code Pages (PC437) and do not support Unicode ₹ (U+20B9).
+ * Multi-byte UTF-8 ₹ (0xE2 0x82 0xB9) causes Chinese-mode firmware to print Chinese glyphs
+ * and consume the following price digits. This sanitizer guarantees strictly 7-bit clean ASCII.
+ */
+export const sanitizeThermalText = (text, currencySymbol = 'Rs.') => {
+  if (!text) return '';
+  const safeCurrency = (!currencySymbol || currencySymbol === '₹') ? 'Rs.' : currencySymbol;
+  let str = String(text)
+    .replace(/\u20B9/g, safeCurrency)
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return str.replace(/[^\x20-\x7E\n\r\t]/g, '');
+};
+
+/**
  * Formats a two-column line (Left text, Right text) padded with spaces to fill the paper width.
  */
 export const formatTwoColumns = (leftText, rightText, totalWidth = 32) => {
-  const left = String(leftText || '');
-  const right = String(rightText || '');
+  const left = sanitizeThermalText(String(leftText || '').trim());
+  let right = sanitizeThermalText(String(rightText || '').trim());
+  if (right.length >= totalWidth) {
+    return right.substring(0, totalWidth);
+  }
   const spaceNeeded = totalWidth - left.length - right.length;
   if (spaceNeeded <= 0) {
     const maxLeft = Math.max(1, totalWidth - right.length - 1);
@@ -76,21 +137,53 @@ export const formatTwoColumns = (leftText, rightText, totalWidth = 32) => {
 };
 
 /**
- * Formats a three-column item row (Item, Qty, Price)
+ * Formats an item row cleanly for 58mm (32 cols) or 80mm (48 cols) thermal paper.
+ * Prevents line wrapping, handles multi-quantity orders with unit rate and line total,
+ * and ensures all numbers are ASCII formatted without swallowing digits.
  */
-export const formatItemRow = (name, qty, price, totalWidth = 32) => {
-  const qtyStr = `x${qty}`;
-  const priceStr = `₹${parseFloat(price).toFixed(2)}`;
-  const rightPart = `${qtyStr} ${priceStr}`;
-  const maxNameWidth = totalWidth - rightPart.length - 1;
+export const formatItemRow = (name, qty, price, totalWidth = 32, currencySymbol = 'Rs.', total = null) => {
+  const safeCurrency = (!currencySymbol || currencySymbol === '₹') ? 'Rs.' : currencySymbol;
+  const cleanName = sanitizeThermalText(String(name || 'Item').trim(), safeCurrency);
+  const quantity = safeParseNumber(qty, 1);
+  const unitRate = safeParseNumber(price, 0);
+  const lineTotal = total !== null && total !== undefined ? safeParseNumber(total, 0) : quantity * unitRate;
+  const totalStr = `${safeCurrency}${lineTotal.toFixed(2)}`;
 
-  let displayName = name;
-  if (name.length > maxNameWidth) {
-    displayName = name.substring(0, maxNameWidth);
+  if (totalWidth >= 48) {
+    // 80mm format: 4 columns [ITEM (22), QTY (4), RATE (10), AMOUNT (12)] = 48 chars
+    const nameColWidth = totalWidth - 4 - 10 - 12;
+    const qtyCol = String(quantity).padStart(4, ' ');
+    const rateCol = unitRate.toFixed(2).padStart(10, ' ');
+    const totalCol = totalStr.padStart(12, ' ');
+
+    if (cleanName.length <= nameColWidth) {
+      const nameCol = cleanName.padEnd(nameColWidth, ' ');
+      return nameCol + qtyCol + rateCol + totalCol;
+    } else {
+      const line1 = cleanName;
+      const line2 = ' '.repeat(nameColWidth) + qtyCol + rateCol + totalCol;
+      return line1 + '\n' + line2;
+    }
   }
 
-  const spaceNeeded = totalWidth - displayName.length - rightPart.length;
-  return displayName + ' '.repeat(Math.max(1, spaceNeeded)) + rightPart;
+  // 58mm format (32 chars)
+  if (quantity === 1) {
+    const spaceForName = totalWidth - totalStr.length - 1;
+    if (cleanName.length <= spaceForName) {
+      const pad = totalWidth - cleanName.length - totalStr.length;
+      return cleanName + ' '.repeat(Math.max(1, pad)) + totalStr;
+    } else {
+      return cleanName + '\n' + ' '.repeat(totalWidth - totalStr.length) + totalStr;
+    }
+  } else {
+    // Multi-quantity on 58mm:
+    // Line 1: Item Name
+    // Line 2: "  2 x 50.00          Rs.100.00"
+    const qtyRateStr = `  ${quantity} x ${unitRate.toFixed(2)}`;
+    const spaceNeeded = totalWidth - qtyRateStr.length - totalStr.length;
+    const line2 = qtyRateStr + ' '.repeat(Math.max(1, spaceNeeded)) + totalStr;
+    return cleanName + '\n' + line2;
+  }
 };
 
 /**
@@ -153,19 +246,27 @@ export const getSeparator = (totalWidth = 32) => {
 export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const width = getLineCharWidth(config.paperWidth);
   const separator = getSeparator(width);
+  // ESC/POS must strictly use ASCII currency 'Rs.' or 'Rs ' to prevent Chinese glyph corruption on thermal hardware
+  const currencySymbol = (config.currencySymbol && config.currencySymbol !== '₹') ? config.currencySymbol : 'Rs.';
   const encoder = new TextEncoder();
 
   // ESC/POS Commands
   const ESC = 0x1b;
+  const FS = 0x1c;
   const GS = 0x1d;
 
-  const CMD_INIT = [ESC, 0x40]; // Initialize
+  const CMD_INIT = [ESC, 0x40]; // Initialize printer
+  const CMD_CANCEL_KANJI = [FS, 0x2e]; // FS . (Cancel Chinese/Kanji character mode - prevents Chinese glyphs)
+  const CMD_CODEPAGE_PC437 = [ESC, 0x74, 0x00]; // ESC t 0 (Select Code page 0: PC437 Standard USA)
+  const CMD_CHARSET_USA = [ESC, 0x52, 0x00]; // ESC R 0 (USA Character Set)
+
   const CMD_ALIGN_CENTER = [ESC, 0x61, 0x01];
   const CMD_ALIGN_LEFT = [ESC, 0x61, 0x00];
   const CMD_ALIGN_RIGHT = [ESC, 0x61, 0x02];
   const CMD_BOLD_ON = [ESC, 0x45, 0x01];
   const CMD_BOLD_OFF = [ESC, 0x45, 0x00];
   const CMD_DOUBLE_SIZE = [GS, 0x21, 0x11]; // Double height & width
+  const CMD_DOUBLE_HEIGHT = [GS, 0x21, 0x01]; // Double height only (preserves full 32/48 col line width)
   const CMD_NORMAL_SIZE = [GS, 0x21, 0x00];
   const CMD_FEED_AND_CUT = [ESC, 0x64, 0x04, GS, 0x56, 0x41, 0x00]; // Feed 4 lines and full cut
 
@@ -176,17 +277,26 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   };
 
   const addText = (text) => {
-    byteChunks.push(encoder.encode(text + '\n'));
+    const clean = sanitizeThermalText(text, currencySymbol);
+    byteChunks.push(encoder.encode(clean + '\n'));
   };
 
-  // 1. Initialize
+  // 1. Initialize and cancel Chinese character mode
   addBytes(CMD_INIT);
+  addBytes(CMD_CANCEL_KANJI);
+  addBytes(CMD_CODEPAGE_PC437);
+  addBytes(CMD_CHARSET_USA);
 
-  // 2. Header (Centered, Bold, Double Size)
+  // 2. Header (Centered, Bold)
   addBytes(CMD_ALIGN_CENTER);
   addBytes(CMD_BOLD_ON);
-  addBytes(CMD_DOUBLE_SIZE);
-  addText(config.storeName || "RECEIPT");
+  const store = sanitizeThermalText(data.storeName || config.storeName || "RECEIPT", currencySymbol);
+  if (store.length <= Math.floor(width / 2)) {
+    addBytes(CMD_DOUBLE_SIZE);
+  } else {
+    addBytes(CMD_DOUBLE_HEIGHT);
+  }
+  addText(store);
   addBytes(CMD_NORMAL_SIZE);
   addBytes(CMD_BOLD_OFF);
 
@@ -207,19 +317,27 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   addBytes(CMD_BOLD_OFF);
   addText(separator);
 
-  // 4. Order Meta
-  addBytes(CMD_ALIGN_LEFT);
-
-  // Prominently print Day Order Number if available
+  // 4. Token / Day Order Number (Prominent banner for counter/kitchen)
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
   if (dayOrder) {
+    addBytes(CMD_ALIGN_CENTER);
     addBytes(CMD_BOLD_ON);
-    addText(formatTwoColumns('Day Order No:', `#${String(dayOrder).replace(/^#/, '')}`, width));
+    addText(`*** DAY ORDER NO: #${String(dayOrder).replace(/^#/, '')} ***`);
     addBytes(CMD_BOLD_OFF);
+    addText(separator);
   }
 
+  // Order Meta
+  addBytes(CMD_ALIGN_LEFT);
+
   if (data.orderId || data.rawOrderId) {
-    addText(formatTwoColumns('Order No:', String(data.orderId || data.rawOrderId), width));
+    const orderNoStr = String(data.orderId || data.rawOrderId);
+    if (orderNoStr.length > 20) {
+      addText('Order No:');
+      addText(`  ${orderNoStr}`);
+    } else {
+      addText(formatTwoColumns('Order No:', orderNoStr, width));
+    }
   }
   if (data.date) {
     addText(formatTwoColumns('Date:', String(data.date), width));
@@ -228,13 +346,13 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
     addText(formatTwoColumns(`Customer: ${data.customerName}`, '', width));
   }
   if (data.customerPhone) {
-    addText(formatTwoColumns(`Phone: ${data.customerPhone}`, '', width));
+    addText(formatTwoColumns('Phone:', String(data.customerPhone), width));
   }
   if (data.orderType) {
-    addText(formatTwoColumns(`Type: ${String(data.orderType).toUpperCase()}`, '', width));
+    addText(formatTwoColumns('Type:', String(data.orderType).toUpperCase(), width));
   }
   if (data.tableNo) {
-    addText(formatTwoColumns(`Table: #${data.tableNo}`, '', width));
+    addText(formatTwoColumns('Table:', `#${data.tableNo}`, width));
   }
   if (data.deliveryAddress) {
     addText(`Address: ${data.deliveryAddress.substring(0, width * 2)}`);
@@ -243,7 +361,12 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   // 5. Items Header
   addText(separator);
   addBytes(CMD_BOLD_ON);
-  addText(formatTwoColumns('ITEM', 'QTY  PRICE', width));
+  if (width >= 48) {
+    const nameHdr = 'ITEM'.padEnd(width - 4 - 10 - 12, ' ');
+    addText(nameHdr + ' QTY      RATE      AMOUNT');
+  } else {
+    addText(formatTwoColumns('ITEM', 'QTY  PRICE', width));
+  }
   addBytes(CMD_BOLD_OFF);
   addText(separator);
 
@@ -253,29 +376,55 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
       const name = item.name || 'Item';
       const qty = item.quantity || 1;
       const price = item.price || 0;
-      addText(formatItemRow(name, qty, price, width));
+      const total = item.total !== undefined ? item.total : (qty * price);
+      const rowText = formatItemRow(name, qty, price, width, currencySymbol, total);
+      addText(rowText);
     });
   } else {
     addText(formatTwoColumns('(No itemized list)', '', width));
   }
 
   // 7. Totals & Summary
-  addText(separator);
-  if (data.subtotal !== undefined) {
-    addText(formatTwoColumns('Subtotal:', `₹${parseFloat(data.subtotal).toFixed(2)}`, width));
-  }
-  if (data.deliveryFee) {
-    addText(formatTwoColumns('Delivery Fee:', `₹${parseFloat(data.deliveryFee).toFixed(2)}`, width));
-  }
-  if (data.discount) {
-    addText(formatTwoColumns('Discount:', `-₹${parseFloat(data.discount).toFixed(2)}`, width));
-  }
+  const rawTotal =
+    data.total !== undefined && data.total !== null && String(data.total).trim() !== ''
+      ? data.total
+      : data.total_amount !== undefined && data.total_amount !== null && String(data.total_amount).trim() !== ''
+      ? data.total_amount
+      : data.amount !== undefined && data.amount !== null && String(data.amount).trim() !== ''
+      ? data.amount
+      : null;
+
+  const computedTotal =
+    rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
+      ? safeParseNumber(rawTotal, 0)
+      : safeParseNumber(data.subtotal, 0) > 0
+      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0)
+      : data.items && Array.isArray(data.items) && data.items.length > 0
+      ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0)
+      : 0;
+
+  const hasMetaTotals =
+    (data.subtotal !== undefined && safeParseNumber(data.subtotal, 0) > 0) ||
+    (data.deliveryFee && safeParseNumber(data.deliveryFee) > 0) ||
+    (data.discount && safeParseNumber(data.discount) > 0);
 
   addText(separator);
+  if (hasMetaTotals) {
+    if (data.subtotal !== undefined && safeParseNumber(data.subtotal, 0) > 0) {
+      addText(formatTwoColumns('Subtotal:', safeFormatPrice(data.subtotal, currencySymbol), width));
+    }
+    if (data.deliveryFee && safeParseNumber(data.deliveryFee) > 0) {
+      addText(formatTwoColumns('Delivery Fee:', safeFormatPrice(data.deliveryFee, currencySymbol), width));
+    }
+    if (data.discount && safeParseNumber(data.discount) > 0) {
+      addText(formatTwoColumns('Discount:', `-${safeFormatPrice(data.discount, currencySymbol)}`, width));
+    }
+    addText(separator);
+  }
+
+  // TOTAL Line in standard universal BOLD (100% supported on all thermal printers, never dropped)
   addBytes(CMD_BOLD_ON);
-  addBytes(CMD_DOUBLE_SIZE);
-  addText(formatTwoColumns('TOTAL:', `₹${parseFloat(data.total || 0).toFixed(2)}`, Math.floor(width / 2)));
-  addBytes(CMD_NORMAL_SIZE);
+  addText(formatTwoColumns('TOTAL AMOUNT:', safeFormatPrice(computedTotal, currencySymbol), width));
   addBytes(CMD_BOLD_OFF);
   addText(separator);
 
@@ -293,6 +442,9 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
     addText(config.footerNote);
   }
   addText(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+  // Feed 3 blank lines so paper feeds clear of the tear bar / cutter before cutting
+  addText('\n\n\n');
 
   // 9. Cut paper & Feed
   addBytes(CMD_FEED_AND_CUT);
@@ -315,6 +467,25 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
 export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const is80mm = config.paperWidth === '80mm';
   const widthMm = is80mm ? '72mm' : '48mm';
+  const currencySymbol = config.currencySymbol || 'Rs.';
+
+  const rawTotal =
+    data.total !== undefined && data.total !== null && String(data.total).trim() !== ''
+      ? data.total
+      : data.total_amount !== undefined && data.total_amount !== null && String(data.total_amount).trim() !== ''
+      ? data.total_amount
+      : data.amount !== undefined && data.amount !== null && String(data.amount).trim() !== ''
+      ? data.amount
+      : null;
+
+  const computedTotal =
+    rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
+      ? safeParseNumber(rawTotal, 0)
+      : safeParseNumber(data.subtotal, 0) > 0
+      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0)
+      : data.items && Array.isArray(data.items) && data.items.length > 0
+      ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0)
+      : 0;
 
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
 
@@ -325,8 +496,8 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
           <tr>
             <td style="text-align: left; padding: 4px 0; word-break: break-word; font-size: inherit;">${item.name || 'Item'}</td>
             <td style="text-align: center; padding: 4px 0; font-size: inherit;">x${item.quantity || 1}</td>
-            <td style="text-align: right; padding: 4px 0; font-size: inherit;">₹${parseFloat(item.price || 0).toFixed(2)}</td>
-            <td style="text-align: right; padding: 4px 0; font-size: inherit; font-weight: bold;">₹${parseFloat(item.total !== undefined ? item.total : (item.quantity * item.price)).toFixed(2)}</td>
+            <td style="text-align: right; padding: 4px 0; font-size: inherit;">${currencySymbol}${safeFormatNumber(item.price || 0)}</td>
+            <td style="text-align: right; padding: 4px 0; font-size: inherit; font-weight: bold;">${currencySymbol}${safeFormatNumber(item.total !== undefined ? item.total : (item.quantity * item.price))}</td>
           </tr>
         `
         )
@@ -349,7 +520,7 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
             margin: 0;
           }
           body {
-            font-family: 'Courier New', Courier, monospace, monospace;
+            font-family: 'Courier New', Courier, monospace;
             width: ${widthMm};
             margin: 0 auto;
             padding: 8px 4px;
@@ -430,14 +601,14 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
         </table>
         <div class="divider"></div>
 
-        ${data.subtotal !== undefined ? `<div class="meta-row"><span>Subtotal:</span><span>₹${parseFloat(data.subtotal).toFixed(2)}</span></div>` : ''}
-        ${data.deliveryFee ? `<div class="meta-row"><span>Delivery:</span><span>₹${parseFloat(data.deliveryFee).toFixed(2)}</span></div>` : ''}
-        ${data.discount ? `<div class="meta-row"><span>Discount:</span><span>-₹${parseFloat(data.discount).toFixed(2)}</span></div>` : ''}
+        ${data.subtotal !== undefined ? `<div class="meta-row"><span>Subtotal:</span><span>${currencySymbol}${safeFormatNumber(data.subtotal)}</span></div>` : ''}
+        ${data.deliveryFee ? `<div class="meta-row"><span>Delivery:</span><span>${currencySymbol}${safeFormatNumber(data.deliveryFee)}</span></div>` : ''}
+        ${data.discount ? `<div class="meta-row"><span>Discount:</span><span>-${currencySymbol}${safeFormatNumber(data.discount)}</span></div>` : ''}
 
         <div class="divider"></div>
         <div class="total-row">
-          <span>TOTAL:</span>
-          <span>₹${parseFloat(data.total || 0).toFixed(2)}</span>
+          <span>TOTAL AMOUNT:</span>
+          <span>${currencySymbol}${safeFormatNumber(computedTotal)}</span>
         </div>
         <div class="divider"></div>
 
@@ -541,7 +712,7 @@ const sendBytesViaWebBluetooth = async (uint8Bytes) => {
     throw new Error('No active Bluetooth printer connection. Please reconnect the printer.');
   }
 
-  const CHUNK_SIZE = 512;
+  const CHUNK_SIZE = 64;
   for (let i = 0; i < uint8Bytes.length; i += CHUNK_SIZE) {
     const chunk = uint8Bytes.slice(i, i + CHUNK_SIZE);
     if (activeCharacteristic.writeValueWithoutResponse) {
@@ -550,7 +721,7 @@ const sendBytesViaWebBluetooth = async (uint8Bytes) => {
       await activeCharacteristic.writeValue(chunk);
     }
     // Slight pause between packets to prevent buffer overflow on mini thermal chips
-    await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 20));
   }
 };
 
@@ -810,15 +981,34 @@ export const printReceipt = async (orderDetails, options = {}) => {
       };
     });
 
-    const subtotal = order.subtotal !== undefined
-      ? Number(order.subtotal)
-      : (items.length > 0
-          ? items.reduce((sum, it) => sum + it.total, 0)
-          : Number(order.total_amount || 0));
+    // Robust calculation of subtotal and total with multiple fallbacks
+    const itemsTotal = items.reduce((sum, it) => sum + (Number(it.total) || 0), 0);
+    const deliveryFee = Number(order.delivery_fee || order.deliveryFee || 0);
+    const discount = Number(order.discount_amount || order.discount || 0);
 
-    const total = order.total_amount !== undefined
-      ? Number(order.total_amount)
-      : (subtotal + Number(order.delivery_fee || 0) - Number(order.discount_amount || order.discount || 0));
+    let subtotal = 0;
+    if (order.subtotal !== undefined && order.subtotal !== null && Number(order.subtotal) > 0) {
+      subtotal = Number(order.subtotal);
+    } else if (itemsTotal > 0) {
+      subtotal = itemsTotal;
+    } else if (order.total_amount !== undefined && order.total_amount !== null && Number(order.total_amount) > 0) {
+      subtotal = Number(order.total_amount);
+    } else if (order.total !== undefined && order.total !== null && Number(order.total) > 0) {
+      subtotal = Number(order.total);
+    }
+
+    let total = 0;
+    if (order.total_amount !== undefined && order.total_amount !== null && Number(order.total_amount) > 0) {
+      total = Number(order.total_amount);
+    } else if (order.total !== undefined && order.total !== null && Number(order.total) > 0) {
+      total = Number(order.total);
+    } else if (order.amount !== undefined && order.amount !== null && Number(order.amount) > 0) {
+      total = Number(order.amount);
+    } else if (subtotal > 0) {
+      total = subtotal + deliveryFee - discount;
+    } else if (itemsTotal > 0) {
+      total = itemsTotal + deliveryFee - discount;
+    }
 
     const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
     const resolvedDayOrderNo = options.dayOrderNo || options.dailyOrderNumber || dayOrderNo;
@@ -846,8 +1036,8 @@ export const printReceipt = async (orderDetails, options = {}) => {
       tableNo: order.table_no,
       items,
       subtotal,
-      deliveryFee: Number(order.delivery_fee || 0),
-      discount: Number(order.discount_amount || order.discount || 0),
+      deliveryFee,
+      discount,
       total,
       paymentMethod: String(order.payment_method || 'CASH').toUpperCase(),
       paymentStatus: String(order.payment_status || (order.status === 'completed' || order.status === 'paid' ? 'PAID' : 'PENDING')).toUpperCase(),
@@ -856,11 +1046,13 @@ export const printReceipt = async (orderDetails, options = {}) => {
 
     const result = await printDataPayload(payload);
 
-    // Voice announcement (speaks order number & day order number on Web and Mobile)
-    try {
-      announceOrderPrint(payload);
-    } catch (speechErr) {
-      console.warn('[PrinterService] Speech announcement notice:', speechErr);
+    // Optional voice announcement only when explicitly enabled (separated so user can click voice icon independently)
+    if (options.speak === true) {
+      try {
+        announceOrderPrint(payload);
+      } catch (speechErr) {
+        console.warn('[PrinterService] Speech announcement notice:', speechErr);
+      }
     }
 
     return result;

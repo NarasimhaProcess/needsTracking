@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Linking } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
-import { printReceipt, extractOrderNumbers } from '../services/printerService';
+import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { showAlert } from '../utils/alertUtils';
@@ -207,6 +207,13 @@ const OrderListScreen = ({ navigation, route }) => {
         <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
         {item.table_no && <Text style={styles.orderDate}>Table No: {item.table_no}</Text>}
         <View style={styles.actionButtons}>
+          <TouchableOpacity
+            onPress={() => announceOrderPrint(item)}
+            style={{ marginRight: 8 }}
+            accessibilityLabel="Announce Order Aloud"
+          >
+            <Icon name="volume-up" size={20} color="#007AFF" style={styles.actionIcon} />
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => printReceipt(item)}
             style={{ marginRight: 8 }}
