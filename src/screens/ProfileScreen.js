@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -215,7 +215,13 @@ const ProfileScreen = ({ navigation }) => {
           }
 
           // Extract Store & Product Active Settings
-          const storeSettings = extractStoreSettings(data.media_urls || user.user_metadata?.store_settings);
+          let storeSettings = extractStoreSettings(data.media_urls);
+          const hasSettingsInMedia = Array.isArray(data.media_urls)
+            ? data.media_urls.some((m) => m && m.type === 'store_settings')
+            : (typeof data.media_urls === 'string' && data.media_urls.includes('store_settings'));
+          if (!hasSettingsInMedia && user.user_metadata?.store_settings) {
+            storeSettings = extractStoreSettings(user.user_metadata.store_settings);
+          }
           setIsStoreActive(storeSettings.is_store_active);
           setIsMapActive(storeSettings.is_map_active);
           setIsProductViewActive(storeSettings.is_product_active);
@@ -234,15 +240,25 @@ const ProfileScreen = ({ navigation }) => {
             loadedMedia = [{ uri: data.avatar_url, type: 'image' }];
           }
           if (Array.isArray(loadedMedia)) {
-            const cleanMedia = loadedMedia.filter((m) => m && m.type !== 'store_settings');
+            const cleanMedia = loadedMedia.filter(
+              (m) => m && m.type !== 'store_settings' && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0
+            );
             setMediaList(cleanMedia);
           }
         } else {
           setName(user.user_metadata?.full_name || user.user_metadata?.name || '');
           setEmail(user.email || '');
           setMobile(user.user_metadata?.mobile || '');
+          if (user.user_metadata?.store_settings) {
+            const storeSettings = extractStoreSettings(user.user_metadata.store_settings);
+            setIsStoreActive(storeSettings.is_store_active);
+            setIsMapActive(storeSettings.is_map_active);
+            setIsProductViewActive(storeSettings.is_product_active);
+          }
           if (user.user_metadata?.profile_media && Array.isArray(user.user_metadata.profile_media)) {
-            const cleanMedia = user.user_metadata.profile_media.filter((m) => m && m.type !== 'store_settings');
+            const cleanMedia = user.user_metadata.profile_media.filter(
+              (m) => m && m.type !== 'store_settings' && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0
+            );
             setMediaList(cleanMedia);
           }
         }
@@ -388,16 +404,14 @@ const ProfileScreen = ({ navigation }) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const updatedMedia = embedStoreSettings(mediaList, {
+        await setSellerStoreActiveStatus(user.id, {
           is_store_active: newVal,
           is_map_active: isMapActive,
           is_product_active: isProductViewActive,
+          existingMedia: mediaList,
         });
-        setMediaList(mediaList.filter((m) => m && m.type !== 'store_settings'));
-        await supabase
-          .from('profiles')
-          .update({ media_urls: updatedMedia })
-          .eq('id', user.id);
+
+        setMediaList((prev) => (prev || []).filter((m) => m && m.type !== 'store_settings'));
 
         try {
           await supabase.auth.updateUser({
@@ -419,7 +433,8 @@ const ProfileScreen = ({ navigation }) => {
       );
     } catch (e) {
       console.error('Error toggling store status:', e);
-      showAlert('Error', 'Failed to update store status.');
+      setIsStoreActive(!newVal);
+      showAlert('Error', 'Failed to update store status: ' + (e.message || ''));
     } finally {
       setTogglingStatus(false);
     }
@@ -436,16 +451,26 @@ const ProfileScreen = ({ navigation }) => {
         setSellerProducts((prev) => prev.map((p) => ({ ...p, is_active: newVal })));
         setProductStats((prev) => ({ ...prev, active: newVal ? prev.total : 0 }));
 
-        const updatedMedia = embedStoreSettings(mediaList, {
+        await setSellerStoreActiveStatus(user.id, {
           is_store_active: isStoreActive,
           is_map_active: isMapActive,
           is_product_active: newVal,
+          existingMedia: mediaList,
         });
-        setMediaList(mediaList.filter((m) => m && m.type !== 'store_settings'));
-        await supabase
-          .from('profiles')
-          .update({ media_urls: updatedMedia })
-          .eq('id', user.id);
+
+        setMediaList((prev) => (prev || []).filter((m) => m && m.type !== 'store_settings'));
+
+        try {
+          await supabase.auth.updateUser({
+            data: {
+              store_settings: {
+                is_store_active: isStoreActive,
+                is_map_active: isMapActive,
+                is_product_active: newVal,
+              },
+            },
+          });
+        } catch (_) {}
 
         showAlert(
           'Product View Updated',
@@ -456,6 +481,7 @@ const ProfileScreen = ({ navigation }) => {
       }
     } catch (e) {
       console.error('Error toggling products:', e);
+      setIsProductViewActive(!newVal);
       showAlert('Error', 'Failed to update product visibility.');
     } finally {
       setTogglingStatus(false);
@@ -469,16 +495,26 @@ const ProfileScreen = ({ navigation }) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const updatedMedia = embedStoreSettings(mediaList, {
+        await setSellerStoreActiveStatus(user.id, {
           is_store_active: isStoreActive,
           is_map_active: newVal,
           is_product_active: isProductViewActive,
+          existingMedia: mediaList,
         });
-        setMediaList(mediaList.filter((m) => m && m.type !== 'store_settings'));
-        await supabase
-          .from('profiles')
-          .update({ media_urls: updatedMedia })
-          .eq('id', user.id);
+
+        setMediaList((prev) => (prev || []).filter((m) => m && m.type !== 'store_settings'));
+
+        try {
+          await supabase.auth.updateUser({
+            data: {
+              store_settings: {
+                is_store_active: isStoreActive,
+                is_map_active: newVal,
+                is_product_active: isProductViewActive,
+              },
+            },
+          });
+        } catch (_) {}
       }
       showAlert(
         'Map Visibility Updated',
@@ -488,6 +524,7 @@ const ProfileScreen = ({ navigation }) => {
       );
     } catch (e) {
       console.error('Error toggling map visibility:', e);
+      setIsMapActive(!newVal);
     } finally {
       setTogglingStatus(false);
     }
@@ -688,6 +725,18 @@ const ProfileScreen = ({ navigation }) => {
           .eq('id', user.id);
       } catch (colErr) {
         console.warn('Notice: media_urls column update:', colErr);
+      }
+
+      // Also call setSellerStoreActiveStatus to ensure RPC is invoked
+      try {
+        await setSellerStoreActiveStatus(user.id, {
+          is_store_active: isStoreActive,
+          is_map_active: isMapActive,
+          is_product_active: isProductViewActive,
+          existingMedia: finalMediaList,
+        });
+      } catch (stErr) {
+        console.warn('Notice: setSellerStoreActiveStatus:', stErr);
       }
 
       // 2. Update auth user metadata (name/full_name/profile_media/store_settings) and email if changed
@@ -1083,7 +1132,11 @@ const ProfileScreen = ({ navigation }) => {
           </View>
 
           {/* Toggle 1: Store Active / Inactive */}
-          <View style={styles.toggleRow}>
+          <TouchableOpacity
+            style={styles.toggleRow}
+            activeOpacity={0.7}
+            onPress={() => !togglingStatus && handleToggleMyStore(!isStoreActive)}
+          >
             <View style={styles.toggleLabelCol}>
               <View style={styles.toggleTitleInline}>
                 <Icon name="home" size={14} color="#0F172A" style={{ marginRight: 6 }} />
@@ -1095,17 +1148,26 @@ const ProfileScreen = ({ navigation }) => {
                   : 'Your store is closed/inactive. Buyers cannot place orders or view inactive listings.'}
               </Text>
             </View>
-            <Switch
-              value={isStoreActive}
-              onValueChange={handleToggleMyStore}
-              trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
-              thumbColor={isStoreActive ? '#10B981' : '#F1F5F9'}
-              disabled={togglingStatus}
-            />
-          </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {togglingStatus && (
+                <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
+              )}
+              <Switch
+                value={isStoreActive}
+                onValueChange={handleToggleMyStore}
+                trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
+                thumbColor={isStoreActive ? '#10B981' : '#F1F5F9'}
+                disabled={togglingStatus}
+              />
+            </View>
+          </TouchableOpacity>
 
           {/* Toggle 2: Product View (Activate/Deactivate All Products) */}
-          <View style={styles.toggleRow}>
+          <TouchableOpacity
+            style={styles.toggleRow}
+            activeOpacity={0.7}
+            onPress={() => !togglingStatus && handleToggleMyProducts(!isProductViewActive)}
+          >
             <View style={styles.toggleLabelCol}>
               <View style={styles.toggleTitleInline}>
                 <Icon name="cubes" size={14} color="#0F172A" style={{ marginRight: 6 }} />
@@ -1119,17 +1181,26 @@ const ProfileScreen = ({ navigation }) => {
                   : 'All products are currently paused/inactive.'}
               </Text>
             </View>
-            <Switch
-              value={isProductViewActive}
-              onValueChange={handleToggleMyProducts}
-              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-              thumbColor={isProductViewActive ? '#007AFF' : '#F1F5F9'}
-              disabled={togglingStatus}
-            />
-          </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {togglingStatus && (
+                <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
+              )}
+              <Switch
+                value={isProductViewActive}
+                onValueChange={handleToggleMyProducts}
+                trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                thumbColor={isProductViewActive ? '#007AFF' : '#F1F5F9'}
+                disabled={togglingStatus}
+              />
+            </View>
+          </TouchableOpacity>
 
           {/* Toggle 3: Map Visibility */}
-          <View style={[styles.toggleRow, { borderBottomWidth: 0 }]}>
+          <TouchableOpacity
+            style={[styles.toggleRow, { borderBottomWidth: 0 }]}
+            activeOpacity={0.7}
+            onPress={() => !togglingStatus && handleToggleMyMap(!isMapActive)}
+          >
             <View style={styles.toggleLabelCol}>
               <View style={styles.toggleTitleInline}>
                 <Icon name="map-marker" size={14} color="#0F172A" style={{ marginRight: 6 }} />
@@ -1141,23 +1212,62 @@ const ProfileScreen = ({ navigation }) => {
                   : 'Store location pin is hidden from the interactive map.'}
               </Text>
             </View>
-            <Switch
-              value={isMapActive}
-              onValueChange={handleToggleMyMap}
-              trackColor={{ false: '#CBD5E1', true: '#C084FC' }}
-              thumbColor={isMapActive ? '#8B5CF6' : '#F1F5F9'}
-              disabled={togglingStatus}
-            />
-          </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {togglingStatus && (
+                <ActivityIndicator size="small" color="#8B5CF6" style={{ marginRight: 8 }} />
+              )}
+              <Switch
+                value={isMapActive}
+                onValueChange={handleToggleMyMap}
+                trackColor={{ false: '#CBD5E1', true: '#C084FC' }}
+                thumbColor={isMapActive ? '#8B5CF6' : '#F1F5F9'}
+                disabled={togglingStatus}
+              />
+            </View>
+          </TouchableOpacity>
 
           {/* Quick Action Buttons */}
           <View style={styles.storeQuickActionsRow}>
             <TouchableOpacity
-              style={[styles.storeQuickBtn, styles.storeQuickBtnActive]}
-              onPress={() => {
-                handleToggleMyStore(true);
-                handleToggleMyProducts(true);
-                handleToggleMyMap(true);
+              style={[styles.storeQuickBtn, styles.storeQuickBtnActive, togglingStatus && { opacity: 0.6 }]}
+              disabled={togglingStatus}
+              onPress={async () => {
+                setTogglingStatus(true);
+                try {
+                  setIsStoreActive(true);
+                  setIsMapActive(true);
+                  setIsProductViewActive(true);
+                  const { data: { user } } = await supabase.auth.getUser();
+                  if (user) {
+                    await setSellerProductsActiveStatus(user.id, true);
+                    setSellerProducts((prev) => (prev || []).map((p) => ({ ...p, is_active: true })));
+                    setProductStats((prev) => ({ ...prev, active: prev.total }));
+                    await setSellerStoreActiveStatus(user.id, {
+                      is_store_active: true,
+                      is_map_active: true,
+                      is_product_active: true,
+                      existingMedia: mediaList,
+                    });
+                    setMediaList((prev) => (prev || []).filter((m) => m && m.type !== 'store_settings'));
+                    try {
+                      await supabase.auth.updateUser({
+                        data: {
+                          store_settings: {
+                            is_store_active: true,
+                            is_map_active: true,
+                            is_product_active: true,
+                          },
+                        },
+                      });
+                    } catch (_) {}
+                  }
+                  showAlert('Store Activated', '🟢 Store, catalog, and map pin are now ACTIVE!');
+                } catch (e) {
+                  console.error('Error activating all:', e);
+                  showAlert('Error', 'Failed to activate store and products.');
+                } finally {
+                  setTogglingStatus(false);
+                }
               }}
             >
               <Icon name="check-circle" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
@@ -1165,10 +1275,44 @@ const ProfileScreen = ({ navigation }) => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.storeQuickBtn, styles.storeQuickBtnInactive]}
-              onPress={() => {
-                handleToggleMyStore(false);
-                handleToggleMyProducts(false);
+              style={[styles.storeQuickBtn, styles.storeQuickBtnInactive, togglingStatus && { opacity: 0.6 }]}
+              disabled={togglingStatus}
+              onPress={async () => {
+                setTogglingStatus(true);
+                try {
+                  setIsStoreActive(false);
+                  setIsProductViewActive(false);
+                  const { data: { user } } = await supabase.auth.getUser();
+                  if (user) {
+                    await setSellerProductsActiveStatus(user.id, false);
+                    setSellerProducts((prev) => (prev || []).map((p) => ({ ...p, is_active: false })));
+                    setProductStats((prev) => ({ ...prev, active: 0 }));
+                    await setSellerStoreActiveStatus(user.id, {
+                      is_store_active: false,
+                      is_map_active: isMapActive,
+                      is_product_active: false,
+                      existingMedia: mediaList,
+                    });
+                    setMediaList((prev) => (prev || []).filter((m) => m && m.type !== 'store_settings'));
+                    try {
+                      await supabase.auth.updateUser({
+                        data: {
+                          store_settings: {
+                            is_store_active: false,
+                            is_map_active: isMapActive,
+                            is_product_active: false,
+                          },
+                        },
+                      });
+                    } catch (_) {}
+                  }
+                  showAlert('Store Deactivated', '🔴 Store and catalog are now INACTIVE / CLOSED.');
+                } catch (e) {
+                  console.error('Error deactivating all:', e);
+                  showAlert('Error', 'Failed to deactivate store and products.');
+                } finally {
+                  setTogglingStatus(false);
+                }
               }}
             >
               <Icon name="pause-circle" size={13} color="#EF4444" style={{ marginRight: 5 }} />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,8 +13,10 @@ import {
   TextInput,
   ActivityIndicator,
   RefreshControl,
+  Modal,
 } from 'react-native';
 import { FontAwesome as Icon } from '@expo/vector-icons';
+import { Video, ResizeMode } from 'expo-av';
 import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
@@ -75,6 +77,43 @@ export default function WelcomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Fullscreen media viewer modal state with scrolling option
+  const [viewerModalVisible, setViewerModalVisible] = useState(false);
+  const [viewerMediaList, setViewerMediaList] = useState([]);
+  const [viewerActiveIndex, setViewerActiveIndex] = useState(0);
+  const [viewerStoreName, setViewerStoreName] = useState('');
+
+  const handleOpenMediaViewer = useCallback((seller, initialIndex = 0) => {
+    let items = (seller?.mediaList || []).filter((m) => m && m.uri);
+    if (items.length === 0) {
+      const fallbackUri = seller?.firstPhoto || seller?.avatar_url;
+      if (fallbackUri) {
+        items = [{ uri: fallbackUri, type: 'image' }];
+      }
+    }
+    if (items.length === 0) return;
+
+    setViewerMediaList(items);
+    const validIndex = Math.min(Math.max(0, initialIndex), items.length - 1);
+    setViewerActiveIndex(validIndex);
+    setViewerStoreName(seller?.full_name || 'Store Media');
+    setViewerModalVisible(true);
+  }, []);
+
+  const handleCloseMediaViewer = useCallback(() => {
+    setViewerModalVisible(false);
+    setViewerMediaList([]);
+    setViewerActiveIndex(0);
+  }, []);
+
+  const handleNextMedia = useCallback(() => {
+    setViewerActiveIndex((prev) => (prev + 1) % viewerMediaList.length);
+  }, [viewerMediaList.length]);
+
+  const handlePrevMedia = useCallback(() => {
+    setViewerActiveIndex((prev) => (prev - 1 + viewerMediaList.length) % viewerMediaList.length);
+  }, [viewerMediaList.length]);
 
   // Role-based automatic redirection if logged in as delivery manager or seller
   useEffect(() => {
@@ -218,10 +257,46 @@ export default function WelcomeScreen() {
           }
           if (!Array.isArray(mediaList)) mediaList = [];
 
+          // Clean mediaList: filter out store_settings and items without valid URI string (fixes photo2 null bug)
+          mediaList = mediaList.filter(
+            (m) => m && m.type !== 'store_settings' && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0
+          );
+          mediaList = mediaList.map((m) => ({
+            ...m,
+            uri: m.uri.trim(),
+            type: m.type === 'video' ? 'video' : 'image',
+          }));
+
+          // Add avatar_url if valid and not already in mediaList
+          if (
+            p.avatar_url &&
+            typeof p.avatar_url === 'string' &&
+            p.avatar_url.trim().length > 0 &&
+            !mediaList.some((m) => m.uri === p.avatar_url.trim())
+          ) {
+            mediaList.unshift({ uri: p.avatar_url.trim(), type: 'image', isProfile: true });
+          }
+
+          // Add product media if valid and not already in mediaList
           const prodMedia = sellerProductMediaMap[p.id] || [];
+          prodMedia.forEach((pm) => {
+            if (
+              pm &&
+              pm.uri &&
+              typeof pm.uri === 'string' &&
+              pm.uri.trim().length > 0 &&
+              !mediaList.some((m) => m.uri === pm.uri.trim())
+            ) {
+              mediaList.push({
+                uri: pm.uri.trim(),
+                type: pm.type === 'video' ? 'video' : 'image',
+              });
+            }
+          });
+
           const firstPhoto =
             mediaList.find((m) => m.type === 'image')?.uri ||
-            p.avatar_url ||
+            (typeof p.avatar_url === 'string' && p.avatar_url.trim().length > 0 ? p.avatar_url.trim() : null) ||
             prodMedia.find((m) => m.type === 'image')?.uri ||
             null;
 
@@ -247,6 +322,7 @@ export default function WelcomeScreen() {
             productCount: productsCountMap[p.id] || 0,
             avatar_url: p.avatar_url,
             firstPhoto: firstPhoto,
+            mediaList: mediaList,
             is_store_active: isStoreActive,
             isProfile: true,
           };
@@ -260,7 +336,9 @@ export default function WelcomeScreen() {
           const hasCoords = c.latitude != null && c.longitude != null && !isNaN(Number(c.latitude));
           const fallbackLat = DEFAULT_LAT + (((index + 2) % 5) - 2) * 0.015;
           const fallbackLon = DEFAULT_LON + (((index + 3) % 5) - 2) * 0.015;
-          const custProdMedia = sellerProductMediaMap[c.id] || [];
+          const custProdMedia = (sellerProductMediaMap[c.id] || []).filter(
+            (m) => m && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0 && m.type !== 'store_settings'
+          );
           const custFirstPhoto = custProdMedia.find((m) => m.type === 'image')?.uri || null;
 
           return {
@@ -277,6 +355,7 @@ export default function WelcomeScreen() {
             productCount: productsCountMap[c.id] || 0,
             avatar_url: null,
             firstPhoto: custFirstPhoto,
+            mediaList: custProdMedia,
             is_store_active: true,
             isProfile: false,
           };
@@ -577,11 +656,16 @@ export default function WelcomeScreen() {
                     <View style={styles.sellerCardTop}>
                       {/* Avatar / Store Photo */}
                       {seller.firstPhoto || seller.avatar_url ? (
-                        <Image
-                          source={{ uri: seller.firstPhoto || seller.avatar_url }}
-                          style={styles.sellerImage}
-                          resizeMode="cover"
-                        />
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => handleOpenMediaViewer(seller, 0)}
+                        >
+                          <Image
+                            source={{ uri: seller.firstPhoto || seller.avatar_url }}
+                            style={styles.sellerImage}
+                            resizeMode="cover"
+                          />
+                        </TouchableOpacity>
                       ) : (
                         <View style={styles.sellerPlaceholderImage}>
                           <Icon name="building-o" size={24} color="#007AFF" />
@@ -600,6 +684,11 @@ export default function WelcomeScreen() {
                               {seller.role === 'admin' ? 'Admin Store' : 'Verified'}
                             </Text>
                           </View>
+                          {seller.is_store_active === false && (
+                            <View style={[styles.verifiedBadge, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
+                              <Text style={[styles.verifiedBadgeText, { color: '#DC2626' }]}>Closed</Text>
+                            </View>
+                          )}
                         </View>
 
                         <Text style={styles.sellerAddress} numberOfLines={1}>
@@ -625,6 +714,43 @@ export default function WelcomeScreen() {
                         </View>
                       </View>
                     </View>
+
+                    {/* Store Option Images Scrolling Strip */}
+                    {seller.mediaList && seller.mediaList.filter((m) => m && m.uri).length > 0 && (
+                      <View style={styles.dirMediaSection}>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.dirMediaScroll}
+                        >
+                          {seller.mediaList
+                            .filter((m) => m && m.uri)
+                            .map((media, mIdx) => (
+                              <TouchableOpacity
+                                key={`welcome-thumb-${seller.id}-${mIdx}`}
+                                style={styles.dirMediaThumbWrap}
+                                activeOpacity={0.85}
+                                onPress={() => handleOpenMediaViewer(seller, mIdx)}
+                              >
+                                {media.type === 'video' ? (
+                                  <View style={styles.dirVideoThumb}>
+                                    <View style={styles.dirVideoPlayBadge}>
+                                      <Text style={styles.dirVideoPlayText}>▶</Text>
+                                    </View>
+                                    <Text style={styles.dirVideoLabel}>Video</Text>
+                                  </View>
+                                ) : (
+                                  <Image
+                                    source={{ uri: media.uri }}
+                                    style={styles.dirMediaThumb}
+                                    resizeMode="cover"
+                                  />
+                                )}
+                              </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                      </View>
+                    )}
 
                     {/* Action Buttons Row */}
                     <View style={styles.sellerActionsRow}>
@@ -680,6 +806,122 @@ export default function WelcomeScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Fullscreen Media Viewer Modal with Option Images Scrolling */}
+      <Modal
+        visible={viewerModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseMediaViewer}
+      >
+        <View style={styles.viewerModalContainer}>
+          {/* Header Bar */}
+          <View style={styles.viewerHeaderBar}>
+            <View style={styles.viewerHeaderLeft}>
+              <Text style={styles.viewerStoreTitle} numberOfLines={1}>
+                {viewerStoreName}
+              </Text>
+              {viewerMediaList.length > 1 && (
+                <Text style={styles.viewerCounterText}>
+                  {viewerActiveIndex + 1} of {viewerMediaList.length} media
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.viewerCloseBtn}
+              onPress={handleCloseMediaViewer}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewerCloseBtnText}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Main Media Preview Area with Prev / Next Navigation */}
+          <View style={styles.viewerMediaBox}>
+            {viewerMediaList[viewerActiveIndex] && (
+              <>
+                {viewerMediaList[viewerActiveIndex].type === 'video' ? (
+                  <Video
+                    source={{ uri: viewerMediaList[viewerActiveIndex].uri }}
+                    style={styles.viewerFullVideo}
+                    useNativeControls
+                    resizeMode={ResizeMode.CONTAIN}
+                    shouldPlay={true}
+                  />
+                ) : (
+                  <Image
+                    source={{ uri: viewerMediaList[viewerActiveIndex].uri }}
+                    style={styles.viewerFullImage}
+                    resizeMode="contain"
+                  />
+                )}
+
+                {/* Previous Arrow */}
+                {viewerMediaList.length > 1 && (
+                  <TouchableOpacity
+                    style={[styles.viewerNavBtn, styles.viewerNavBtnLeft]}
+                    onPress={handlePrevMedia}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="chevron-left" size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+
+                {/* Next Arrow */}
+                {viewerMediaList.length > 1 && (
+                  <TouchableOpacity
+                    style={[styles.viewerNavBtn, styles.viewerNavBtnRight]}
+                    onPress={handleNextMedia}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="chevron-right" size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+
+          {/* Bottom Scrolling Thumbnail Strip for all Option Images */}
+          {viewerMediaList.length > 1 && (
+            <View style={styles.viewerThumbScrollContainer}>
+              <Text style={styles.viewerThumbScrollTitle}>Option Images ({viewerMediaList.length}):</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={true}
+                contentContainerStyle={styles.viewerThumbScrollContent}
+              >
+                {viewerMediaList.map((item, idx) => {
+                  const isActive = idx === viewerActiveIndex;
+                  return (
+                    <TouchableOpacity
+                      key={`modal-thumb-${idx}-${item.uri}`}
+                      style={[
+                        styles.viewerThumbItem,
+                        isActive && styles.viewerThumbItemActive,
+                      ]}
+                      onPress={() => setViewerActiveIndex(idx)}
+                      activeOpacity={0.8}
+                    >
+                      {item.type === 'video' ? (
+                        <View style={styles.viewerVideoThumbSmall}>
+                          <Text style={styles.viewerVideoPlaySmall}>▶</Text>
+                        </View>
+                      ) : (
+                        <Image
+                          source={{ uri: item.uri }}
+                          style={styles.viewerThumbImageSmall}
+                          resizeMode="cover"
+                        />
+                      )}
+                      {isActive && <View style={styles.activeDot} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1150,5 +1392,196 @@ const styles = StyleSheet.create({
   footerVersion: {
     fontSize: 12,
     color: '#94A3B8',
+  },
+
+  /* Option Images Scrolling Strip in Seller Card */
+  dirMediaSection: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  dirMediaScroll: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  dirMediaThumbWrap: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dirMediaThumb: {
+    width: 60,
+    height: 60,
+    borderRadius: 7,
+    backgroundColor: '#F1F5F9',
+  },
+  dirVideoThumb: {
+    width: 60,
+    height: 60,
+    borderRadius: 7,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dirVideoPlayBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dirVideoPlayText: {
+    fontSize: 10,
+    color: '#007AFF',
+    marginLeft: 2,
+  },
+  dirVideoLabel: {
+    position: 'absolute',
+    bottom: 2,
+    color: '#FFFFFF',
+    fontSize: 8,
+    fontWeight: '700',
+  },
+
+  /* Fullscreen Media Viewer Modal Styles with Scrolling Option */
+  viewerModalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: Platform.OS === 'ios' ? 52 : 30,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    paddingHorizontal: 16,
+  },
+  viewerHeaderBar: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginBottom: 10,
+  },
+  viewerHeaderLeft: {
+    flex: 1,
+    marginRight: 12,
+  },
+  viewerStoreTitle: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  viewerCounterText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  viewerCloseBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  viewerCloseBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  viewerMediaBox: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  viewerFullImage: {
+    width: '100%',
+    height: '100%',
+  },
+  viewerFullVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  viewerNavBtn: {
+    position: 'absolute',
+    top: '46%',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  viewerNavBtnLeft: {
+    left: 8,
+  },
+  viewerNavBtnRight: {
+    right: 8,
+  },
+  viewerThumbScrollContainer: {
+    width: '100%',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  viewerThumbScrollTitle: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 8,
+    paddingLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  viewerThumbScrollContent: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  viewerThumbItem: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    position: 'relative',
+  },
+  viewerThumbItemActive: {
+    borderColor: '#38BDF8',
+    transform: [{ scale: 1.06 }],
+  },
+  viewerThumbImageSmall: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#1E293B',
+  },
+  viewerVideoThumbSmall: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewerVideoPlaySmall: {
+    color: '#38BDF8',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  activeDot: {
+    position: 'absolute',
+    bottom: 2,
+    alignSelf: 'center',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#38BDF8',
   },
 });

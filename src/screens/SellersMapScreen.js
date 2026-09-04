@@ -231,14 +231,39 @@ export default function SellersMapScreen({ route }) {
           if (!Array.isArray(mediaList)) {
             mediaList = [];
           }
-          if (p.avatar_url && !mediaList.some((m) => m.uri === p.avatar_url)) {
-            mediaList.unshift({ uri: p.avatar_url, type: "image", isProfile: true });
+
+          // Clean mediaList: filter out store_settings and items without valid URI string
+          mediaList = mediaList.filter(
+            (m) => m && m.type !== "store_settings" && m.uri && typeof m.uri === "string" && m.uri.trim().length > 0
+          );
+          mediaList = mediaList.map((m) => ({
+            ...m,
+            uri: m.uri.trim(),
+            type: m.type === "video" ? "video" : "image",
+          }));
+
+          if (
+            p.avatar_url &&
+            typeof p.avatar_url === "string" &&
+            p.avatar_url.trim().length > 0 &&
+            !mediaList.some((m) => m.uri === p.avatar_url.trim())
+          ) {
+            mediaList.unshift({ uri: p.avatar_url.trim(), type: "image", isProfile: true });
           }
 
           const prodMedia = sellerProductMediaMap[p.id] || [];
           prodMedia.forEach((pm) => {
-            if (!mediaList.some((m) => m.uri === pm.uri)) {
-              mediaList.push(pm);
+            if (
+              pm &&
+              pm.uri &&
+              typeof pm.uri === "string" &&
+              pm.uri.trim().length > 0 &&
+              !mediaList.some((m) => m.uri === pm.uri.trim())
+            ) {
+              mediaList.push({
+                uri: pm.uri.trim(),
+                type: pm.type === "video" ? "video" : "image",
+              });
             }
           });
 
@@ -281,7 +306,9 @@ export default function SellersMapScreen({ route }) {
           const hasCoords = c.latitude != null && c.longitude != null && !isNaN(Number(c.latitude));
           const fallbackLat = DEFAULT_LAT + (((index + 2) % 5) - 2) * 0.015;
           const fallbackLon = DEFAULT_LON + (((index + 3) % 5) - 2) * 0.015;
-          const custProdMedia = sellerProductMediaMap[c.id] || [];
+          const custProdMedia = (sellerProductMediaMap[c.id] || []).filter(
+            (m) => m && m.uri && typeof m.uri === "string" && m.uri.trim().length > 0 && m.type !== "store_settings"
+          );
           const custFirstPhoto = custProdMedia.find((m) => m.type === "image")?.uri || null;
 
           return {
@@ -1453,7 +1480,10 @@ export default function SellersMapScreen({ route }) {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.dirMediaScroll}
             >
-              {item.mediaList.slice(0, 5).map((media, mIdx) => (
+              {item.mediaList
+                .filter((m) => m && m.uri)
+                .slice(0, 5)
+                .map((media, mIdx) => (
                 <TouchableOpacity
                   key={`dir-thumb-${item.id}-${mIdx}`}
                   style={styles.dirMediaThumbWrap}
@@ -1736,7 +1766,9 @@ export default function SellersMapScreen({ route }) {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.cardMediaScroll}
               >
-                {selectedSeller.mediaList.map((media, idx) => (
+                {selectedSeller.mediaList
+                  .filter((m) => m && m.uri)
+                  .map((media, idx) => (
                   <TouchableOpacity
                     key={`sel-media-${idx}-${media.uri}`}
                     style={styles.cardMediaThumbWrap}

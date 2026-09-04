@@ -939,6 +939,84 @@ export async function uploadQrImage(userId, imageUri) {
   }
 }
 
+/**
+ * Upload profile media (image or video) to Supabase Storage
+ */
+export async function uploadProfileMedia(userId, mediaUri, mediaType = 'image') {
+  try {
+    const isVideo = mediaType === 'video';
+    const { extension, contentType, fileName } = extractFileDetails(mediaUri, isVideo ? 'video' : 'image');
+    const profileFileName = `${Date.now()}-${userId}-${fileName}`;
+    const filePath = `profile_media/${userId}/${profileFileName}`;
+
+    let fileData = null;
+    if (Platform.OS === 'web' || (typeof window !== 'undefined' && typeof fetch === 'function')) {
+      try {
+        const fileResponse = await fetch(mediaUri);
+        fileData = await fileResponse.blob();
+      } catch (webBlobErr) {
+        console.warn('Web blob fetch failed in uploadProfileMedia:', webBlobErr.message);
+      }
+    }
+
+    if (!fileData) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(mediaUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        if (typeof Buffer !== 'undefined') {
+          const buf = Buffer.from(base64, 'base64');
+          fileData = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+        } else {
+          fileData = new Uint8Array(
+            atob(base64).split('').map((c) => c.charCodeAt(0))
+          );
+        }
+      } catch (fsErr) {
+        console.error('FileSystem read error in uploadProfileMedia:', fsErr.message);
+      }
+    }
+
+    if (!fileData) {
+      console.error('uploadProfileMedia: Unable to obtain media binary data.');
+      return null;
+    }
+
+    let publicUrl = null;
+    const bucketsToTry = ['productsmedia', 'locationtracker', 'chat_media', 'qr_codes', 'damage_photos'];
+    for (const bucketName of bucketsToTry) {
+      try {
+        const { error } = await supabase.storage
+          .from(bucketName)
+          .upload(filePath, fileData, {
+            contentType: contentType,
+            upsert: true,
+          });
+
+        if (!error) {
+          const { data: publicUrlData } = supabase.storage
+            .from(bucketName)
+            .getPublicUrl(filePath);
+          publicUrl = publicUrlData?.publicUrl;
+          if (publicUrl) {
+            console.log(`Profile media uploaded successfully to bucket "${bucketName}":`, publicUrl);
+            break;
+          }
+        } else {
+          console.warn(`Storage upload to "${bucketName}" failed:`, error.message);
+        }
+      } catch (bucketErr) {
+        console.warn(`Error trying storage bucket "${bucketName}":`, bucketErr.message);
+      }
+    }
+
+    return publicUrl;
+  } catch (error) {
+    console.error('Error in uploadProfileMedia:', error.message);
+    return null;
+  }
+}
+
 export async function addQrCode(userId, qrImageUrl, name = 'My UPI QR', isActive = true) {
   try {
     if (isActive) {
@@ -1360,27 +1438,85 @@ export function getAuthRedirectUrl() {
 }
 
 /**
- * Ensures user profile exists in `profiles` table after OAuth or Email login
+ * Ensures user profile exists in `profiles` table after OAuth or Email login with proper role
  */
-export async function ensureUserProfile(user, defaultRole = 'customer') {
+export async function ensureUserProfile(user, defaultRole = null) {
   if (!user || !user.id) return null;
   try {
+    // 1. Check for explicit or stored pending role (from SellerLogin / DeliveryLogin / BuyerLogin)
+    let roleToAssign = defaultRole;
+    if (!roleToAssign) {
+      try {
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          roleToAssign = localStorage.getItem('pending_auth_role') || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('pending_auth_role') : null);
+        }
+        if (!roleToAssign && Storage && typeof Storage.getItem === 'function') {
+          roleToAssign = await Storage.getItem('pending_auth_role');
+        }
+      } catch (_) {}
+    }
+
+    // Clear pending role once read
+    if (roleToAssign) {
+      try {
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          localStorage.removeItem('pending_auth_role');
+          if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('pending_auth_role');
+        }
+        if (Storage && typeof Storage.removeItem === 'function') {
+          await Storage.removeItem('pending_auth_role');
+        }
+      } catch (_) {}
+    }
+
     const { data: existingProfile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .maybeSingle();
 
+    // If an explicit role was requested (e.g. 'seller' or 'delivery_manager')
+    if (roleToAssign) {
+      // Sync auth user metadata
+      try {
+        await supabase.auth.updateUser({
+          data: { role: roleToAssign }
+        });
+      } catch (_) {}
+
+      if (existingProfile) {
+        // Upgrade / sync role if different and not admin / superadmin
+        if (existingProfile.role !== roleToAssign && !isUserAdminOrSuperadmin(existingProfile, user)) {
+          const { data: updatedProfile, error: updateErr } = await supabase
+            .from('profiles')
+            .update({
+              role: roleToAssign,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', user.id)
+            .select()
+            .maybeSingle();
+
+          if (!updateErr && updatedProfile) {
+            console.log(`[ensureUserProfile] Upgraded user profile to role "${roleToAssign}":`, updatedProfile);
+            return updatedProfile;
+          }
+        }
+        return existingProfile;
+      }
+    }
+
     if (existingProfile) {
       return existingProfile;
     }
 
+    // New profile creation
     const fullName =
       user.user_metadata?.full_name ||
       user.user_metadata?.name ||
       user.email?.split('@')[0] ||
       'User';
-    const role = user.user_metadata?.role || defaultRole;
+    const role = roleToAssign || user.user_metadata?.role || 'customer';
 
     const newProfile = {
       id: user.id,
@@ -1413,12 +1549,25 @@ export async function ensureUserProfile(user, defaultRole = 'customer') {
 
 /**
  * Sign in / Sign up with Google OAuth via Supabase
- * @param {string} defaultRole - Role to assign if new profile ('customer' / 'buyer')
+ * @param {string} defaultRole - Role to assign if new profile ('seller' / 'delivery_manager' / 'customer')
  */
 export async function signInWithGoogle(defaultRole = 'customer') {
   try {
+    // Persist pending role so after OAuth redirect on web / app refocus, role is preserved
+    try {
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        localStorage.setItem('pending_auth_role', defaultRole);
+        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('pending_auth_role', defaultRole);
+      }
+      if (Storage && typeof Storage.setItem === 'function') {
+        await Storage.setItem('pending_auth_role', defaultRole);
+      }
+    } catch (storeErr) {
+      console.warn('[Google Auth] Could not store pending_auth_role:', storeErr);
+    }
+
     const redirectUrl = getAuthRedirectUrl();
-    console.log('[Google Auth] Using redirect URL:', redirectUrl);
+    console.log('[Google Auth] Using redirect URL:', redirectUrl, 'for intended role:', defaultRole);
 
     if (Platform.OS === 'web') {
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -1478,7 +1627,8 @@ export async function signInWithGoogle(defaultRole = 'customer') {
         if (sessionError) throw sessionError;
 
         if (sessionData?.user) {
-          await ensureUserProfile(sessionData.user, defaultRole);
+          const profile = await ensureUserProfile(sessionData.user, defaultRole);
+          return { user: sessionData.user, session: sessionData.session, profile, success: true };
         }
 
         return { user: sessionData.user, session: sessionData.session, success: true };
@@ -1571,4 +1721,225 @@ export function subscribeToLiveDelivery(orderId, partnerId, onLocationUpdate) {
     supabase.removeChannel(channel);
   };
 }
- 
+
+/**
+ * Set active status for all products of a given seller
+ */
+export async function setSellerProductsActiveStatus(userId, isActive) {
+  try {
+    if (!userId) return false;
+    // 1. Try RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_set_seller_products_active', {
+        p_seller_id: userId,
+        p_is_active: isActive === true,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Direct table update fallback
+    const { error } = await supabase
+      .from('products')
+      .update({ is_active: isActive })
+      .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
+    if (error) {
+      console.warn('Error updating seller products active status:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('Exception updating seller products active status:', e);
+    return false;
+  }
+}
+
+/**
+ * Set active status for all products across the entire platform (AppAdmin)
+ */
+export async function setAllProductsActiveStatus(isActive) {
+  try {
+    // 1. Try RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_global_toggle_products', {
+        p_is_active: isActive === true,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Direct table update fallback
+    const { error } = await supabase
+      .from('products')
+      .update({ is_active: isActive })
+      .not('id', 'is', null);
+    if (error) {
+      console.warn('Error updating all products active status:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('Exception updating all products active status:', e);
+    return false;
+  }
+}
+
+/**
+ * Set store & map active status for a specific seller
+ */
+export async function setSellerStoreActiveStatus(sellerId, settings) {
+  try {
+    if (!sellerId) return false;
+    const { is_store_active, is_map_active, is_product_active, existingMedia } = settings || {};
+
+    // 1. Attempt via RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_set_seller_store_settings', {
+        p_seller_id: sellerId,
+        p_store_active: is_store_active !== false,
+        p_map_active: is_map_active !== false,
+        p_product_active: is_product_active !== false,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Direct profiles table update fallback
+    const updatedMedia = embedStoreSettings(existingMedia || [], {
+      is_store_active: is_store_active !== false,
+      is_map_active: is_map_active !== false,
+      is_product_active: is_product_active !== false,
+    });
+
+    const { error: profileErr } = await supabase
+      .from('profiles')
+      .update({ media_urls: updatedMedia })
+      .eq('id', sellerId);
+
+    if (profileErr) {
+      console.warn('Direct profile update notice:', profileErr.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception in setSellerStoreActiveStatus:', err);
+    return false;
+  }
+}
+
+/**
+ * Global toggle for all stores and maps across the platform
+ */
+export async function setAllStoresActiveStatus(isActive, sellersList = []) {
+  try {
+    // 1. Try global RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_global_toggle_stores', {
+        p_is_active: isActive === true,
+      });
+      if (!error) return true;
+    } catch (_) {}
+
+    // 2. Fallback: Iterate and update each profile
+    let listToUpdate = sellersList;
+    if (!listToUpdate || listToUpdate.length === 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, media_urls');
+      listToUpdate = profs || [];
+    }
+
+    for (const s of listToUpdate) {
+      const updatedMedia = embedStoreSettings(s.media_urls || [], {
+        is_store_active: isActive === true,
+        is_map_active: isActive === true,
+        is_product_active: s.is_product_active !== false,
+      });
+      await supabase
+        .from('profiles')
+        .update({ media_urls: updatedMedia })
+        .eq('id', s.id);
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception in setAllStoresActiveStatus:', err);
+    return false;
+  }
+}
+
+/**
+ * Helper to check if a user or profile is Admin or Superadmin
+ */
+export function isUserAdminOrSuperadmin(profile, user) {
+  const role = (
+    profile?.role ||
+    profile?.user_type ||
+    user?.user_metadata?.role ||
+    user?.user_metadata?.user_type ||
+    ''
+  ).toLowerCase().trim();
+  return (
+    role === 'admin' ||
+    role === 'superadmin' ||
+    role === 'appadmin' ||
+    role === 'app_admin'
+  );
+}
+
+/**
+ * Helper to parse store settings from media_urls or object.
+ * By default, if no store_settings object is stored yet, default to ACTIVE (true) so stores are visible.
+ */
+export function extractStoreSettings(mediaUrls) {
+  let list = [];
+  if (typeof mediaUrls === 'string') {
+    try {
+      list = JSON.parse(mediaUrls);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(mediaUrls)) {
+    list = mediaUrls;
+  } else if (mediaUrls && typeof mediaUrls === 'object') {
+    return {
+      is_store_active: mediaUrls.is_store_active !== false && mediaUrls.store_active !== false,
+      is_map_active: mediaUrls.is_map_active !== false && mediaUrls.map_active !== false,
+      is_product_active: mediaUrls.is_product_active !== false && mediaUrls.product_active !== false,
+    };
+  }
+  const settingsItem = (list || []).find((m) => m && m.type === 'store_settings');
+  if (!settingsItem) {
+    return {
+      is_store_active: true,
+      is_map_active: true,
+      is_product_active: true,
+    };
+  }
+  return {
+    is_store_active: settingsItem.store_active !== false,
+    is_map_active: settingsItem.map_active !== false,
+    is_product_active: settingsItem.product_active !== false,
+  };
+}
+
+/**
+ * Helper to embed store settings into media_urls array without losing media photos/videos
+ */
+export function embedStoreSettings(existingMediaList, storeSettings) {
+  let list = [];
+  if (typeof existingMediaList === 'string') {
+    try {
+      list = JSON.parse(existingMediaList);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(existingMediaList)) {
+    list = existingMediaList;
+  }
+  const cleanMedia = (list || []).filter(
+    (m) => m && m.type !== 'store_settings' && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0
+  );
+  cleanMedia.push({
+    type: 'store_settings',
+    store_active: storeSettings?.is_store_active !== false,
+    map_active: storeSettings?.is_map_active !== false,
+    product_active: storeSettings?.is_product_active !== false,
+    updated_at: new Date().toISOString(),
+  });
+  return cleanMedia;
+}
