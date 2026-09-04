@@ -4,19 +4,19 @@
       "title": "DeepSeek R1 (OpenRouter Free)",
       "provider": "openrouter",
       "model": "deepseek/deepseek-r1:free",
-      "apiKey": "${{ secrets.OPENROUTER_API_KEY }}"
+      "apiKey": "${OPENROUTER_API_KEY}"
     },
     {
       "title": "Qwen 2.5 Coder (OpenRouter Free)",
       "provider": "openrouter",
       "model": "qwen/qwen-2.5-coder-32b-instruct:free",
-      "apiKey": "${{ secrets.OPENROUTER_API_KEY }}"
+      "apiKey": "${OPENROUTER_API_KEY}"
     },
     {
       "title": "Llama 3 (Groq Free)",
       "provider": "groq",
       "model": "llama-3.3-70b-versatile",
-      "apiKey": "${{ secrets.GROQ_API_KEY }}"
+      "apiKey": "${GROQ_API_KEY}"
     }
   ]
 }
