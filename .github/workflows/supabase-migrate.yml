@@ -1,56 +1,60 @@
-name: Supabase Complete Org Migration (DB & Edge Functions)
+name: Supabase Complete Cross-Org Sync (DB & Edge Functions)
 
 on:
-  workflow_dispatch:
-    inputs:
-      source_project_ref:
-        description: 'Source Project Ref ID (Old Org)'
-        required: true
-      target_project_ref:
-        description: 'Target Project Ref ID (New Org)'
-        required: true
+  workflow_dispatch: # Allows you to manually trigger the sync from the GitHub Actions UI
 
 jobs:
   migrate-and-deploy:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Pull the codebase (contains your local edge functions folder)
+    # 1. Pull your codebase (contains your local edge functions folder)
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # 2. Install the Supabase CLI
+    # 2. Install the Supabase CLI environment
     - name: Setup Supabase CLI
       uses: supabase/setup-cli@v1
       with:
         version: latest
 
-    # 3. Authenticate using your Personal Access Token
+    # 3. Authenticate the CLI session using your encrypted token secret
     - name: Authenticate Supabase CLI
       run: supabase login --token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
-    # 4. Backup the source organization's database
-    - name: Backup Source Database Schema & Data
+    # 4. Pull down the database structural layout from User A (Source)
+    - name: Pull Schema from Source
       run: |
-        supabase link --project-ref "${{ github.event.inputs.source_project_ref }}" -p "${{ secrets.SOURCE_DB_PASSWORD }}"
-        supabase db dump --data-only -f data_backup.sql
-        supabase db dump -f schema_backup.sql
+        # Links using the Project Ref from Variables
+        supabase link --project-ref "${{ vars.SOURCE_PROJECT_REF }}"
+        
+        # Extracts structural configurations into memory layout
+        supabase db pull
 
-    # 5. Connect to the target organization's project
-    - name: Link Target Project
-      run: |
-        rm -rf .supabase/
-        supabase link --project-ref "${{ github.event.inputs.target_project_ref }}" -p "${{ secrets.TARGET_DB_PASSWORD }}"
+    # 5. Clear the local cache link so the runner switches contexts cleanly
+    - name: Reset Local Link Cache
+      run: rm -rf .supabase/
 
-    # 6. Push the database structure and data to the new org
-    - name: Restore DB to Target Project
+    # 6. Connect to User B (Target) and push the schema structure
+    - name: Apply Schema to Target Project
       run: |
+        # Links using the Target Project Ref from Variables and Password from Secrets
+        supabase link --project-ref "${{ vars.TARGET_PROJECT_REF }}" -p "${{ secrets.TARGET_DB_PASSWORD }}"
+        
+        # Pushes your database tables, schemas, and configurations
         supabase db push
-        # If your data script contains manual SQL statements, you can pipe it to the target:
-        # PGPASSWORD="${{ secrets.TARGET_DB_PASSWORD }}" psql -h db.${{ github.event.inputs.target_project_ref }}.supabase.co -p 5432 -d postgres -U postgres -f data_backup.sql
+        
+        # Wipe structural caches post-sync to keep workspace clean
+        rm -rf .supabase/ 
 
-    # 7. Deploy all local Edge Functions to the new project
+    # 7. Host and deploy all local Edge Functions directly to User B's project
     - name: Host and Deploy Edge Functions
       run: |
-        # Deploys every function located inside your ./supabase/functions folder
-        supabase functions deploy --project-ref "${{ github.event.inputs.target_project_ref }}"
+        # Loops through and deploys every function directory inside your repository
+        for dir in supabase/functions/*/; do
+          if [ -d "$dir" ]; then
+            func_name=$(basename "$dir")
+            echo "Deploying edge function: $func_name"
+            supabase functions deploy "$func_name" --project-ref "${{ vars.TARGET_PROJECT_REF }}"
+          fi
+        done
