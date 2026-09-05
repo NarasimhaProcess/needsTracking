@@ -12,20 +12,21 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # 2. Install the Supabase CLI environment
+    # 2. Install a stable, locked version of the Supabase CLI environment
     - name: Setup Supabase CLI
       uses: supabase/setup-cli@v1
       with:
-        version: latest
+        version: '1.200.0' # Pinned to a stable release to resolve edge-runtime errors
 
     # 3. Authenticate the CLI session using your encrypted token secret
     - name: Authenticate Supabase CLI
-      run: supabase login --token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+      run: |
+        supabase login --token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
     # 4. Pull down the database structural layout from User A (Source)
     - name: Pull Schema from Source
       run: |
-        # Links using the Project Ref from Variables
+        # Links using the Project Ref from your Variables tab
         supabase link --project-ref "${{ vars.SOURCE_PROJECT_REF }}"
         
         # Extracts structural configurations into memory layout
@@ -38,7 +39,7 @@ jobs:
     # 6. Connect to User B (Target) and push the schema structure
     - name: Apply Schema to Target Project
       run: |
-        # Links using the Target Project Ref from Variables and Password from Secrets
+        # Links using Target Project Ref from Variables and Password from Secrets
         supabase link --project-ref "${{ vars.TARGET_PROJECT_REF }}" -p "${{ secrets.TARGET_DB_PASSWORD }}"
         
         # Pushes your database tables, schemas, and configurations
