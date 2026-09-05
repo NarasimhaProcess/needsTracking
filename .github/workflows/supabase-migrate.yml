@@ -1,0 +1,55 @@
+name: Supabase Organization Migration
+
+on:
+  workflow_dispatch: # Allows you to trigger this migration manually from GitHub Actions UI
+    inputs:
+      source_project_ref:
+        description: 'Source Project Ref ID (Old Org)'
+        required: true
+      target_project_ref:
+        description: 'Target Project Ref ID (New Org)'
+        required: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Check out the repository code
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # 2. Setup the Supabase CLI environment
+    - name: Setup Supabase CLI
+      uses: supabase/setup-cli@v1
+      with:
+        version: latest
+
+    # 3. Authenticate CLI session
+    - name: Authenticate Supabase CLI
+      run: supabase login --token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+
+    # 4. Dump Source Database (Schema, Roles, and Data)
+    - name: Backup Source Database
+      run: |
+        # Connect to the source project
+        supabase link --project-ref "${{ github.event.inputs.source_project_ref }}" -p "${{ secrets.SOURCE_DB_PASSWORD }}"
+        
+        # Extract structure and data into temporary SQL scripts
+        supabase db dump --data-only -f data_backup.sql
+        supabase db dump --role-only -f roles_backup.sql
+        supabase db dump -f schema_backup.sql
+
+    # 5. Restore Backup to Target Project
+    - name: Restore into Target Organization
+      run: |
+        # Clear the old link and tie the directory to the target project
+        rm -rf .supabase/
+        supabase link --project-ref "${{ github.event.inputs.target_project_ref }}" -p "${{ secrets.TARGET_DB_PASSWORD }}"
+        
+        # Apply the backed-up configurations to the new database
+        # Note: If your target database is already completely empty, push the schema first.
+        supabase db push
+        
+        # Execute the data restoration using native psql capabilities via the CLI connection
+        # If your data script is massive, you can alternatively use target connection strings.
