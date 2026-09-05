@@ -1,7 +1,7 @@
-name: Supabase Organization Migration
+name: Supabase Complete Org Migration (DB & Edge Functions)
 
 on:
-  workflow_dispatch: # Allows you to trigger this migration manually from GitHub Actions UI
+  workflow_dispatch:
     inputs:
       source_project_ref:
         description: 'Source Project Ref ID (Old Org)'
@@ -11,45 +11,46 @@ on:
         required: true
 
 jobs:
-  migrate:
+  migrate-and-deploy:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Check out the repository code
+    # 1. Pull the codebase (contains your local edge functions folder)
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # 2. Setup the Supabase CLI environment
+    # 2. Install the Supabase CLI
     - name: Setup Supabase CLI
       uses: supabase/setup-cli@v1
       with:
         version: latest
 
-    # 3. Authenticate CLI session
+    # 3. Authenticate using your Personal Access Token
     - name: Authenticate Supabase CLI
       run: supabase login --token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
 
-    # 4. Dump Source Database (Schema, Roles, and Data)
-    - name: Backup Source Database
+    # 4. Backup the source organization's database
+    - name: Backup Source Database Schema & Data
       run: |
-        # Connect to the source project
         supabase link --project-ref "${{ github.event.inputs.source_project_ref }}" -p "${{ secrets.SOURCE_DB_PASSWORD }}"
-        
-        # Extract structure and data into temporary SQL scripts
         supabase db dump --data-only -f data_backup.sql
-        supabase db dump --role-only -f roles_backup.sql
         supabase db dump -f schema_backup.sql
 
-    # 5. Restore Backup to Target Project
-    - name: Restore into Target Organization
+    # 5. Connect to the target organization's project
+    - name: Link Target Project
       run: |
-        # Clear the old link and tie the directory to the target project
         rm -rf .supabase/
         supabase link --project-ref "${{ github.event.inputs.target_project_ref }}" -p "${{ secrets.TARGET_DB_PASSWORD }}"
-        
-        # Apply the backed-up configurations to the new database
-        # Note: If your target database is already completely empty, push the schema first.
+
+    # 6. Push the database structure and data to the new org
+    - name: Restore DB to Target Project
+      run: |
         supabase db push
-        
-        # Execute the data restoration using native psql capabilities via the CLI connection
-        # If your data script is massive, you can alternatively use target connection strings.
+        # If your data script contains manual SQL statements, you can pipe it to the target:
+        # PGPASSWORD="${{ secrets.TARGET_DB_PASSWORD }}" psql -h db.${{ github.event.inputs.target_project_ref }}.supabase.co -p 5432 -d postgres -U postgres -f data_backup.sql
+
+    # 7. Deploy all local Edge Functions to the new project
+    - name: Host and Deploy Edge Functions
+      run: |
+        # Deploys every function located inside your ./supabase/functions folder
+        supabase functions deploy --project-ref "${{ github.event.inputs.target_project_ref }}"
