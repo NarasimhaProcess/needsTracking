@@ -14,15 +14,25 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Clipboard from 'expo-clipboard';
 import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const UpiQrScreen = ({ navigation, route }) => {
-  const { cart, totalAmount: passedAmount, shippingAddress, order } = route?.params || {};
+  const { cart, totalAmount: passedAmount, shippingAddress, order, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
   const [activeQrImageUrl, setActiveQrImageUrl] = useState(null);
   const [payeeUpiId, setPayeeUpiId] = useState('');
   const [payeeName, setPayeeName] = useState('Merchant Store');
   const [loading, setLoading] = useState(true);
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' | 'profile'
+
+  const resolvedSellerId =
+    paramSellerId ||
+    order?.seller_id ||
+    order?.order_items?.[0]?.product_variant_combinations?.products?.user_id ||
+    cart?.cart_items?.[0]?.product_variant_combinations?.products?.user_id ||
+    null;
+  const resolvedSellerName = paramSellerName || order?.seller_name || payeeName || null;
+  const resolvedCustomerId = paramCustomerId || order?.customer_id || null;
 
   const amount =
     passedAmount ||
@@ -142,7 +152,12 @@ const UpiQrScreen = ({ navigation, route }) => {
   };
 
   return (
-    <View style={styles.mainContainer}>
+    <View
+      style={[
+        styles.mainContainer,
+        Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+      ]}
+    >
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -161,10 +176,11 @@ const UpiQrScreen = ({ navigation, route }) => {
       <ScrollView
         style={[
           styles.scrollView,
-          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
+          Platform.OS === 'web' ? { flex: 1, height: '100%', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
         ]}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 150 }]}
         showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={true}
       >
         {/* Bill Amount Pill */}
@@ -313,6 +329,17 @@ const UpiQrScreen = ({ navigation, route }) => {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+      <StoreNavigationFooter
+        activeTab="cart"
+        navigation={navigation}
+        route={route}
+        sellerId={resolvedSellerId}
+        sellerName={resolvedSellerName}
+        customerId={resolvedCustomerId}
+        forceShow={true}
+      />
     </View>
   );
 };
@@ -322,6 +349,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
     height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
     minHeight: 0,
     overflow: 'hidden',
   },
@@ -335,6 +363,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    flexShrink: 0,
   },
   backHeaderBtn: {
     padding: 8,
@@ -351,11 +380,12 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
     width: '100%',
+    minHeight: 0,
   },
   scrollContent: {
     flexGrow: 1,
     padding: 16,
-    paddingBottom: 30,
+    paddingBottom: 150,
     alignItems: 'center',
   },
   amountPill: {
@@ -551,6 +581,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 5,
     elevation: 6,
+    flexShrink: 0,
   },
   footerCancelBtn: {
     paddingVertical: 11,

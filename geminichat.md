@@ -60,3 +60,41 @@
      - In `ProfileScreen.js`, added a dedicated "UPI Payments & QR Code" section with UPI ID input, instant save, live dynamic preview, and custom QR upload.
      - Fixed `user_qr_codes` database column typo (`qr_image_url`) in `UpiQrScreen.js`.
   4. Successfully rebuilt and verified production web export (`dist/`).
+
+## 2026-09-05 16:09:00 UTC
+- **User Request**: "while seller login all good header and footer with store click form welcome page, while click on orders or cart also should be same footer without any icons also  good to view"
+- **Summary**:
+  1. **Unified Text-Only Footer Navigation (`StoreNavigationFooter.js`)**:
+     - Built a consistent, clean bottom footer navigation bar with text-only labels (`Store`, `Cart`, `Orders`) without tab icons for an uncluttered, modern viewing experience on both mobile and web.
+     - Includes active tab indicators (`#EFF6FF` background and `#007AFF` bold accent) and live cart item count badges.
+     - Handles nested navigator detection to prevent duplicate footers when inside parent tab navigators.
+  2. **Seamless Navigation & State Retention**:
+     - Integrated `StoreNavigationFooter` into `CatalogScreen.js` (Store), `CartScreen.js` (Cart), and `OrderListScreen.js` (Orders).
+     - Ensured active store details (`sellerId`, `sellerName`, `customerId`) persist seamlessly when navigating between Store, Cart, and Orders.
+     - Added the footer to empty cart and empty orders states so the user can easily jump back to the Store or Cart without getting stuck.
+  3. **Layout & Scroll Clearance**:
+     - Adjusted bottom clearance and content padding in `CatalogScreen.js`, `CartScreen.js`, and `OrderListScreen.js` to ensure content and floating bars scroll smoothly without being cut off by the footer.
+  4. **Docked Footer with Large Records (`OrderListScreen.js` & `CartScreen.js`)**:
+     - Enforced `height: 100%`, `maxHeight: 100vh`, `minHeight: 0`, and `overflow: hidden` on the root container so when there are many order records, the footer is never pushed off-screen.
+     - Constrained the SectionList to internal scrolling (`overflowY: auto`, `minHeight: 0`) and added `flexShrink: 0` to `StoreNavigationFooter`, `header`, and `dockedFooterBar` to keep the footer permanently visible and docked at the bottom.
+     - Verified with clean web export (`dist/`).
+
+## 2026-09-05 16:33:08 UTC
+- **User Request**: "so is scrooling also fix right if more orders or cart"
+- **Summary**: Verified and confirmed scrolling architecture across both [CartScreen.js](file:///workspaces/needsTracking/src/screens/CartScreen.js) and [OrderListScreen.js](file:///workspaces/needsTracking/src/screens/OrderListScreen.js). Both screens use root viewport-locked flex containers (`height: 100%`, `maxHeight: 100vh`, `minHeight: 0`, `overflow: hidden`) with `flexShrink: 0` headers, action bars, and navigation footers, while the list components (`FlatList` and `SectionList`) take `flex: 1`, `overflowY: auto`, `minHeight: 0`, and bottom padding clearance (`paddingBottom: 110` / `90`). Confirmed the footer never gets pushed off-screen and all items/orders scroll smoothly to the very bottom without clipping. Web build export tested and verified clean.
+
+## 2026-09-05 16:41:20 UTC
+- **User Request**: "r u missing store to do same footer going bottom and scrolling not wokring do same like orders and cart"
+- **Summary**: Fixed Store/Catalog screen ([CatalogScreen.js](file:///workspaces/needsTracking/src/screens/CatalogScreen.js)) to match Cart and Orders exactly:
+  1. Converted root container to viewport-locked container (`height: 100%`, `maxHeight: 100vh`, `minHeight: 0`, `overflow: hidden`).
+  2. Applied `flexShrink: 0` to header, active store filter banner, and category scroll bar.
+  3. Replaced `bottomFixedContainer` (`position: absolute`) with `bottomDockedContainer` in normal flex flow with `flexShrink: 0` so the bottom controls (search bar, View Cart bar, and `StoreNavigationFooter`) are permanently visible and docked at the bottom of the screen.
+  4. Updated products `FlatList` with `flex: 1`, `overflowY: auto`, `minHeight: 0`, `nestedScrollEnabled: true`, and clean bottom clearance so all products scroll smoothly without pushing the footer down.
+  5. Tested and verified clean web export (`dist/`).
+
+## 2026-09-05 16:58:17 UTC
+- **User Request**: "in orders date picker not wokring can u check" / "I am asking about order list filter by date that only u fixed right"
+- **Summary**: Fixed "Filter by Date" in [OrderListScreen.js](file:///workspaces/needsTracking/src/screens/OrderListScreen.js):
+  1. Replaced `react-native-modal-datetime-picker` (which is unresponsive on web) with [UniversalDateTimePicker.js](file:///workspaces/needsTracking/src/components/UniversalDateTimePicker.js), providing a responsive date-picker modal with native HTML5 date input on web and native picker on mobile.
+  2. Fixed order date filtering by safely extracting `order.created_at || order.order_date || order.date` and comparing local calendar date parts (`getFullYear()`, `getMonth()`, `getDate()`) to prevent timezone/locale mismatches.
+  3. Added a dedicated 1-tap **"Today"** quick filter button and a clear (✕) button so users can instantly filter today's orders or clear the filter without reopening the picker.

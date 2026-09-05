@@ -111,6 +111,11 @@ const UniversalDateTimePicker = ({
       onRequestClose={onCancel}
     >
       <View style={styles.overlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onCancel}
+        />
         <View style={styles.card}>
           <Text style={styles.title}>{headerTextIOS || modalTitle}</Text>
           <View style={styles.inputWrapper}>
@@ -145,6 +150,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
     zIndex: 9999,
+    ...(Platform.OS === "web"
+      ? { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99999 }
+      : {}),
   },
   card: {
     width: "100%",
@@ -158,6 +166,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 10,
     alignItems: "center",
+    zIndex: 100000,
   },
   title: {
     fontSize: 18,

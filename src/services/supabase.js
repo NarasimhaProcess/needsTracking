@@ -1188,6 +1188,8 @@ export async function getOrderById(orderId) {
             products (
               id,
               product_name,
+              user_id,
+              customer_id,
               product_media (media_url, media_type)
             )
           )

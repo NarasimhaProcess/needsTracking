@@ -19,11 +19,21 @@ import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../servic
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const OrderDetailScreen = ({ navigation, route }) => {
-  const { orderId } = route?.params || {};
+  const { orderId, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
   const { role } = useCart();
   const [order, setOrder] = useState(null);
+
+  const resolvedSellerId =
+    paramSellerId ||
+    order?.seller_id ||
+    order?.order_items?.[0]?.product_variant_combinations?.products?.user_id ||
+    order?.order_items?.[0]?.product_variant_combinations?.products?.customer_id ||
+    null;
+  const resolvedSellerName = paramSellerName || order?.seller_name || null;
+  const resolvedCustomerId = paramCustomerId || order?.customer_id || null;
   const [deliveryPartner, setDeliveryPartner] = useState(null);
   const [partnerCoords, setPartnerCoords] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -355,16 +365,69 @@ const OrderDetailScreen = ({ navigation, route }) => {
 
   if (loading && !order) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#007AFF" />
+      <View
+        style={[
+          styles.mainContainer,
+          Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+        ]}
+      >
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backHeaderBtn}
+            onPress={() => navigation.goBack()}
+            accessibilityLabel="Back"
+          >
+            <Icon name="arrow-left" size={17} color="#0F172A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Order Details</Text>
+        </View>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={[styles.loadingText, { marginTop: 12 }]}>Loading order details...</Text>
+        </View>
+        <StoreNavigationFooter
+          activeTab="orders"
+          navigation={navigation}
+          route={route}
+          sellerId={resolvedSellerId}
+          sellerName={resolvedSellerName}
+          customerId={resolvedCustomerId}
+          forceShow={true}
+        />
       </View>
     );
   }
 
   if (!order) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.notFoundText}>Order not found.</Text>
+      <View
+        style={[
+          styles.mainContainer,
+          Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+        ]}
+      >
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backHeaderBtn}
+            onPress={() => navigation.goBack()}
+            accessibilityLabel="Back"
+          >
+            <Icon name="arrow-left" size={17} color="#0F172A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Order Details</Text>
+        </View>
+        <View style={styles.centered}>
+          <Text style={styles.notFoundText}>Order not found.</Text>
+        </View>
+        <StoreNavigationFooter
+          activeTab="orders"
+          navigation={navigation}
+          route={route}
+          sellerId={resolvedSellerId}
+          sellerName={resolvedSellerName}
+          customerId={resolvedCustomerId}
+          forceShow={true}
+        />
       </View>
     );
   }
@@ -375,7 +438,12 @@ const OrderDetailScreen = ({ navigation, route }) => {
   const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
 
   return (
-    <View style={styles.mainContainer}>
+    <View
+      style={[
+        styles.mainContainer,
+        Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+      ]}
+    >
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backHeaderBtn}
@@ -413,9 +481,9 @@ const OrderDetailScreen = ({ navigation, route }) => {
       <ScrollView
         style={[
           styles.container,
-          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
+          Platform.OS === 'web' ? { flex: 1, height: '100%', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
         ]}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 150 }]}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={true}
@@ -590,6 +658,17 @@ const OrderDetailScreen = ({ navigation, route }) => {
         </View>
       </View>
 
+      {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+      <StoreNavigationFooter
+        activeTab="orders"
+        navigation={navigation}
+        route={route}
+        sellerId={resolvedSellerId}
+        sellerName={resolvedSellerName}
+        customerId={resolvedCustomerId}
+        forceShow={true}
+      />
+
       <PrinterSettingsModal
         visible={showPrinterSettings}
         onClose={() => setShowPrinterSettings(false)}
@@ -611,6 +690,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
     height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
     minHeight: 0,
     overflow: 'hidden',
   },
@@ -624,6 +704,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    flexShrink: 0,
   },
   backHeaderBtn: {
     padding: 8,
@@ -690,11 +771,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     width: '100%',
+    minHeight: 0,
   },
   scrollContent: {
     flexGrow: 1,
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 150,
   },
   screenFooterBar: {
     flexDirection: 'row',
@@ -710,6 +792,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 4,
+    flexShrink: 0,
   },
   footerBackBtn: {
     flexDirection: 'row',

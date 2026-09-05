@@ -21,6 +21,10 @@ export const DEFAULT_PRINTER_CONFIG = {
   footerNote: 'Thank You! Visit Again.',
   autoPrintOnOrder: false,
   printMode: 'bluetooth', // 'bluetooth' | 'system'
+  bottomFeedLines: 1, // Compact feed after printing (eliminates 2-inch wasted blank space)
+  cutPaper: true,
+  printHeader: true, // Option to check/uncheck header part (store name, address, tax invoice title)
+  printDayWiseNumber: true, // Option to check/require Day-wise order number on receipts
 };
 
 // Global active Web Bluetooth BLE device/characteristic instance
@@ -39,6 +43,9 @@ export const getPrinterConfig = async () => {
         ...DEFAULT_PRINTER_CONFIG,
         ...parsed,
         currencySymbol: parsed.currencySymbol || 'Rs.',
+        bottomFeedLines: parsed.bottomFeedLines !== undefined ? Number(parsed.bottomFeedLines) : 1,
+        printHeader: parsed.printHeader !== undefined ? Boolean(parsed.printHeader) : true,
+        printDayWiseNumber: parsed.printDayWiseNumber !== undefined ? Boolean(parsed.printDayWiseNumber) : true,
       };
     }
   } catch (err) {
@@ -227,6 +234,20 @@ export const extractOrderNumbers = (order = {}) => {
     }
   }
 
+  // If dayOrderNo is still not resolved, derive a clean numeric token from order ID or sequence
+  if (!dayOrderNo) {
+    if (rawId && typeof rawId === 'string') {
+      const digits = rawId.replace(/\D/g, '');
+      if (digits.length >= 2) {
+        dayOrderNo = String(parseInt(digits.slice(-4), 10) || digits.slice(-3) || '1');
+      } else {
+        dayOrderNo = String(rawId.slice(-4).toUpperCase());
+      }
+    } else {
+      dayOrderNo = '1';
+    }
+  }
+
   return {
     orderNumber: String(orderNum),
     dayOrderNo: dayOrderNo ? String(dayOrderNo) : null,
@@ -268,7 +289,7 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const CMD_DOUBLE_SIZE = [GS, 0x21, 0x11]; // Double height & width
   const CMD_DOUBLE_HEIGHT = [GS, 0x21, 0x01]; // Double height only (preserves full 32/48 col line width)
   const CMD_NORMAL_SIZE = [GS, 0x21, 0x00];
-  const CMD_FEED_AND_CUT = [ESC, 0x64, 0x04, GS, 0x56, 0x41, 0x00]; // Feed 4 lines and full cut
+  const CMD_FEED_AND_CUT = [ESC, 0x64, 0x01, GS, 0x56, 0x42, 0x00]; // Feed 1 line and partial cut
 
   let byteChunks = [];
 
@@ -287,39 +308,41 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   addBytes(CMD_CODEPAGE_PC437);
   addBytes(CMD_CHARSET_USA);
 
-  // 2. Header (Centered, Bold)
-  addBytes(CMD_ALIGN_CENTER);
-  addBytes(CMD_BOLD_ON);
-  const store = sanitizeThermalText(data.storeName || config.storeName || "RECEIPT", currencySymbol);
-  if (store.length <= Math.floor(width / 2)) {
-    addBytes(CMD_DOUBLE_SIZE);
-  } else {
-    addBytes(CMD_DOUBLE_HEIGHT);
-  }
-  addText(store);
-  addBytes(CMD_NORMAL_SIZE);
-  addBytes(CMD_BOLD_OFF);
+  // 2. Header (Centered, Bold) - only if printHeader is enabled (checked)
+  if (config.printHeader !== false) {
+    addBytes(CMD_ALIGN_CENTER);
+    addBytes(CMD_BOLD_ON);
+    const store = sanitizeThermalText(data.storeName || config.storeName || "RECEIPT", currencySymbol);
+    if (store.length <= Math.floor(width / 2)) {
+      addBytes(CMD_DOUBLE_SIZE);
+    } else {
+      addBytes(CMD_DOUBLE_HEIGHT);
+    }
+    addText(store);
+    addBytes(CMD_NORMAL_SIZE);
+    addBytes(CMD_BOLD_OFF);
 
-  if (config.storeAddress) {
-    addText(config.storeAddress);
-  }
-  if (config.storeContact) {
-    addText(`Tel: ${config.storeContact}`);
-  }
-  if (config.gstNumber) {
-    addText(`GSTIN: ${config.gstNumber}`);
-  }
+    if (config.storeAddress) {
+      addText(config.storeAddress);
+    }
+    if (config.storeContact) {
+      addText(`Tel: ${config.storeContact}`);
+    }
+    if (config.gstNumber) {
+      addText(`GSTIN: ${config.gstNumber}`);
+    }
 
-  // 3. Receipt Title & Info
-  addText(separator);
-  addBytes(CMD_BOLD_ON);
-  addText(data.title || 'TAX INVOICE / ORDER RECEIPT');
-  addBytes(CMD_BOLD_OFF);
-  addText(separator);
+    // 3. Receipt Title & Info
+    addText(separator);
+    addBytes(CMD_BOLD_ON);
+    addText(data.title || 'TAX INVOICE / ORDER RECEIPT');
+    addBytes(CMD_BOLD_OFF);
+    addText(separator);
+  }
 
   // 4. Token / Day Order Number (Prominent banner for counter/kitchen)
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
-  if (dayOrder) {
+  if (config.printDayWiseNumber !== false && dayOrder) {
     addBytes(CMD_ALIGN_CENTER);
     addBytes(CMD_BOLD_ON);
     addText(`*** DAY ORDER NO: #${String(dayOrder).replace(/^#/, '')} ***`);
@@ -338,6 +361,9 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
     } else {
       addText(formatTwoColumns('Order No:', orderNoStr, width));
     }
+  }
+  if (config.printDayWiseNumber !== false && dayOrder) {
+    addText(formatTwoColumns('Day Order No:', `#${String(dayOrder).replace(/^#/, '')}`, width));
   }
   if (data.date) {
     addText(formatTwoColumns('Date:', String(data.date), width));
@@ -443,11 +469,18 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
   }
   addText(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
-  // Feed 3 blank lines so paper feeds clear of the tear bar / cutter before cutting
-  addText('\n\n\n');
+  // 9. Minimal bottom paper feed & cut (eliminates the unwanted 2-inch blank space)
+  const feedLines = typeof config.bottomFeedLines === 'number'
+    ? Math.max(0, Math.min(10, config.bottomFeedLines))
+    : 1;
 
-  // 9. Cut paper & Feed
-  addBytes(CMD_FEED_AND_CUT);
+  if (feedLines > 0) {
+    addBytes([ESC, 0x64, feedLines]); // ESC d n: Print and feed n lines
+  }
+
+  if (config.cutPaper !== false) {
+    addBytes([GS, 0x56, 0x42, 0x00]); // GS V 'B' 0: Feed to cutter position and partial cut
+  }
 
   // Combine all Uint8Array chunks into a single ArrayBuffer
   const totalLength = byteChunks.reduce((acc, chunk) => acc + chunk.length, 0);
@@ -468,6 +501,7 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const is80mm = config.paperWidth === '80mm';
   const widthMm = is80mm ? '72mm' : '48mm';
   const currencySymbol = config.currencySymbol || 'Rs.';
+  const shouldPrintHeader = config.printHeader !== false;
 
   const rawTotal =
     data.total !== undefined && data.total !== null && String(data.total).trim() !== ''
@@ -488,6 +522,7 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
       : 0;
 
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
+  const shouldPrintDayWise = config.printDayWiseNumber !== false && dayOrder;
 
   const itemsHtml = (data.items && data.items.length > 0)
     ? data.items
@@ -516,28 +551,58 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
         <style>
           @page {
-            size: ${widthMm} auto;
-            margin: 0;
+            size: auto;
+            margin: 0mm !important;
           }
-          body {
+          @page :first {
+            margin: 0mm !important;
+          }
+          html, body {
             font-family: 'Courier New', Courier, monospace;
             width: ${widthMm};
-            margin: 0 auto;
-            padding: 8px 4px;
+            max-width: ${widthMm};
+            margin: 0 auto !important;
+            padding: 4px 2px 2px 2px !important;
             color: #000;
             background: #fff;
             font-size: ${is80mm ? '13px' : '11px'};
             line-height: 1.35;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          @media print {
+            @page {
+              size: auto;
+              margin: 0mm !important;
+            }
+            html, body {
+              width: ${widthMm} !important;
+              max-width: ${widthMm} !important;
+              margin: 0 auto !important;
+              padding: 2px 2px 2px 2px !important;
+              overflow: visible !important;
+              height: auto !important;
+              min-height: 0 !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+              page-break-after: avoid !important;
+              break-after: avoid !important;
+            }
           }
           .center { text-align: center; }
           .bold { font-weight: bold; }
           .store-name { font-size: ${is80mm ? '18px' : '15px'}; font-weight: bold; margin-bottom: 3px; }
-          .divider { border-top: 1px dashed #000; margin: 6px 0; }
+          .divider { border-top: 1px dashed #000; margin: 4px 0; }
           .meta-row { display: flex; justify-content: space-between; margin: 2px 0; font-size: ${is80mm ? '12px' : '10px'}; }
           .day-order-box {
             border: 1.5px dashed #000;
-            padding: 4px 2px;
-            margin: 5px 0;
+            padding: 3px 2px;
+            margin: 4px 0;
             text-align: center;
           }
           .day-order-label {
@@ -550,74 +615,78 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
             font-weight: 900;
             margin-top: 1px;
           }
-          table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: inherit; }
-          th { border-bottom: 1px dashed #000; font-weight: bold; padding: 4px 0; font-size: inherit; }
-          .total-row { font-size: ${is80mm ? '16px' : '14px'}; font-weight: bold; margin: 6px 0; display: flex; justify-content: space-between; }
-          .footer { margin-top: 10px; font-size: ${is80mm ? '11px' : '10px'}; }
+          table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: inherit; }
+          th { border-bottom: 1px dashed #000; font-weight: bold; padding: 3px 0; font-size: inherit; }
+          .total-row { font-size: ${is80mm ? '16px' : '14px'}; font-weight: bold; margin: 5px 0; display: flex; justify-content: space-between; }
+          .footer { margin-top: 6px; margin-bottom: 0; padding-bottom: 0; font-size: ${is80mm ? '11px' : '10px'}; }
         </style>
       </head>
       <body>
-        <div class="center">
-          <div class="store-name">${data.storeName || config.storeName || "RECEIPT"}</div>
-          ${config.storeAddress ? `<div>${config.storeAddress}</div>` : ''}
-          ${config.storeContact ? `<div>Tel: ${config.storeContact}</div>` : ''}
-          ${config.gstNumber ? `<div>GSTIN: ${config.gstNumber}</div>` : ''}
-        </div>
+        <div class="receipt-container">
+          ${shouldPrintHeader ? `
+          <div class="center">
+            <div class="store-name">${data.storeName || config.storeName || "RECEIPT"}</div>
+            ${config.storeAddress ? `<div>${config.storeAddress}</div>` : ''}
+            ${config.storeContact ? `<div>Tel: ${config.storeContact}</div>` : ''}
+            ${config.gstNumber ? `<div>GSTIN: ${config.gstNumber}</div>` : ''}
+          </div>
 
-        <div class="divider"></div>
-        <div class="center bold">${data.title || 'TAX INVOICE / ORDER RECEIPT'}</div>
-        <div class="divider"></div>
+          <div class="divider"></div>
+          <div class="center bold">${data.title || 'TAX INVOICE / ORDER RECEIPT'}</div>
+          <div class="divider"></div>
+          ` : ''}
 
-        ${dayOrder ? `
-        <div class="day-order-box">
-          <div class="day-order-label">DAY ORDER NO</div>
-          <div class="day-order-val">#${String(dayOrder).replace(/^#/, '')}</div>
-        </div>
-        <div class="divider"></div>
-        ` : ''}
+          ${shouldPrintDayWise ? `
+          <div class="day-order-box">
+            <div class="day-order-label">DAY ORDER NO</div>
+            <div class="day-order-val">#${String(dayOrder).replace(/^#/, '')}</div>
+          </div>
+          <div class="divider"></div>
+          ` : ''}
 
-        <div class="meta-row"><span>Order No:</span><span class="bold">${data.orderId || data.rawOrderId || 'N/A'}</span></div>
-        ${dayOrder ? `<div class="meta-row"><span>Day Order No:</span><span class="bold">#${String(dayOrder).replace(/^#/, '')}</span></div>` : ''}
-        <div class="meta-row"><span>Date:</span><span>${data.date || new Date().toLocaleString()}</span></div>
-        ${data.customerName ? `<div class="meta-row"><span>Customer:</span><span class="bold">${data.customerName}</span></div>` : ''}
-        ${data.customerPhone ? `<div class="meta-row"><span>Mobile:</span><span>${data.customerPhone}</span></div>` : ''}
-        ${data.orderType ? `<div class="meta-row"><span>Type:</span><span class="bold">${String(data.orderType).toUpperCase()}</span></div>` : ''}
-        ${data.tableNo ? `<div class="meta-row"><span>Table:</span><span class="bold">#${data.tableNo}</span></div>` : ''}
-        ${data.deliveryAddress ? `<div class="meta-row" style="flex-direction:column; margin-top:2px;"><span>Address:</span><span style="font-size:0.9em; word-break:break-word;">${data.deliveryAddress}</span></div>` : ''}
+          <div class="meta-row"><span>Order No:</span><span class="bold">${data.orderId || data.rawOrderId || 'N/A'}</span></div>
+          ${shouldPrintDayWise ? `<div class="meta-row"><span>Day Order No:</span><span class="bold">#${String(dayOrder).replace(/^#/,'')}</span></div>` : ''}
+          <div class="meta-row"><span>Date:</span><span>${data.date || new Date().toLocaleString()}</span></div>
+          ${data.customerName ? `<div class="meta-row"><span>Customer:</span><span class="bold">${data.customerName}</span></div>` : ''}
+          ${data.customerPhone ? `<div class="meta-row"><span>Mobile:</span><span>${data.customerPhone}</span></div>` : ''}
+          ${data.orderType ? `<div class="meta-row"><span>Type:</span><span class="bold">${String(data.orderType).toUpperCase()}</span></div>` : ''}
+          ${data.tableNo ? `<div class="meta-row"><span>Table:</span><span class="bold">#${data.tableNo}</span></div>` : ''}
+          ${data.deliveryAddress ? `<div class="meta-row" style="flex-direction:column; margin-top:2px;"><span>Address:</span><span style="font-size:0.9em; word-break:break-word;">${data.deliveryAddress}</span></div>` : ''}
 
-        <div class="divider"></div>
-        <table>
-          <thead>
-            <tr>
-              <th style="text-align: left;">ITEM</th>
-              <th style="text-align: center;">QTY</th>
-              <th style="text-align: right;">RATE</th>
-              <th style="text-align: right;">AMT</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHtml}
-          </tbody>
-        </table>
-        <div class="divider"></div>
+          <div class="divider"></div>
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: left;">ITEM</th>
+                <th style="text-align: center;">QTY</th>
+                <th style="text-align: right;">RATE</th>
+                <th style="text-align: right;">AMT</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+          </table>
+          <div class="divider"></div>
 
-        ${data.subtotal !== undefined ? `<div class="meta-row"><span>Subtotal:</span><span>${currencySymbol}${safeFormatNumber(data.subtotal)}</span></div>` : ''}
-        ${data.deliveryFee ? `<div class="meta-row"><span>Delivery:</span><span>${currencySymbol}${safeFormatNumber(data.deliveryFee)}</span></div>` : ''}
-        ${data.discount ? `<div class="meta-row"><span>Discount:</span><span>-${currencySymbol}${safeFormatNumber(data.discount)}</span></div>` : ''}
+          ${data.subtotal !== undefined ? `<div class="meta-row"><span>Subtotal:</span><span>${currencySymbol}${safeFormatNumber(data.subtotal)}</span></div>` : ''}
+          ${data.deliveryFee ? `<div class="meta-row"><span>Delivery:</span><span>${currencySymbol}${safeFormatNumber(data.deliveryFee)}</span></div>` : ''}
+          ${data.discount ? `<div class="meta-row"><span>Discount:</span><span>-${currencySymbol}${safeFormatNumber(data.discount)}</span></div>` : ''}
 
-        <div class="divider"></div>
-        <div class="total-row">
-          <span>TOTAL AMOUNT:</span>
-          <span>${currencySymbol}${safeFormatNumber(computedTotal)}</span>
-        </div>
-        <div class="divider"></div>
+          <div class="divider"></div>
+          <div class="total-row">
+            <span>TOTAL AMOUNT:</span>
+            <span>${currencySymbol}${safeFormatNumber(computedTotal)}</span>
+          </div>
+          <div class="divider"></div>
 
-        ${data.paymentMethod ? `<div class="meta-row"><span>Payment:</span><span class="bold">${String(data.paymentMethod).toUpperCase()}</span></div>` : ''}
-        ${data.paymentStatus ? `<div class="meta-row"><span>Status:</span><span class="bold">${String(data.paymentStatus).toUpperCase()}</span></div>` : ''}
+          ${data.paymentMethod ? `<div class="meta-row"><span>Payment:</span><span class="bold">${String(data.paymentMethod).toUpperCase()}</span></div>` : ''}
+          ${data.paymentStatus ? `<div class="meta-row"><span>Status:</span><span class="bold">${String(data.paymentStatus).toUpperCase()}</span></div>` : ''}
 
-        <div class="center footer">
-          <div>${config.footerNote || 'Thank You! Visit Again.'}</div>
-          <div style="margin-top: 3px; color: #555;">${new Date().toLocaleTimeString()}</div>
+          <div class="center footer">
+            <div>${config.footerNote || 'Thank You! Visit Again.'}</div>
+            <div style="margin-top: 3px; color: #555;">${new Date().toLocaleTimeString()}</div>
+          </div>
         </div>
       </body>
     </html>

@@ -18,6 +18,7 @@ import { supabase, getCart, getActiveQrCode } from '../services/supabase';
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const CheckoutScreen = ({ navigation, route }) => {
   const { cart: initialCart, customerId } = route?.params || {};
@@ -435,9 +436,22 @@ const CheckoutScreen = ({ navigation, route }) => {
     }
   };
 
+  const resolvedSellerId =
+    route?.params?.sellerId ||
+    cartItems?.[0]?.product_variant_combinations?.products?.user_id ||
+    cartItems?.[0]?.product_variant_combinations?.products?.customer_id ||
+    sellerProfile?.id ||
+    null;
+  const resolvedSellerName = route?.params?.sellerName || sellerProfile?.full_name || null;
+
   if (!cartItems || cartItems.length === 0) {
     return (
-      <View style={styles.mainContainer}>
+      <View
+        style={[
+          styles.mainContainer,
+          Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+        ]}
+      >
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backHeaderBtn}
@@ -459,17 +473,33 @@ const CheckoutScreen = ({ navigation, route }) => {
           </Text>
           <TouchableOpacity
             style={styles.browseButton}
-            onPress={() => navigation.navigate('Catalog')}
+            onPress={() => navigation.navigate('Catalog', { sellerId: resolvedSellerId, sellerName: resolvedSellerName, customerId })}
           >
             <Text style={styles.browseButtonText}>Browse Catalog</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+        <StoreNavigationFooter
+          activeTab="cart"
+          navigation={navigation}
+          route={route}
+          sellerId={resolvedSellerId}
+          sellerName={resolvedSellerName}
+          customerId={customerId}
+          forceShow={true}
+        />
       </View>
     );
   }
 
   return (
-    <View style={styles.mainContainer}>
+    <View
+      style={[
+        styles.mainContainer,
+        Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+      ]}
+    >
       {/* Header with Back button */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -489,9 +519,9 @@ const CheckoutScreen = ({ navigation, route }) => {
       <ScrollView
         style={[
           styles.scrollView,
-          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
+          Platform.OS === 'web' ? { flex: 1, height: '100%', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
         ]}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 150 }]}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={true}
@@ -854,6 +884,17 @@ const CheckoutScreen = ({ navigation, route }) => {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+      <StoreNavigationFooter
+        activeTab="cart"
+        navigation={navigation}
+        route={route}
+        sellerId={resolvedSellerId}
+        sellerName={resolvedSellerName}
+        customerId={customerId}
+        forceShow={true}
+      />
     </View>
   );
 };
@@ -863,6 +904,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
     height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
     minHeight: 0,
     overflow: 'hidden',
   },
@@ -876,6 +918,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    flexShrink: 0,
   },
   backHeaderBtn: {
     padding: 8,
@@ -892,11 +935,12 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
     width: '100%',
+    minHeight: 0,
   },
   scrollContent: {
     flexGrow: 1,
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 150,
   },
   guestBanner: {
     flexDirection: 'row',
@@ -1304,6 +1348,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 5,
     elevation: 6,
+    flexShrink: 0,
   },
   footerBackBtn: {
     flexDirection: 'row',

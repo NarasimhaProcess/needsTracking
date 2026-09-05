@@ -12,8 +12,10 @@ import {
 import { getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { getGuestCart, updateGuestCartItemQuantity, removeGuestCartItem } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
-const CartScreen = ({ navigation }) => {
+const CartScreen = ({ navigation, route }) => {
+  const { sellerId, sellerName, customerId } = route?.params || {};
   const [cart, setCart] = useState(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
@@ -153,7 +155,13 @@ const CartScreen = ({ navigation }) => {
       customerIdToPass =
         cart.cart_items[0]?.product_variant_combinations?.products?.customer_id || null;
     }
-    navigation.navigate('Checkout', { cart: cart, customerId: customerIdToPass });
+    const resolvedSellerId = sellerId || cart?.cart_items?.[0]?.product_variant_combinations?.products?.user_id || null;
+    navigation.navigate('Checkout', {
+      cart: cart,
+      customerId: customerIdToPass || customerId,
+      sellerId: resolvedSellerId,
+      sellerName: sellerName,
+    });
   };
 
   if (loading) {
@@ -188,11 +196,22 @@ const CartScreen = ({ navigation }) => {
           </Text>
           <TouchableOpacity
             style={styles.browseButton}
-            onPress={() => navigation.navigate('Catalog')}
+            onPress={() => navigation.navigate('Catalog', { sellerId, sellerName, customerId })}
           >
             <Text style={styles.browseButtonText}>Browse Catalog</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+        <StoreNavigationFooter
+          activeTab="cart"
+          navigation={navigation}
+          route={route}
+          sellerId={sellerId}
+          sellerName={sellerName}
+          customerId={customerId}
+          forceShow={true}
+        />
       </View>
     );
   }
@@ -203,13 +222,28 @@ const CartScreen = ({ navigation }) => {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backHeaderBtn}
-          onPress={() => navigation.goBack()}
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            } else {
+              navigation.navigate('Catalog', { sellerId, sellerName, customerId });
+            }
+          }}
           accessibilityLabel="Back"
         >
           <Icon name="arrow-left" size={16} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Your Cart</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Close">
+        <TouchableOpacity
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            } else {
+              navigation.navigate('Catalog', { sellerId, sellerName, customerId });
+            }
+          }}
+          accessibilityLabel="Close"
+        >
           <Icon name="close" size={20} color="#64748B" />
         </TouchableOpacity>
       </View>
@@ -221,12 +255,12 @@ const CartScreen = ({ navigation }) => {
         keyExtractor={(item) => item.id.toString()}
         style={[
           styles.list,
-          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch' } : null,
+          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch', minHeight: 0 } : null,
         ]}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={true}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 110 }]}
       />
 
       {/* Docked Action Footer Bar */}
@@ -246,6 +280,17 @@ const CartScreen = ({ navigation }) => {
           <Icon name="arrow-right" size={14} color="#FFFFFF" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
       </View>
+
+      {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+      <StoreNavigationFooter
+        activeTab="cart"
+        navigation={navigation}
+        route={route}
+        sellerId={sellerId}
+        sellerName={sellerName}
+        customerId={customerId}
+        forceShow={true}
+      />
     </View>
   );
 };
@@ -255,6 +300,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
     height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
     minHeight: 0,
     overflow: 'hidden',
   },
@@ -274,6 +320,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    flexShrink: 0,
   },
   backHeaderBtn: {
     padding: 8,
@@ -399,6 +446,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 5,
     elevation: 6,
+    flexShrink: 0,
   },
   footerTotalBox: {
     flex: 1,

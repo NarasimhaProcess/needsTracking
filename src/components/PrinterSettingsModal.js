@@ -309,9 +309,114 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
                 </Text>
               </View>
 
+              {/* Bottom Blank Space / Feed Setting */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Bottom Blank Space / Paper Feed</Text>
+                <View style={styles.paperRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.paperOption,
+                      config.bottomFeedLines === 0 && styles.paperOptionSelected,
+                    ]}
+                    onPress={() => setConfig({ ...config, bottomFeedLines: 0 })}
+                  >
+                    <Text
+                      style={[
+                        styles.paperOptionText,
+                        config.bottomFeedLines === 0 && styles.paperOptionTextSelected,
+                      ]}
+                    >
+                      0 Lines
+                    </Text>
+                    <Text style={styles.paperOptionSub}>Zero feed</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.paperOption,
+                      (config.bottomFeedLines === 1 || config.bottomFeedLines === undefined) && styles.paperOptionSelected,
+                    ]}
+                    onPress={() => setConfig({ ...config, bottomFeedLines: 1 })}
+                  >
+                    <Text
+                      style={[
+                        styles.paperOptionText,
+                        (config.bottomFeedLines === 1 || config.bottomFeedLines === undefined) && styles.paperOptionTextSelected,
+                      ]}
+                    >
+                      1 Line
+                    </Text>
+                    <Text style={styles.paperOptionSub}>Compact (Recommended)</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.paperOption,
+                      config.bottomFeedLines === 3 && styles.paperOptionSelected,
+                    ]}
+                    onPress={() => setConfig({ ...config, bottomFeedLines: 3 })}
+                  >
+                    <Text
+                      style={[
+                        styles.paperOptionText,
+                        config.bottomFeedLines === 3 && styles.paperOptionTextSelected,
+                      ]}
+                    >
+                      3 Lines
+                    </Text>
+                    <Text style={styles.paperOptionSub}>Standard feed</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.helperNote}>
+                  Compact (1 line) saves paper and eliminates the unwanted 2-inch blank space at the bottom of the receipt.
+                </Text>
+              </View>
+
+              {/* Receipt Content & Header Options */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Receipt Content & Layout</Text>
+
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.switchLabel}>Print Receipt Header</Text>
+                    <Text style={styles.switchDescription}>
+                      Include Store Name, Address, Contact, and Tax Invoice Title. Uncheck to save paper or if using pre-printed rolls.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={config.printHeader !== false}
+                    onValueChange={(val) => setConfig({ ...config, printHeader: val })}
+                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                    thumbColor={config.printHeader !== false ? '#007AFF' : '#F1F5F9'}
+                  />
+                </View>
+
+                <View style={styles.settingDivider} />
+
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.switchLabel}>Required Day-wise Order Number</Text>
+                    <Text style={styles.switchDescription}>
+                      Prominently print Daily Order Number (Token #) on receipts for order dispatch and kitchen tokens.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={config.printDayWiseNumber !== false}
+                    onValueChange={(val) => setConfig({ ...config, printDayWiseNumber: val })}
+                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                    thumbColor={config.printDayWiseNumber !== false ? '#007AFF' : '#F1F5F9'}
+                  />
+                </View>
+              </View>
+
               {/* Store & Receipt Customization */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Receipt Header & Details</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={styles.sectionTitle}>Receipt Header Details</Text>
+                  {config.printHeader === false && (
+                    <Text style={{ fontSize: 11, color: '#D97706', fontWeight: '600' }}>(Header Printing OFF)</Text>
+                  )}
+                </View>
 
                 <Text style={styles.inputLabel}>Store / Business Name</Text>
                 <TextInput
@@ -639,6 +744,28 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+  },
+  switchLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  switchDescription: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+  },
+  settingDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 4,
   },
 });
 

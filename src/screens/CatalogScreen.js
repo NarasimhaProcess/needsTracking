@@ -24,6 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase, setSellerProductsActiveStatus, ensureUserProfile } from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const { width } = Dimensions.get('window');
 
@@ -811,7 +812,12 @@ const CatalogScreen = ({ navigation, route }) => {
   const cartItems = user ? cart?.cart_items : guestCart;
 
   return (
-    <View style={[{ flex: 1, width: '100%', height: '100%', backgroundColor: 'white' }, Platform.OS === 'web' && { minHeight: 0 }]}>
+    <View
+      style={[
+        styles.mainContainer,
+        Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+      ]}
+    >
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
           <TouchableOpacity
@@ -957,12 +963,16 @@ const CatalogScreen = ({ navigation, route }) => {
         renderItem={renderProduct}
         keyExtractor={(item) => item.id.toString()}
         numColumns={2}
-        style={{ flex: 1, width: '100%' }}
+        style={[
+          styles.list,
+          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch', minHeight: 0 } : null,
+        ]}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled={true}
         contentContainerStyle={[
           styles.container,
-          { flexGrow: 1, paddingBottom: cartTotals.totalItems > 0 ? 155 : 95 }
+          { flexGrow: 1, paddingBottom: 30 }
         ]}
         extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory }}
         ListEmptyComponent={
@@ -1288,8 +1298,27 @@ const CatalogScreen = ({ navigation, route }) => {
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
-        style={styles.bottomFixedContainer}
+        style={styles.bottomDockedContainer}
       >
+        {/* View Cart Docked Bar (when items > 0) */}
+        {cartTotals.totalItems > 0 && (
+          <View style={styles.viewCartContainer}>
+            <TouchableOpacity
+              style={styles.viewCartButton}
+              onPress={() => navigation.navigate('Cart', { sellerId: activeSellerId, sellerName: activeStoreName, customerId: paramCustomerId })}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.viewCartText}>
+                {cartTotals.totalItems} {cartTotals.totalItems > 1 ? 'items' : 'item'} | ₹{cartTotals.totalPrice.toFixed(2)}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.viewCartText}>View Cart </Text>
+                <Icon name="shopping-bag" size={15} color="#FFFFFF" style={{ marginLeft: 4 }} />
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Bottom Search Bar */}
         <View style={styles.bottomSearchBarWrapper}>
           <View style={styles.bottomSearchBox}>
@@ -1311,25 +1340,38 @@ const CatalogScreen = ({ navigation, route }) => {
           </View>
         </View>
 
-        {/* View Cart Floating Bar */}
-        {cartTotals.totalItems > 0 && (
-          <View style={styles.viewCartContainer}>
-            <View style={styles.viewCartButton}>
-              <Text style={styles.viewCartText}>
-                {cartTotals.totalItems} {cartTotals.totalItems > 1 ? 'items' : 'item'} | ₹{cartTotals.totalPrice.toFixed(2)}
-              </Text>
-              <TouchableOpacity onPress={() => setIsCartModalVisible(true)}>
-                <Text style={styles.viewCartText}>View Cart <Icon name="shopping-bag" size={16} /></Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+        <StoreNavigationFooter
+          activeTab="store"
+          navigation={navigation}
+          route={route}
+          sellerId={activeSellerId}
+          sellerName={activeStoreName}
+          customerId={paramCustomerId}
+          forceShow={true}
+          onStorePress={() => {
+            setSelectedCategory('all');
+            setSearchQuery('');
+          }}
+        />
       </KeyboardAvoidingView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  mainContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+  list: {
+    flex: 1,
+    width: '100%',
+  },
   center: {
     flex: 1,
     justifyContent: 'center',
@@ -1342,6 +1384,7 @@ const styles = StyleSheet.create({
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+    flexShrink: 0,
   },
   headerTitle: {
     fontSize: 20,
@@ -1604,12 +1647,10 @@ const styles = StyleSheet.create({
     marginTop: 50,
     fontSize: 18,
   },
-  bottomFixedContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'transparent',
+  bottomDockedContainer: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    flexShrink: 0,
     zIndex: 10,
   },
   bottomSearchBarWrapper: {
@@ -1993,6 +2034,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
     paddingVertical: 10,
+    flexShrink: 0,
   },
   categoryScrollContainer: {
     paddingHorizontal: 12,
@@ -2075,6 +2117,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#DBEAFE',
+    flexShrink: 0,
   },
   storeFilterText: {
     fontSize: 13,

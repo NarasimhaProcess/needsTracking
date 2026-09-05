@@ -35,6 +35,11 @@ import LeafletMap from '../components/LeafletMap';
 import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
+import {
+  getPrinterConfig,
+  savePrinterConfig,
+  DEFAULT_PRINTER_CONFIG,
+} from '../services/printerService';
 import { showAlert } from '../utils/alertUtils';
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import {
@@ -106,10 +111,57 @@ const ProfileScreen = ({ navigation }) => {
   const [voiceGender, setVoiceGender] = useState('female');
   const [testingVoice, setTestingVoice] = useState(false);
 
+  // Thermal Receipt & Printer Settings State
+  const [printerConfig, setPrinterConfig] = useState(DEFAULT_PRINTER_CONFIG);
+
   useEffect(() => {
     fetchProfile();
     loadVoicePreference();
+    loadPrinterSettings();
   }, []);
+
+  const loadPrinterSettings = async () => {
+    try {
+      const cfg = await getPrinterConfig();
+      if (cfg) {
+        setPrinterConfig(cfg);
+      }
+    } catch (err) {
+      console.warn('Error loading printer settings in profile:', err);
+    }
+  };
+
+  const handleTogglePrintHeader = async (val) => {
+    try {
+      const updated = { ...printerConfig, printHeader: val };
+      setPrinterConfig(updated);
+      await savePrinterConfig(updated);
+      showAlert(
+        'Receipt Header Updated',
+        val
+          ? 'Receipt Header (Store Name, Address, GSTIN) will be printed.'
+          : 'Receipt Header is turned OFF (uncheck) to save paper.'
+      );
+    } catch (err) {
+      console.warn('Error updating printHeader:', err);
+    }
+  };
+
+  const handleToggleDayWiseNumber = async (val) => {
+    try {
+      const updated = { ...printerConfig, printDayWiseNumber: val };
+      setPrinterConfig(updated);
+      await savePrinterConfig(updated);
+      showAlert(
+        'Day-wise Order Number',
+        val
+          ? 'Day-wise Order Number (Token #) is now REQUIRED and will appear on receipts.'
+          : 'Day-wise Order Number is now turned off on receipts.'
+      );
+    } catch (err) {
+      console.warn('Error updating printDayWiseNumber:', err);
+    }
+  };
 
   const loadVoicePreference = async () => {
     try {
@@ -1989,12 +2041,62 @@ const ProfileScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={[styles.button, styles.printerButton]}
-        onPress={() => setShowPrinterSettings(true)}
-      >
-        <Text style={styles.buttonText}>Thermal Printer Settings</Text>
-      </TouchableOpacity>
+      {/* Receipt & Thermal Printer Settings Card */}
+      <View style={styles.printerSectionCard}>
+        <View style={styles.printerHeaderRow}>
+          <Icon name="print" size={18} color="#007AFF" style={{ marginRight: 8 }} />
+          <Text style={styles.printerSectionTitle}>Receipt & Thermal Printer Settings</Text>
+        </View>
+        <Text style={styles.printerSectionSub}>
+          Configure thermal POS printer layout, uncheck header part, and require day-wise token number.
+        </Text>
+
+        {/* Toggle 1: Print Receipt Header (Uncheck header part) */}
+        <View style={styles.printerToggleRow}>
+          <View style={{ flex: 1, marginRight: 12 }}>
+            <Text style={styles.printerToggleTitle}>Print Receipt Header</Text>
+            <Text style={styles.printerToggleSub}>
+              Include Store Name, Address, Contact, and GSTIN. Uncheck this option to skip the header part and save paper.
+            </Text>
+          </View>
+          <Switch
+            value={printerConfig.printHeader !== false}
+            onValueChange={handleTogglePrintHeader}
+            trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+            thumbColor={printerConfig.printHeader !== false ? '#007AFF' : '#F1F5F9'}
+          />
+        </View>
+
+        <View style={styles.printerDivider} />
+
+        {/* Toggle 2: Required Daywise Number */}
+        <View style={styles.printerToggleRow}>
+          <View style={{ flex: 1, marginRight: 12 }}>
+            <Text style={styles.printerToggleTitle}>Required Day-wise Order Number</Text>
+            <Text style={styles.printerToggleSub}>
+              Prominently print Day-wise Order Number (Daily Token #) on every receipt for kitchen and dispatch.
+            </Text>
+          </View>
+          <Switch
+            value={printerConfig.printDayWiseNumber !== false}
+            onValueChange={handleToggleDayWiseNumber}
+            trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+            thumbColor={printerConfig.printDayWiseNumber !== false ? '#007AFF' : '#F1F5F9'}
+          />
+        </View>
+
+        {/* Full Printer Setup Modal Button */}
+        <TouchableOpacity
+          style={styles.printerSetupBtn}
+          onPress={() => setShowPrinterSettings(true)}
+          activeOpacity={0.8}
+        >
+          <Icon name="sliders" size={15} color="#007AFF" style={{ marginRight: 8 }} />
+          <Text style={styles.printerSetupBtnText}>
+            Full Thermal Printer Setup (Bluetooth, 58mm/80mm, Feed, Test Print)
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <TouchableOpacity
         style={styles.button}
@@ -2055,7 +2157,10 @@ const ProfileScreen = ({ navigation }) => {
       {/* Printer Settings Modal */}
       <PrinterSettingsModal
         visible={showPrinterSettings}
-        onClose={() => setShowPrinterSettings(false)}
+        onClose={() => {
+          setShowPrinterSettings(false);
+          loadPrinterSettings();
+        }}
       />
 
       {/* Interactive Map Area Search & Location Picker Modal */}
@@ -3333,6 +3438,73 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   voiceTestButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  printerSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  printerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  printerSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  printerSectionSub: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  printerToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+  },
+  printerToggleTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 3,
+  },
+  printerToggleSub: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 16,
+  },
+  printerDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 4,
+  },
+  printerSetupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 10,
+    paddingVertical: 12,
+    marginTop: 12,
+  },
+  printerSetupBtnText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#007AFF',

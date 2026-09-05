@@ -1,12 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Linking } from 'react-native';
+import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Linking, Platform } from 'react-native';
 import { getOrders, deleteOrder, supabase } from '../services/supabase';
 import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import DateTimePickerModal from "react-native-modal-datetime-picker";
+import UniversalDateTimePicker from '../components/UniversalDateTimePicker';
 import { showAlert } from '../utils/alertUtils';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const OrderListScreen = ({ navigation, route }) => {
+  const { sellerId, sellerName, customerId } = route?.params || {};
   const [orders, setOrders] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [sectionedOrders, setSectionedOrders] = useState([]);
@@ -84,9 +86,22 @@ const OrderListScreen = ({ navigation, route }) => {
     }
 
     if (selectedDate) {
-      filtered = filtered.filter(order =>
-        new Date(order.created_at).toLocaleDateString() === new Date(selectedDate).toLocaleDateString()
-      );
+      const selDate = new Date(selectedDate);
+      const selYear = selDate.getFullYear();
+      const selMonth = selDate.getMonth();
+      const selDay = selDate.getDate();
+
+      filtered = filtered.filter(order => {
+        const dateStr = order.created_at || order.order_date || order.date;
+        if (!dateStr) return false;
+        const oDate = new Date(dateStr);
+        if (isNaN(oDate.getTime())) return false;
+        return (
+          oDate.getFullYear() === selYear &&
+          oDate.getMonth() === selMonth &&
+          oDate.getDate() === selDay
+        );
+      });
     }
 
     const shopOrders = [];
@@ -192,7 +207,7 @@ const OrderListScreen = ({ navigation, route }) => {
     return (
       <TouchableOpacity
         style={styles.orderItem}
-        onPress={() => navigation.navigate('OrderDetail', { orderId: item.id })}
+        onPress={() => navigation.navigate('OrderDetail', { orderId: item.id, sellerId, sellerName, customerId })}
       >
         <View style={styles.orderHeader}>
           <View style={{ flex: 1 }}>
@@ -221,7 +236,7 @@ const OrderListScreen = ({ navigation, route }) => {
           >
             <Icon name="print" size={20} color="#10B981" style={styles.actionIcon} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id })}>
+          <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id, sellerId, sellerName, customerId })}>
             <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => handleDeleteOrder(item.id)}>
@@ -252,7 +267,12 @@ const OrderListScreen = ({ navigation, route }) => {
   const isGuest = !currentUser && !route.params?.customerId;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+    <View
+      style={[
+        styles.mainContainer,
+        Platform.OS === 'web' && { height: '100%', maxHeight: '100vh', minHeight: 0, overflow: 'hidden' },
+      ]}
+    >
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity
@@ -276,6 +296,8 @@ const OrderListScreen = ({ navigation, route }) => {
             onPress={() => {
               if (navigation.canGoBack()) {
                 navigation.goBack();
+              } else if (sellerId) {
+                navigation.navigate('Catalog', { sellerId, sellerName, customerId });
               } else {
                 navigation.reset({
                   index: 0,
@@ -329,20 +351,73 @@ const OrderListScreen = ({ navigation, route }) => {
                 </TouchableOpacity>
               ))}
             </View>
-            <TouchableOpacity style={styles.datePickerButton} onPress={showDatePicker}>
-              <Icon name="calendar" size={14} color="#007AFF" style={{ marginRight: 8 }} />
-              <Text style={styles.datePickerButtonText}>
-                {selectedDate ? new Date(selectedDate).toLocaleDateString() : 'Filter by Date'}
-              </Text>
+            <View style={styles.dateFilterRow}>
+              <TouchableOpacity
+                style={[styles.datePickerButton, selectedDate && styles.datePickerButtonActive]}
+                onPress={showDatePicker}
+                activeOpacity={0.7}
+              >
+                <Icon
+                  name="calendar"
+                  size={14}
+                  color={selectedDate ? '#007AFF' : '#64748B'}
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={[styles.datePickerButtonText, selectedDate && styles.datePickerButtonTextActive]}>
+                  {selectedDate
+                    ? new Date(selectedDate).toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      })
+                    : 'Filter by Date'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.todayButton,
+                  selectedDate &&
+                    new Date(selectedDate).toDateString() === new Date().toDateString() &&
+                    styles.todayButtonActive,
+                ]}
+                onPress={() => {
+                  if (selectedDate && new Date(selectedDate).toDateString() === new Date().toDateString()) {
+                    setSelectedDate(null);
+                  } else {
+                    setSelectedDate(new Date());
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.todayButtonText,
+                    selectedDate &&
+                      new Date(selectedDate).toDateString() === new Date().toDateString() &&
+                      styles.todayButtonTextActive,
+                  ]}
+                >
+                  Today
+                </Text>
+              </TouchableOpacity>
+
               {selectedDate && (
-                <TouchableOpacity onPress={() => setSelectedDate(null)} style={{ marginLeft: 8 }}>
-                  <Icon name="times-circle" size={16} color="#94a3b8" />
+                <TouchableOpacity
+                  onPress={() => setSelectedDate(null)}
+                  style={styles.clearDateBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Clear Date Filter"
+                >
+                  <Icon name="times-circle" size={18} color="#EF4444" />
                 </TouchableOpacity>
               )}
-            </TouchableOpacity>
-            <DateTimePickerModal
+            </View>
+
+            <UniversalDateTimePicker
               isVisible={isDatePickerVisible}
               mode="date"
+              date={selectedDate ? new Date(selectedDate) : new Date()}
               onConfirm={handleConfirmDate}
               onCancel={hideDatePicker}
             />
@@ -361,7 +436,7 @@ const OrderListScreen = ({ navigation, route }) => {
               <Text style={styles.noOrdersSubtext}>Looks like you haven't placed any orders matching this filter.</Text>
               <TouchableOpacity
                 style={styles.browseButton}
-                onPress={() => navigation.navigate('Catalog')}
+                onPress={() => navigation.navigate('Catalog', { sellerId, sellerName, customerId })}
               >
                 <Text style={styles.browseButtonText}>Browse Catalog</Text>
               </TouchableOpacity>
@@ -376,18 +451,46 @@ const OrderListScreen = ({ navigation, route }) => {
               )}
               onRefresh={handleRefresh}
               refreshing={refreshing}
-              style={{ flex: 1 }}
+              style={[
+                styles.list,
+                Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch', minHeight: 0 } : null,
+              ]}
               showsVerticalScrollIndicator={true}
-              contentContainerStyle={[styles.listContent, { flexGrow: 1, paddingBottom: 40 }]}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled={true}
+              contentContainerStyle={[styles.listContent, { flexGrow: 1, paddingBottom: 90 }]}
             />
           )}
         </>
       )}
+
+      {/* Bottom Navigation Footer (Store, Cart, Orders) */}
+      <StoreNavigationFooter
+        activeTab="orders"
+        navigation={navigation}
+        route={route}
+        sellerId={sellerId}
+        sellerName={sellerName}
+        customerId={customerId}
+        forceShow={true}
+      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  mainContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+  list: {
+    flex: 1,
+    width: '100%',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -396,6 +499,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
+    flexShrink: 0,
   },
   headerTitle: {
     fontSize: 20,
@@ -411,6 +515,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    flexShrink: 0,
   },
   searchInput: {
     backgroundColor: '#F1F5F9',
@@ -451,7 +556,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
   },
+  dateFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   datePickerButton: {
+    flex: 1,
     flexDirection: 'row',
     backgroundColor: '#F1F5F9',
     padding: 10,
@@ -461,10 +572,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  datePickerButtonActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
   datePickerButtonText: {
     fontSize: 14,
     color: '#1E293B',
     fontWeight: '500',
+  },
+  datePickerButtonTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  todayButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  todayButtonActive: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  todayButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  todayButtonTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  clearDateBtn: {
+    padding: 10,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   totalAmountContainer: {
     padding: 10,
@@ -472,6 +623,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#DBEAFE',
+    flexShrink: 0,
   },
   totalAmountText: {
     fontSize: 15,
