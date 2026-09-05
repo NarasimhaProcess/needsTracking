@@ -2,7 +2,12 @@ import 'react-native-get-random-values'; // Polyfill for crypto.getRandomValues
 import React, { useState, useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Location from 'expo-location';
-import { registerForPushNotificationsAsync } from './src/services/notificationService';
+import {
+  registerForPushNotificationsAsync,
+  schedulePushNotification,
+  setGlobalNotificationClickHandler,
+} from './src/services/notificationService';
+import NotificationBanner from './src/components/NotificationBanner';
 import {
   View,
   StyleSheet,
@@ -229,34 +234,47 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS === 'web') return; // Push notifications handled differently on web
+    // Register global notification tap navigation (works for web browser notifications & in-app banner)
+    setGlobalNotificationClickHandler((data) => {
+      console.log('[App] Global notification clicked with data:', data);
+      if (data?.orderId) {
+        navigationRef.current?.navigate('OrderDetail', { orderId: data.orderId });
+      } else if (data?.productId) {
+        navigationRef.current?.navigate('ProductDetailScreen', { productId: data.productId });
+      }
+    });
 
+    // Register notifications across Web and Native
     registerForPushNotificationsAsync()
       .then(token => {
-        if (token) setExpoPushToken(token);
+        if (token && typeof token === 'string' && token.startsWith('ExponentPushToken')) {
+          setExpoPushToken(token);
+        }
       })
       .catch(err => {
         console.warn('Push notification initialization error:', err);
       });
 
-    try {
-      notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-        setNotification(notification);
-      });
+    if (Platform.OS !== 'web') {
+      try {
+        notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+          setNotification(notification);
+        });
 
-      responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-        const data = response.notification.request.content.data;
-        console.log("Notification tapped with data: ", data);
+        responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+          const data = response.notification.request.content.data;
+          console.log("Notification tapped with data: ", data);
 
-        // Navigate based on the data received
-        if (data?.orderId) {
-          navigationRef.current?.navigate('OrderDetail', { orderId: data.orderId });
-        } else if (data?.productId) {
-          navigationRef.current?.navigate('ProductDetailScreen', { productId: data.productId });
-        }
-      });
-    } catch (notifErr) {
-      console.warn('Notification listener error:', notifErr);
+          // Navigate based on the data received
+          if (data?.orderId) {
+            navigationRef.current?.navigate('OrderDetail', { orderId: data.orderId });
+          } else if (data?.productId) {
+            navigationRef.current?.navigate('ProductDetailScreen', { productId: data.productId });
+          }
+        });
+      } catch (notifErr) {
+        console.warn('Notification listener error:', notifErr);
+      }
     }
 
     return () => {
@@ -322,21 +340,89 @@ export default function App() {
     savePushToken();
   }, [expoPushToken, session]);
 
-  // Web & In-App Realtime Order Voice Notification listener
+  // Web & In-App Realtime Order Voice & Message Notification listener
   useEffect(() => {
     if (!session?.user?.id) return;
 
+    const channelName = `app_realtime_orders:${session.user.id}:${Date.now()}`;
     const channel = supabase
-      .channel(`app_realtime_orders:${session.user.id}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'orders' },
         (payload) => {
-          console.log('[App] Realtime order notification received:', payload.new);
+          console.log('[App] Realtime order INSERT received:', payload.new);
+          const order = payload.new;
+          if (!order) return;
+
+          const rawId = order.id || '';
+          const orderNum = order.order_number || (rawId ? String(rawId).substring(0, 8).toUpperCase() : '');
+          const amountStr = order.total_amount !== undefined ? ` (₹${order.total_amount})` : '';
+
+          let title = '🎉 New Order Received!';
+          let body = `Order #${orderNum}${amountStr} has been placed.`;
+
+          if (order.user_id === session.user.id) {
+            title = '🎉 Order Placed Successfully!';
+            body = `Your order #${orderNum}${amountStr} is confirmed.`;
+          } else if (order.order_type !== 'shop-order') {
+            title = '🛵 New Delivery Order!';
+            body = `Order #${orderNum}${amountStr} is ready for delivery.`;
+          }
+
+          // Trigger In-App message banner + browser notification + chime
+          schedulePushNotification(title, body, { orderId: order.id, type: 'new_order' });
+
+          // Also announce via Voice TTS
           try {
-            announceNewOrder(payload.new);
+            announceNewOrder(order);
           } catch (e) {
             console.warn('[App] Realtime voice announcement error:', e);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'orders' },
+        (payload) => {
+          console.log('[App] Realtime order UPDATE received:', payload);
+          const oldOrder = payload.old || {};
+          const newOrder = payload.new || {};
+          if (!newOrder.id) return;
+
+          const orderNum = newOrder.order_number || String(newOrder.id).substring(0, 8).toUpperCase();
+
+          // 1. Delivery Partner Assigned
+          if (newOrder.delivery_manager_id && oldOrder.delivery_manager_id !== newOrder.delivery_manager_id) {
+            const isAssignedToMe = newOrder.delivery_manager_id === session.user.id;
+            const title = isAssignedToMe ? '🛵 Delivery Task Assigned!' : '🛵 Delivery Partner Assigned!';
+            const body = isAssignedToMe
+              ? `Order #${orderNum} has been assigned to you for delivery.`
+              : `A delivery partner has accepted Order #${orderNum} and is on the way.`;
+
+            schedulePushNotification(title, body, { orderId: newOrder.id, type: 'delivery_assigned' });
+          }
+          // 2. Order Status Changed
+          else if (oldOrder.status && newOrder.status && oldOrder.status !== newOrder.status) {
+            let title = '📦 Order Status Updated';
+            let body = `Order #${orderNum} status changed to ${newOrder.status}.`;
+
+            const st = (newOrder.status || '').toLowerCase();
+            if (st.includes('out for delivery') || st.includes('out_for_delivery')) {
+              title = '🚚 Out for Delivery!';
+              body = `Order #${orderNum} is on the way. Track live on the map!`;
+            } else if (st.includes('completed') || st.includes('delivered')) {
+              title = '✅ Order Delivered!';
+              body = `Order #${orderNum} has been delivered successfully.`;
+            } else if (st.includes('cancel')) {
+              title = '❌ Order Cancelled';
+              body = `Order #${orderNum} has been cancelled.`;
+            } else if (st.includes('processing')) {
+              title = '🍳 Order In Preparation';
+              body = `Order #${orderNum} is now being prepared.`;
+            }
+
+            schedulePushNotification(title, body, { orderId: newOrder.id, type: 'status_update' });
           }
         }
       )
@@ -358,43 +444,52 @@ export default function App() {
 
   return (
     <CartProvider>
-      <NavigationContainer ref={navigationRef}>
-        <StatusBar style="auto" />
-        <Stack.Navigator initialRouteName="SellersMap" screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="SellersMap" component={SellersMapScreen} />
-          <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
-          <Stack.Screen name="Catalog" component={CatalogScreen} />
-          <Stack.Screen name="BuyerAuth" component={BuyerAuthScreen} />
-          <Stack.Screen name="BuyerLogin" component={BuyerLoginScreen} />
-          <Stack.Screen name="BuyerSignup" component={BuyerSignupScreen} />
-          <Stack.Screen name="Cart" component={CartScreen} />
-          <Stack.Screen name="Checkout" component={CheckoutScreen} />
-          <Stack.Screen name="OrderConfirmation" component={OrderConfirmationScreen} />
-          <Stack.Screen name="UpiQr" component={UpiQrScreen} />
-          <Stack.Screen name="OrderList" component={OrderListScreen} />
-          <Stack.Screen name="TopProducts" component={TopProductsScreen} />
-          <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
-          <Stack.Screen name="OrderEdit" component={OrderEditScreen} />
-          <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="Signup" component={SignupScreen} />
-          <Stack.Screen name="SellerLogin" component={SellerLoginScreen} />
-          <Stack.Screen name="ProductMapScreen" component={ProductMapScreen} />
-          <Stack.Screen name="DeliveryManagerLogin" component={DeliveryManagerLoginScreen} />
-          <Stack.Screen name="DeliveryManagerDashboard" component={DeliveryManagerDashboard} />
-          <Stack.Screen name="DeliveryManagerSignup" component={DeliveryManagerSignupScreen} />
-          <Stack.Screen name="AdminMap" component={AdminMapScreen} />
-          <Stack.Screen name="CustomerDamage" component={CustomerDamageScreen} />
-          <Stack.Screen name="DamageScreen" component={CustomerDamageScreen} />
-          {/* ProductTabNavigator will handle Product, Inventory, Profile, Invoice screens */}
-          <Stack.Screen name="ProductTabs" component={ProductTabNavigator} initialParams={{ session }} />
-          {console.log('App.js: Session passed to ProductTabs:', session)}
-        </Stack.Navigator>
-      </NavigationContainer>
+      <View style={styles.rootContainer}>
+        <NavigationContainer ref={navigationRef}>
+          <StatusBar style="auto" />
+          <Stack.Navigator initialRouteName="SellersMap" screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="SellersMap" component={SellersMapScreen} />
+            <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
+            <Stack.Screen name="Catalog" component={CatalogScreen} />
+            <Stack.Screen name="BuyerAuth" component={BuyerAuthScreen} />
+            <Stack.Screen name="BuyerLogin" component={BuyerLoginScreen} />
+            <Stack.Screen name="BuyerSignup" component={BuyerSignupScreen} />
+            <Stack.Screen name="Cart" component={CartScreen} />
+            <Stack.Screen name="Checkout" component={CheckoutScreen} />
+            <Stack.Screen name="OrderConfirmation" component={OrderConfirmationScreen} />
+            <Stack.Screen name="UpiQr" component={UpiQrScreen} />
+            <Stack.Screen name="OrderList" component={OrderListScreen} />
+            <Stack.Screen name="TopProducts" component={TopProductsScreen} />
+            <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
+            <Stack.Screen name="OrderEdit" component={OrderEditScreen} />
+            <Stack.Screen name="Login" component={LoginScreen} />
+            <Stack.Screen name="Signup" component={SignupScreen} />
+            <Stack.Screen name="SellerLogin" component={SellerLoginScreen} />
+            <Stack.Screen name="ProductMapScreen" component={ProductMapScreen} />
+            <Stack.Screen name="DeliveryManagerLogin" component={DeliveryManagerLoginScreen} />
+            <Stack.Screen name="DeliveryManagerDashboard" component={DeliveryManagerDashboard} />
+            <Stack.Screen name="DeliveryManagerSignup" component={DeliveryManagerSignupScreen} />
+            <Stack.Screen name="AdminMap" component={AdminMapScreen} />
+            <Stack.Screen name="CustomerDamage" component={CustomerDamageScreen} />
+            <Stack.Screen name="DamageScreen" component={CustomerDamageScreen} />
+            {/* ProductTabNavigator will handle Product, Inventory, Profile, Invoice screens */}
+            <Stack.Screen name="ProductTabs" component={ProductTabNavigator} initialParams={{ session }} />
+            {console.log('App.js: Session passed to ProductTabs:', session)}
+          </Stack.Navigator>
+        </NavigationContainer>
+        <NotificationBanner navigationRef={navigationRef} />
+      </View>
     </CartProvider>
   );
 }
 
 const styles = StyleSheet.create({
+  rootContainer: {
+    flex: 1,
+    position: 'relative',
+    height: '100%',
+    width: '100%',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',

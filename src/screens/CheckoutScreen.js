@@ -418,17 +418,15 @@ const CheckoutScreen = ({ navigation, route }) => {
             },
           ]
         );
+      } else if (createdOrders.length === 1) {
+        navigation.navigate('OrderConfirmation', {
+          order: createdOrders[0],
+          sellerId: resolvedSellerId,
+          sellerName: resolvedSellerName,
+          customerId: resolvedCustomerId,
+        });
       } else {
-        showAlert(
-          '🎉 Order Placed!',
-          'Your order has been placed successfully.',
-          [
-            {
-              text: 'View My Orders',
-              onPress: () => navigation.navigate('OrderList'),
-            },
-          ]
-        );
+        navigation.navigate('OrderList');
       }
     } catch (err) {
       setLoading(false);

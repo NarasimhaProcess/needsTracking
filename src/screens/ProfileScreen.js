@@ -29,7 +29,13 @@ import {
   extractStoreSettings,
   embedStoreSettings,
 } from '../services/supabase';
-import { schedulePushNotification, registerForPushNotificationsAsync } from '../services/notificationService';
+import {
+  schedulePushNotification,
+  registerForPushNotificationsAsync,
+  getWebNotificationPermission,
+  requestWebNotificationPermission,
+  isWebNotificationSupported,
+} from '../services/notificationService';
 import * as Location from 'expo-location';
 import LeafletMap from '../components/LeafletMap';
 import * as ImagePicker from 'expo-image-picker';
@@ -111,13 +117,48 @@ const ProfileScreen = ({ navigation }) => {
   const [voiceGender, setVoiceGender] = useState('female');
   const [testingVoice, setTestingVoice] = useState(false);
 
-  // Thermal Receipt & Printer Settings State
-  const [printerConfig, setPrinterConfig] = useState(DEFAULT_PRINTER_CONFIG);
+  // Web Notification Permission State
+  const [webNotifPermission, setWebNotifPermission] = useState(
+    Platform.OS === 'web' ? getWebNotificationPermission() : 'n/a'
+  );
+
+  const handleEnableWebNotifications = async () => {
+    try {
+      const perm = await requestWebNotificationPermission();
+      setWebNotifPermission(perm);
+      if (perm === 'granted') {
+        showAlert('✅ Notifications Enabled', 'Browser notifications are now active. You will receive live alerts for orders and updates.');
+        await schedulePushNotification('🔔 Notifications Active!', 'You will now receive instant order updates on this device.');
+      } else if (perm === 'denied') {
+        showAlert('❌ Permission Denied', 'Notifications were blocked in your browser. Please click the site settings or lock icon in your address bar to allow notifications.');
+      }
+    } catch (err) {
+      console.warn('Error enabling web notifications:', err);
+    }
+  };
+
+  const handleSendTestNotification = async () => {
+    try {
+      if (Platform.OS === 'web' && webNotifPermission !== 'granted') {
+        const perm = await requestWebNotificationPermission();
+        setWebNotifPermission(perm);
+      }
+      await schedulePushNotification(
+        '🔔 Test Order Notification',
+        'This is a real-time notification message test! Web and mobile notifications are working.'
+      );
+    } catch (err) {
+      console.warn('Send test notification error:', err);
+    }
+  };
 
   useEffect(() => {
     fetchProfile();
     loadVoicePreference();
     loadPrinterSettings();
+    if (Platform.OS === 'web') {
+      setWebNotifPermission(getWebNotificationPermission());
+    }
   }, []);
 
   const loadPrinterSettings = async () => {
@@ -2098,9 +2139,34 @@ const ProfileScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
+      {Platform.OS === 'web' && (
+        <View style={styles.webNotifCard}>
+          <View style={styles.webNotifHeader}>
+            <Icon name="bell" size={16} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={styles.webNotifTitle}>Web Browser Notifications</Text>
+          </View>
+          <Text style={styles.webNotifDesc}>
+            {webNotifPermission === 'granted'
+              ? '✅ Active: You will receive real-time order alerts and popups on web.'
+              : webNotifPermission === 'denied'
+              ? '❌ Blocked: Notifications blocked. Allow notifications in browser address bar settings to get alerts.'
+              : '⚠️ Not Enabled: Allow browser notifications to get alerts even when working in other tabs.'}
+          </Text>
+          {webNotifPermission !== 'granted' && (
+            <TouchableOpacity
+              style={styles.enableNotifBtn}
+              onPress={handleEnableWebNotifications}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.enableNotifBtnText}>Enable Browser Notifications</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       <TouchableOpacity
         style={styles.button}
-        onPress={() => schedulePushNotification('Test Title', 'This is a test notification')}
+        onPress={handleSendTestNotification}
       >
         <Text style={styles.buttonText}>Send Test Notification</Text>
       </TouchableOpacity>
@@ -3508,6 +3574,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#007AFF',
+  },
+  webNotifCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  webNotifHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  webNotifTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  webNotifDesc: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  enableNotifBtn: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  enableNotifBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 
