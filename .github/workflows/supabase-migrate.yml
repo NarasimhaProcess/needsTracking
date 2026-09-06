@@ -1,65 +1,119 @@
 name: Supabase Complete Cross-Org Sync (DB & Edge Functions)
 
 on:
-  workflow_dispatch: # Allows you to manually trigger the sync from the GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   migrate-and-deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
-    # 1. Pull your codebase (contains your local edge functions folder)
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      # 1. Checkout repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    # 2. Install a stable version of the Supabase CLI environment
-    - name: Setup Supabase CLI
-      uses: supabase/setup-cli@v1
-      with:
-        version: '2.116.0' # Upgraded from 1.200.0 to fix pooler SASL authentication compatibility
+      # 2. Install Supabase CLI
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.116.0"
 
-    # 3. Authenticate the CLI session using your encrypted token secret
-    - name: Authenticate Supabase CLI
-      run: |
-        supabase login --token "${{ secrets.SUPABASE_ACCESS_TOKEN }}"
+      # 3. Authenticate Supabase CLI
+      - name: Authenticate Supabase CLI
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -e
+          supabase login --token "$SUPABASE_ACCESS_TOKEN"
 
-    # 4. Pull down the database structural layout from User A (Source)
-    - name: Pull Schema from Source
-      env:
-        SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-      run: |
-        # Links using the Source Project Ref and Password
-        supabase link --project-ref "${{ vars.SOURCE_PROJECT_REF }}" --password "$SUPABASE_DB_PASSWORD"
-        
-        # Extracts structural configurations into memory layout
-        supabase db pull
+      # 4. Pull database schema from SOURCE project
+      - name: Pull Schema from Source
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
+          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+        run: |
+          set -e
 
-    # 5. Clear the local cache link so the runner switches contexts cleanly
-    - name: Reset Local Link Cache
-      run: rm -rf .supabase/
+          echo "Linking to source project: $SOURCE_PROJECT_REF"
 
-    # 6. Connect to User B (Target) and push the schema structure
-    - name: Apply Schema to Target Project
-      env:
-        SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
-      run: |
-        # Links using Target Project Ref and Target Password
-        supabase link --project-ref "${{ vars.TARGET_PROJECT_REF }}" --password "$SUPABASE_DB_PASSWORD"
-        
-        # Pushes your database tables, schemas, and configurations
-        supabase db push
-        
-        # Wipe structural caches post-sync to keep workspace clean
-        rm -rf .supabase/ 
+          rm -rf .supabase
 
-    # 7. Host and deploy all local Edge Functions directly to User B's project
-    - name: Host and Deploy Edge Functions
-      run: |
-        # Loops through and deploys every function directory inside your repository
-        for dir in supabase/functions/*/; do
-          if [ -d "$dir" ]; then
-            func_name=$(basename "$dir")
-            echo "Deploying edge function: $func_name"
-            supabase functions deploy "$func_name" --project-ref "${{ vars.TARGET_PROJECT_REF }}"
+          supabase link \
+            --project-ref "$SOURCE_PROJECT_REF" \
+            --password "$SUPABASE_DB_PASSWORD"
+
+          echo "Pulling schema from source..."
+
+          supabase db pull
+
+          echo "Source schema pulled successfully."
+
+      # 5. Remove source project link
+      - name: Reset Supabase Link
+        run: |
+          rm -rf .supabase
+
+      # 6. Link to TARGET project
+      - name: Link Target Project
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
+          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
+        run: |
+          set -e
+
+          echo "Linking to target project: $TARGET_PROJECT_REF"
+
+          supabase link \
+            --project-ref "$TARGET_PROJECT_REF" \
+            --password "$SUPABASE_DB_PASSWORD"
+
+          echo "Target project linked successfully."
+
+      # 7. Push database schema to TARGET project
+      - name: Push Schema to Target
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
+        run: |
+          set -e
+
+          echo "Pushing database migrations to target..."
+
+          supabase db push
+
+          echo "Database sync completed successfully."
+
+      # 8. Deploy Edge Functions to TARGET project
+      - name: Deploy Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
+        run: |
+          set -e
+
+          if [ ! -d "supabase/functions" ]; then
+            echo "No supabase/functions directory found."
+            exit 0
           fi
-        done
+
+          for dir in supabase/functions/*/; do
+            if [ -d "$dir" ]; then
+              func_name=$(basename "$dir")
+
+              echo "----------------------------------------"
+              echo "Deploying edge function: $func_name"
+              echo "Target project: $TARGET_PROJECT_REF"
+              echo "----------------------------------------"
+
+              supabase functions deploy "$func_name" \
+                --project-ref "$TARGET_PROJECT_REF"
+            fi
+          done
+
+          echo "All Edge Functions deployed successfully."
+
+      # 9. Cleanup
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf .supabase
+          echo "Cleanup completed."
