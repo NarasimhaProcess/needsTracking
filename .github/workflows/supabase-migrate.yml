@@ -64,17 +64,40 @@ jobs:
           echo "Source project linked successfully."
 
       # ============================================================
-      # 5. Check SOURCE migration history
+      # 5. Diagnose SOURCE migration history
       # ============================================================
-      - name: Check Source Migration History
+      - name: Diagnose Source Migration History
         run: |
           set -e
 
           echo "========================================"
-          echo "SOURCE migration history"
+          echo "SOURCE MIGRATION DIAGNOSTICS"
           echo "========================================"
 
+          echo ""
+          echo "----------------------------------------"
+          echo "Local migration files"
+          echo "----------------------------------------"
+
+          if [ -d "supabase/migrations" ]; then
+            find supabase/migrations \
+              -maxdepth 1 \
+              -type f \
+              -printf "%f\n" \
+              | sort
+          else
+            echo "No supabase/migrations directory found."
+          fi
+
+          echo ""
+          echo "----------------------------------------"
+          echo "Remote migration history"
+          echo "----------------------------------------"
+
           supabase migration list
+
+          echo ""
+          echo "Migration diagnostic completed."
 
       # ============================================================
       # 6. Pull SOURCE database schema
@@ -91,6 +114,7 @@ jobs:
 
           supabase db pull
 
+          echo ""
           echo "Source schema pulled successfully."
 
       # ============================================================
@@ -103,13 +127,17 @@ jobs:
           echo "========================================"
 
           if [ -d "supabase/migrations" ]; then
-            ls -lah supabase/migrations/
+            find supabase/migrations \
+              -maxdepth 1 \
+              -type f \
+              -printf "%f\n" \
+              | sort
           else
             echo "No supabase/migrations directory found."
           fi
 
       # ============================================================
-      # 8. Reset SOURCE Supabase link
+      # 8. Reset SOURCE link
       # ============================================================
       - name: Reset Source Link
         run: |
@@ -165,7 +193,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "TARGET migration history"
+          echo "TARGET MIGRATION HISTORY"
           echo "========================================"
 
           supabase migration list
@@ -185,6 +213,7 @@ jobs:
 
           supabase db push
 
+          echo ""
           echo "Database synchronization completed successfully."
 
       # ============================================================
@@ -212,46 +241,3 @@ jobs:
           for dir in supabase/functions/*/; do
 
             if [ -d "$dir" ]; then
-
-              func_name=$(basename "$dir")
-
-              # Skip shared code directory
-              if [ "$func_name" = "_shared" ]; then
-                echo "Skipping _shared directory."
-                continue
-              fi
-
-              found_functions=true
-
-              echo "----------------------------------------"
-              echo "Deploying Edge Function: $func_name"
-              echo "----------------------------------------"
-
-              supabase functions deploy "$func_name" \
-                --project-ref "$TARGET_PROJECT_REF"
-
-              echo "Successfully deployed: $func_name"
-
-            fi
-
-          done
-
-          if [ "$found_functions" = false ]; then
-            echo "No Edge Functions found."
-          fi
-
-          echo "========================================"
-          echo "Edge Function deployment completed."
-          echo "========================================"
-
-      # ============================================================
-      # 14. Cleanup
-      # ============================================================
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -rf .supabase
-
-          echo "========================================"
-          echo "Cleanup completed."
-          echo "========================================"
