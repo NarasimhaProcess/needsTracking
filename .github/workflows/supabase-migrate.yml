@@ -12,11 +12,11 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # 2. Install a stable, locked version of the Supabase CLI environment
+    # 2. Install a stable version of the Supabase CLI environment
     - name: Setup Supabase CLI
       uses: supabase/setup-cli@v1
       with:
-        version: '1.200.0' # Pinned to a stable release to resolve edge-runtime errors
+        version: '2.116.0' # Upgraded from 1.200.0 to fix pooler SASL authentication compatibility
 
     # 3. Authenticate the CLI session using your encrypted token secret
     - name: Authenticate Supabase CLI
@@ -25,9 +25,11 @@ jobs:
 
     # 4. Pull down the database structural layout from User A (Source)
     - name: Pull Schema from Source
+      env:
+        SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
       run: |
-        # Links using the Project Ref from your Variables tab
-        supabase link --project-ref "${{ vars.SOURCE_PROJECT_REF }}"
+        # Links using the Source Project Ref and Password
+        supabase link --project-ref "${{ vars.SOURCE_PROJECT_REF }}" --password "$SUPABASE_DB_PASSWORD"
         
         # Extracts structural configurations into memory layout
         supabase db pull
@@ -38,9 +40,11 @@ jobs:
 
     # 6. Connect to User B (Target) and push the schema structure
     - name: Apply Schema to Target Project
+      env:
+        SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
       run: |
-        # Links using Target Project Ref from Variables and Password from Secrets
-        supabase link --project-ref "${{ vars.TARGET_PROJECT_REF }}" -p "${{ secrets.TARGET_DB_PASSWORD }}"
+        # Links using Target Project Ref and Target Password
+        supabase link --project-ref "${{ vars.TARGET_PROJECT_REF }}" --password "$SUPABASE_DB_PASSWORD"
         
         # Pushes your database tables, schemas, and configurations
         supabase db push
