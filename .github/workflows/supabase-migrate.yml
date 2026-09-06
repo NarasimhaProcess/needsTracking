@@ -24,22 +24,24 @@ jobs:
           version: "2.116.0"
 
       # ============================================================
-      # 3. Authenticate Supabase CLI
+      # 3. Authenticate SOURCE Supabase user
       # ============================================================
-      - name: Authenticate Supabase CLI
+      - name: Authenticate Source Supabase Account
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SOURCE_SUPABASE_ACCESS_TOKEN: ${{ secrets.SOURCE_SUPABASE_ACCESS_TOKEN }}
         run: |
           set -e
 
-          echo "Authenticating Supabase CLI..."
+          echo "========================================"
+          echo "Authenticating SOURCE Supabase account"
+          echo "========================================"
 
-          supabase login --token "$SUPABASE_ACCESS_TOKEN"
+          supabase login --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
 
-          echo "Supabase CLI authentication successful."
+          echo "Source authentication successful."
 
       # ============================================================
-      # 4. Connect to SOURCE project
+      # 4. Link SOURCE project
       # ============================================================
       - name: Link Source Project
         env:
@@ -69,41 +71,13 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Checking source migration history"
+          echo "SOURCE migration history"
           echo "========================================"
 
-          supabase migration list || true
+          supabase migration list
 
       # ============================================================
-      # 6. Repair stale migration
-      #
-      # IMPORTANT:
-      # This marks migration 20260906020225 as reverted.
-      #
-      # Only keep this step if this migration is confirmed to be
-      # stale/obsolete in the SOURCE database.
-      # ============================================================
-      - name: Repair Source Migration History
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-        run: |
-          set -e
-
-          MIGRATION_ID="20260906020225"
-
-          echo "========================================"
-          echo "Repairing migration history"
-          echo "Migration: $MIGRATION_ID"
-          echo "========================================"
-
-          supabase migration repair \
-            --status reverted \
-            "$MIGRATION_ID"
-
-          echo "Migration history repaired."
-
-      # ============================================================
-      # 7. Pull current SOURCE schema
+      # 6. Pull SOURCE database schema
       # ============================================================
       - name: Pull Schema from Source
         env:
@@ -112,7 +86,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Pulling schema from SOURCE"
+          echo "Pulling database schema from SOURCE"
           echo "========================================"
 
           supabase db pull
@@ -120,31 +94,48 @@ jobs:
           echo "Source schema pulled successfully."
 
       # ============================================================
-      # 8. Show generated migration files
+      # 7. Show generated migrations
       # ============================================================
       - name: Show Pulled Migrations
         run: |
           echo "========================================"
-          echo "Current migration files"
+          echo "Migration files after db pull"
           echo "========================================"
 
           if [ -d "supabase/migrations" ]; then
-            ls -la supabase/migrations/
+            ls -lah supabase/migrations/
           else
             echo "No supabase/migrations directory found."
           fi
 
       # ============================================================
-      # 9. Remove SOURCE link
+      # 8. Reset SOURCE Supabase link
       # ============================================================
       - name: Reset Source Link
         run: |
           rm -rf .supabase
 
-          echo "Source project link removed."
+          echo "Source Supabase link removed."
 
       # ============================================================
-      # 10. Connect to TARGET project
+      # 9. Authenticate TARGET Supabase user
+      # ============================================================
+      - name: Authenticate Target Supabase Account
+        env:
+          TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "Authenticating TARGET Supabase account"
+          echo "========================================"
+
+          supabase login --token "$TARGET_SUPABASE_ACCESS_TOKEN"
+
+          echo "Target authentication successful."
+
+      # ============================================================
+      # 10. Link TARGET project
       # ============================================================
       - name: Link Target Project
         env:
@@ -174,13 +165,13 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Checking target migration history"
+          echo "TARGET migration history"
           echo "========================================"
 
-          supabase migration list || true
+          supabase migration list
 
       # ============================================================
-      # 12. Push schema/migrations to TARGET
+      # 12. Push database migrations to TARGET
       # ============================================================
       - name: Push Schema to Target
         env:
@@ -189,15 +180,15 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Pushing migrations to TARGET"
+          echo "Pushing database migrations to TARGET"
           echo "========================================"
 
           supabase db push
 
-          echo "Database synchronization completed."
+          echo "Database synchronization completed successfully."
 
       # ============================================================
-      # 13. Deploy Edge Functions
+      # 13. Deploy Edge Functions to TARGET
       # ============================================================
       - name: Deploy Edge Functions
         env:
@@ -216,17 +207,21 @@ jobs:
             exit 0
           fi
 
+          found_functions=false
+
           for dir in supabase/functions/*/; do
 
             if [ -d "$dir" ]; then
 
               func_name=$(basename "$dir")
 
-              # Skip common non-function directories
+              # Skip shared code directory
               if [ "$func_name" = "_shared" ]; then
                 echo "Skipping _shared directory."
                 continue
               fi
+
+              found_functions=true
 
               echo "----------------------------------------"
               echo "Deploying Edge Function: $func_name"
@@ -236,12 +231,17 @@ jobs:
                 --project-ref "$TARGET_PROJECT_REF"
 
               echo "Successfully deployed: $func_name"
+
             fi
 
           done
 
+          if [ "$found_functions" = false ]; then
+            echo "No Edge Functions found."
+          fi
+
           echo "========================================"
-          echo "All Edge Functions deployed successfully."
+          echo "Edge Function deployment completed."
           echo "========================================"
 
       # ============================================================
