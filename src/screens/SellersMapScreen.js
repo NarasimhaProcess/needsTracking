@@ -27,6 +27,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useCart } from "../context/CartContext";
 import { showAlert } from "../utils/alertUtils";
 import { Video, ResizeMode } from "expo-av";
+import StoreNavigationFooter from "../components/StoreNavigationFooter";
 
 const { width } = Dimensions.get("window");
 
@@ -2378,6 +2379,18 @@ export default function SellersMapScreen({ route }) {
           )}
         </View>
       </Modal>
+
+      {/* Persistent Bottom Navigation Footer */}
+      <StoreNavigationFooter
+        activeTab="stores"
+        navigation={navigation}
+        route={route}
+        forceShow={true}
+        onStoresPress={() => {
+          if (showDirectory) setShowDirectory(false);
+          setSearchQuery("");
+        }}
+      />
     </SafeAreaView>
   );
 }

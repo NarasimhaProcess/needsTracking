@@ -11,6 +11,7 @@ const StoreNavigationFooter = ({
   sellerName: propSellerName,
   customerId: propCustomerId,
   onStorePress,
+  onStoresPress,
   forceShow = false,
 }) => {
   const { cart, cartItemCount: contextCartItemCount, user } = useCart();
@@ -68,6 +69,8 @@ const StoreNavigationFooter = ({
     if (tab === activeTab) {
       if (tab === 'store' && onStorePress) {
         onStorePress();
+      } else if (tab === 'stores' && onStoresPress) {
+        onStoresPress();
       }
       return;
     }
@@ -78,7 +81,9 @@ const StoreNavigationFooter = ({
       customerId,
     };
 
-    if (tab === 'store') {
+    if (tab === 'stores') {
+      navigation.navigate('SellersMap', navParams);
+    } else if (tab === 'store') {
       navigation.navigate('Catalog', navParams);
     } else if (tab === 'cart') {
       navigation.navigate('Cart', navParams);
@@ -95,6 +100,19 @@ const StoreNavigationFooter = ({
 
   return (
     <View style={styles.footerContainer}>
+      {/* Stores Tab */}
+      <TouchableOpacity
+        style={[styles.tabButton, activeTab === 'stores' && styles.tabButtonActive]}
+        onPress={() => handleTabPress('stores')}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel="Stores Tab"
+      >
+        <Text style={[styles.tabLabel, activeTab === 'stores' && styles.tabLabelActive]} numberOfLines={1}>
+          Stores
+        </Text>
+      </TouchableOpacity>
+
       {/* Store Tab */}
       <TouchableOpacity
         style={[styles.tabButton, activeTab === 'store' && styles.tabButtonActive]}
@@ -103,7 +121,7 @@ const StoreNavigationFooter = ({
         accessibilityRole="button"
         accessibilityLabel="Store Tab"
       >
-        <Text style={[styles.tabLabel, activeTab === 'store' && styles.tabLabelActive]}>
+        <Text style={[styles.tabLabel, activeTab === 'store' && styles.tabLabelActive]} numberOfLines={1}>
           Store
         </Text>
       </TouchableOpacity>
@@ -117,7 +135,7 @@ const StoreNavigationFooter = ({
         accessibilityLabel="Cart Tab"
       >
         <View style={styles.cartLabelRow}>
-          <Text style={[styles.tabLabel, activeTab === 'cart' && styles.tabLabelActive]}>
+          <Text style={[styles.tabLabel, activeTab === 'cart' && styles.tabLabelActive]} numberOfLines={1}>
             Cart
           </Text>
           {totalCartCount > 0 && (
@@ -136,7 +154,7 @@ const StoreNavigationFooter = ({
         accessibilityRole="button"
         accessibilityLabel="Orders Tab"
       >
-        <Text style={[styles.tabLabel, activeTab === 'orders' && styles.tabLabelActive]}>
+        <Text style={[styles.tabLabel, activeTab === 'orders' && styles.tabLabelActive]} numberOfLines={1}>
           Orders
         </Text>
       </TouchableOpacity>
@@ -149,7 +167,7 @@ const StoreNavigationFooter = ({
         accessibilityRole="button"
         accessibilityLabel="Profile Tab"
       >
-        <Text style={[styles.tabLabel, activeTab === 'profile' && styles.tabLabelActive]}>
+        <Text style={[styles.tabLabel, activeTab === 'profile' && styles.tabLabelActive]} numberOfLines={1}>
           Profile
         </Text>
       </TouchableOpacity>
@@ -167,7 +185,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#E2E8F0',
     paddingVertical: 10,
     paddingBottom: Platform.OS === 'ios' ? 24 : 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.06,
@@ -180,9 +198,9 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
-    marginHorizontal: 4,
-    borderRadius: 10,
+    paddingVertical: 8,
+    marginHorizontal: 2,
+    borderRadius: 8,
     backgroundColor: 'transparent',
   },
   tabButtonActive: {
@@ -191,10 +209,10 @@ const styles = StyleSheet.create({
     borderColor: '#BFDBFE',
   },
   tabLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#64748B',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   tabLabelActive: {
     color: '#007AFF',
@@ -208,16 +226,16 @@ const styles = StyleSheet.create({
   badgePill: {
     backgroundColor: '#10B981',
     borderRadius: 12,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    marginLeft: 6,
-    minWidth: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    marginLeft: 4,
+    minWidth: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
   badgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
   },
 });

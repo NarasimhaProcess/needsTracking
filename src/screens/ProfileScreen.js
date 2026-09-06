@@ -53,12 +53,13 @@ import {
   saveVoiceSettings,
   testVoiceAnnouncement,
 } from '../services/speechService';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
 const MAX_VIDEO_SIZE_MB = 50;
 
-const ProfileScreen = ({ navigation }) => {
+const ProfileScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
@@ -1331,7 +1332,8 @@ const ProfileScreen = ({ navigation }) => {
   const isBuyer = !isAdmin && !isSeller && !isDelivery;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <View style={styles.rootWrapper}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.profileHeaderBox}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {navigation?.canGoBack?.() && (
@@ -2457,17 +2459,35 @@ const ProfileScreen = ({ navigation }) => {
         </SafeAreaView>
       </Modal>
     </ScrollView>
-  );
+
+    {/* Persistent Bottom Navigation Footer */}
+    <StoreNavigationFooter
+      activeTab="profile"
+      navigation={navigation}
+      route={route}
+      forceShow={true}
+    />
+  </View>
+);
 };
 
 const styles = StyleSheet.create({
+  rootWrapper: {
+    flex: 1,
+    height: Platform.OS === 'web' ? '100%' : undefined,
+    maxHeight: Platform.OS === 'web' ? '100vh' : undefined,
+    minHeight: 0,
+    overflow: 'hidden',
+    backgroundColor: '#f5f5f5',
+  },
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+    ...(Platform.OS === 'web' ? { overflowY: 'auto' } : {}),
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 90,
   },
   centered: {
     flex: 1,

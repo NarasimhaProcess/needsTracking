@@ -22,6 +22,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
 import { supabase, extractStoreSettings } from '../services/supabase';
 import { showAlert } from '../utils/alertUtils';
+import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const { width } = Dimensions.get('window');
 
@@ -790,21 +791,9 @@ export default function WelcomeScreen() {
           )}
         </View>
 
-        {/* Footer Info / Logout */}
+        {/* Footer Info */}
         <View style={styles.footer}>
-          {user ? (
-            <View style={styles.userFooterInfo}>
-              <Text style={styles.signedInText} numberOfLines={1}>
-                Signed in as: <Text style={styles.userEmailText}>{user.email || user.phone}</Text>
-              </Text>
-              <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-                <Icon name="sign-out" size={14} color="#EF4444" />
-                <Text style={styles.logoutText}>Logout</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <Text style={styles.footerVersion}>Version 1.0.0</Text>
-          )}
+          <Text style={styles.footerVersion}>Needs Tracker • Hyperlocal Logistics & Marketplace</Text>
         </View>
       </ScrollView>
 
@@ -924,6 +913,13 @@ export default function WelcomeScreen() {
           )}
         </View>
       </Modal>
+
+      {/* Persistent Bottom Navigation Footer */}
+      <StoreNavigationFooter
+        activeTab="stores"
+        navigation={navigation}
+        forceShow={true}
+      />
     </SafeAreaView>
   );
 }
@@ -941,7 +937,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 40,
+    paddingBottom: 90,
   },
   brandContainer: {
     alignItems: 'center',

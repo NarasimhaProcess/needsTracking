@@ -98,3 +98,25 @@
   1. Replaced `react-native-modal-datetime-picker` (which is unresponsive on web) with [UniversalDateTimePicker.js](file:///workspaces/needsTracking/src/components/UniversalDateTimePicker.js), providing a responsive date-picker modal with native HTML5 date input on web and native picker on mobile.
   2. Fixed order date filtering by safely extracting `order.created_at || order.order_date || order.date` and comparing local calendar date parts (`getFullYear()`, `getMonth()`, `getDate()`) to prevent timezone/locale mismatches.
   3. Added a dedicated 1-tap **"Today"** quick filter button and a clear (✕) button so users can instantly filter today's orders or clear the filter without reopening the picker.
+
+## 2026-09-06 08:05:27 UTC
+- **User Request**: "how to validate buyers mobile no while checkout first time and update same in profile", "as of now send email opt for phone also, if buyer have multiple address then how to handle beter to give option to take select loction from map , so multiple address how to implemnt let me know", "yes do it"
+- **Summary**:
+  1. **Email OTP Mobile Verification**: Implemented Email OTP modal in [CheckoutScreen.js](file:///workspaces/needsTracking/src/screens/CheckoutScreen.js) to verify buyer's mobile number via secure email verification code, auto-populating and updating their profile upon verification.
+  2. **Multiple Delivery Addresses & Map GPS**:
+     - Created [create_user_addresses.sql](file:///workspaces/needsTracking/create_user_addresses.sql) table schema with RLS policies, tags (Home, Work, Other), recipient info, and GPS coordinates.
+     - Added `getUserAddresses`, `addUserAddress`, `deleteUserAddress` in [supabase.js](file:///workspaces/needsTracking/src/services/supabase.js).
+     - Integrated LeafletMap and Nominatim search in CheckoutScreen address modal for pinpointing delivery locations.
+  3. **Environment and Actions Hardening**: Updated GitHub Actions workflows and [app.config.js](file:///workspaces/needsTracking/app.config.js) to resolve Supabase credentials from Repository Secrets, Variables, and `.env`.
+
+## 2026-09-06 08:50:08 UTC
+- **User Request**: "why separate profile buttion in wlecome page beter to add in footer profile like seller login for remaion user types good view right" / "plz continue"
+- **Summary**:
+  1. **Unified 5-Tab Bottom Navigation Footer ([StoreNavigationFooter.js](file:///workspaces/needsTracking/src/components/StoreNavigationFooter.js))**:
+     - Standardized clean, text-based navigation bar across all user types with 5 tabs: **Stores** (`SellersMap`), **Store** (`Catalog`), **Cart** (with live count badge), **Orders** (`OrderList`), and **Profile** (`ProfileScreen` or `BuyerAuth` if not logged in).
+     - Added responsive active indicators (`#EFF6FF` background with `#007AFF` bold text) and click callbacks (`onStorePress`, `onStoresPress`).
+  2. **Integrated Persistent Footer into Welcome & Map Screens**:
+     - Added `StoreNavigationFooter` into [WelcomeScreen.js](file:///workspaces/needsTracking/src/screens/WelcomeScreen.js) and removed the cluttered inline user/logout box.
+     - Added `StoreNavigationFooter` into [SellersMapScreen.js](file:///workspaces/needsTracking/src/screens/SellersMapScreen.js) docked above safe area.
+     - Added `StoreNavigationFooter` into [ProfileScreen.js](file:///workspaces/needsTracking/src/screens/ProfileScreen.js) with `rootWrapper` flex viewport containment and extra bottom scroll clearance (`paddingBottom: 90`).
+  3. **Production Web Build**: Tested and verified clean compilation and web export bundle (`dist/`).
