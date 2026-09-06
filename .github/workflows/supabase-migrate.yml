@@ -24,7 +24,7 @@ jobs:
           version: "2.116.0"
 
       # ============================================================
-      # 3. Authenticate SOURCE Supabase user
+      # 3. Authenticate SOURCE Supabase account
       # ============================================================
       - name: Authenticate Source Supabase Account
         env:
@@ -33,7 +33,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Authenticating SOURCE Supabase account"
+          echo "Authenticating SOURCE account"
           echo "========================================"
 
           supabase login --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
@@ -64,43 +64,46 @@ jobs:
           echo "Source project linked successfully."
 
       # ============================================================
-      # 5. Diagnose SOURCE migration history
+      # 5. Show SOURCE migration history
       # ============================================================
-      - name: Diagnose Source Migration History
+      - name: Check Source Migration History
         run: |
           set -e
 
           echo "========================================"
-          echo "SOURCE MIGRATION DIAGNOSTICS"
+          echo "SOURCE migration history"
           echo "========================================"
-
-          echo ""
-          echo "----------------------------------------"
-          echo "Local migration files"
-          echo "----------------------------------------"
-
-          if [ -d "supabase/migrations" ]; then
-            find supabase/migrations \
-              -maxdepth 1 \
-              -type f \
-              -printf "%f\n" \
-              | sort
-          else
-            echo "No supabase/migrations directory found."
-          fi
-
-          echo ""
-          echo "----------------------------------------"
-          echo "Remote migration history"
-          echo "----------------------------------------"
 
           supabase migration list
 
-          echo ""
-          echo "Migration diagnostic completed."
+      # ============================================================
+      # 6. Repair stale SOURCE migration
+      #
+      # IMPORTANT:
+      # Only use this if 20260906023724 is confirmed to be a stale
+      # migration that should NOT be considered applied.
+      # ============================================================
+      - name: Repair Source Migration History
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
+        run: |
+          set -e
+
+          MIGRATION_ID="20260906023724"
+
+          echo "========================================"
+          echo "Repairing SOURCE migration history"
+          echo "Migration: $MIGRATION_ID"
+          echo "========================================"
+
+          supabase migration repair \
+            --status reverted \
+            "$MIGRATION_ID"
+
+          echo "Migration repair completed."
 
       # ============================================================
-      # 6. Pull SOURCE database schema
+      # 7. Pull SOURCE schema
       # ============================================================
       - name: Pull Schema from Source
         env:
@@ -118,12 +121,12 @@ jobs:
           echo "Source schema pulled successfully."
 
       # ============================================================
-      # 7. Show generated migrations
+      # 8. Display resulting migrations
       # ============================================================
-      - name: Show Pulled Migrations
+      - name: Show Source Migrations
         run: |
           echo "========================================"
-          echo "Migration files after db pull"
+          echo "SOURCE migrations after db pull"
           echo "========================================"
 
           if [ -d "supabase/migrations" ]; then
@@ -133,20 +136,20 @@ jobs:
               -printf "%f\n" \
               | sort
           else
-            echo "No supabase/migrations directory found."
+            echo "No migration directory found."
           fi
 
       # ============================================================
-      # 8. Reset SOURCE link
+      # 9. Reset SOURCE link
       # ============================================================
       - name: Reset Source Link
         run: |
           rm -rf .supabase
 
-          echo "Source Supabase link removed."
+          echo "Source link removed."
 
       # ============================================================
-      # 9. Authenticate TARGET Supabase user
+      # 10. Authenticate TARGET Supabase account
       # ============================================================
       - name: Authenticate Target Supabase Account
         env:
@@ -155,7 +158,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Authenticating TARGET Supabase account"
+          echo "Authenticating TARGET account"
           echo "========================================"
 
           supabase login --token "$TARGET_SUPABASE_ACCESS_TOKEN"
@@ -163,7 +166,7 @@ jobs:
           echo "Target authentication successful."
 
       # ============================================================
-      # 10. Link TARGET project
+      # 11. Link TARGET project
       # ============================================================
       - name: Link Target Project
         env:
@@ -186,20 +189,20 @@ jobs:
           echo "Target project linked successfully."
 
       # ============================================================
-      # 11. Check TARGET migration history
+      # 12. Check TARGET migration history
       # ============================================================
       - name: Check Target Migration History
         run: |
           set -e
 
           echo "========================================"
-          echo "TARGET MIGRATION HISTORY"
+          echo "TARGET migration history"
           echo "========================================"
 
           supabase migration list
 
       # ============================================================
-      # 12. Push database migrations to TARGET
+      # 13. Push schema to TARGET
       # ============================================================
       - name: Push Schema to Target
         env:
@@ -208,16 +211,16 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "Pushing database migrations to TARGET"
+          echo "Pushing database schema to TARGET"
           echo "========================================"
 
           supabase db push
 
           echo ""
-          echo "Database synchronization completed successfully."
+          echo "Database synchronization completed."
 
       # ============================================================
-      # 13. Deploy Edge Functions to TARGET
+      # 14. Deploy Edge Functions
       # ============================================================
       - name: Deploy Edge Functions
         env:
@@ -232,7 +235,7 @@ jobs:
 
           if [ ! -d "supabase/functions" ]; then
             echo "No supabase/functions directory found."
-            echo "Skipping Edge Function deployment."
+            echo "Skipping Edge Functions."
             exit 0
           fi
 
@@ -241,3 +244,45 @@ jobs:
           for dir in supabase/functions/*/; do
 
             if [ -d "$dir" ]; then
+
+              func_name=$(basename "$dir")
+
+              if [ "$func_name" = "_shared" ]; then
+                echo "Skipping _shared directory."
+                continue
+              fi
+
+              found_functions=true
+
+              echo ""
+              echo "----------------------------------------"
+              echo "Deploying: $func_name"
+              echo "----------------------------------------"
+
+              supabase functions deploy "$func_name" \
+                --project-ref "$TARGET_PROJECT_REF"
+
+              echo "Successfully deployed: $func_name"
+
+            fi
+
+          done
+
+          if [ "$found_functions" = false ]; then
+            echo "No Edge Functions found."
+          fi
+
+          echo ""
+          echo "Edge Function deployment completed."
+
+      # ============================================================
+      # 15. Cleanup
+      # ============================================================
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf .supabase
+
+          echo "========================================"
+          echo "Cleanup completed."
+          echo "========================================"
