@@ -20,25 +20,38 @@ if (Platform.OS === 'web') {
   Storage = require('@react-native-async-storage/async-storage').default;
 }
 
-// Fallback-safe credentials resolution for Standalone / APK / EAS / Expo Go builds
+// Credentials resolution for Standalone / APK / EAS / Web / Expo Go builds
 const supabaseUrl =
   process.env.EXPO_PUBLIC_SUPABASE_URL ||
   process.env.SUPABASE_URL ||
-  Constants?.expoConfig?.extra?.SUPABASE_URL;
+  Constants?.expoConfig?.extra?.SUPABASE_URL ||
+  '';
 
 const supabaseAnonKey =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_ANON_KEY ||
-  Constants?.expoConfig?.extra?.SUPABASE_ANON_KEY;
+  Constants?.expoConfig?.extra?.SUPABASE_ANON_KEY ||
+  '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    storage: Storage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: Platform.OS === 'web',
-  },
-});
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn(
+    '⚠️ [Supabase Warning] SUPABASE_URL or SUPABASE_ANON_KEY is missing!\n' +
+    'Please configure them in your .env file, GitHub Action Secrets/Variables, or EAS environment.'
+  );
+}
+
+export const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder-anon-key',
+  {
+    auth: {
+      storage: Storage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: Platform.OS === 'web',
+    },
+  }
+);
 
 export async function getTransactionsByCustomerId(customerId) {
   const { data, error } = await supabase
@@ -1944,4 +1957,68 @@ export function embedStoreSettings(existingMediaList, storeSettings) {
     updated_at: new Date().toISOString(),
   });
   return cleanMedia;
+}
+
+/**
+ * User Addresses Management (Multiple addresses with GPS coords)
+ */
+export async function getUserAddresses(userId) {
+  if (!userId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('user_addresses')
+      .select('*')
+      .eq('user_id', userId)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('getUserAddresses notice:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.warn('getUserAddresses error:', err);
+    return [];
+  }
+}
+
+export async function addUserAddress(userId, addressData) {
+  if (!userId) throw new Error('User ID is required');
+  const payload = {
+    user_id: userId,
+    tag: addressData.tag || 'Home',
+    recipient_name: addressData.recipient_name || addressData.name || 'Recipient',
+    mobile: addressData.mobile,
+    address_line_1: addressData.address_line_1 || addressData.address,
+    address_line_2: addressData.address_line_2 || '',
+    city: addressData.city,
+    state: addressData.state || '',
+    zip_code: addressData.zip_code || addressData.postalCode || '',
+    country: addressData.country || 'India',
+    latitude: addressData.latitude != null ? Number(addressData.latitude) : null,
+    longitude: addressData.longitude != null ? Number(addressData.longitude) : null,
+    is_default: !!addressData.is_default,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('user_addresses')
+    .insert(payload)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteUserAddress(addressId) {
+  if (!addressId) return false;
+  const { error } = await supabase
+    .from('user_addresses')
+    .delete()
+    .eq('id', addressId);
+
+  if (error) throw error;
+  return true;
 }

@@ -84,6 +84,12 @@ const StoreNavigationFooter = ({
       navigation.navigate('Cart', navParams);
     } else if (tab === 'orders') {
       navigation.navigate('OrderList', navParams);
+    } else if (tab === 'profile') {
+      if (user) {
+        navigation.navigate('Profile', navParams);
+      } else {
+        navigation.navigate('BuyerAuth', { redirectTo: 'Profile', redirectParams: navParams });
+      }
     }
   };
 
@@ -132,6 +138,19 @@ const StoreNavigationFooter = ({
       >
         <Text style={[styles.tabLabel, activeTab === 'orders' && styles.tabLabelActive]}>
           Orders
+        </Text>
+      </TouchableOpacity>
+
+      {/* Profile Tab */}
+      <TouchableOpacity
+        style={[styles.tabButton, activeTab === 'profile' && styles.tabButtonActive]}
+        onPress={() => handleTabPress('profile')}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel="Profile Tab"
+      >
+        <Text style={[styles.tabLabel, activeTab === 'profile' && styles.tabLabelActive]}>
+          Profile
         </Text>
       </TouchableOpacity>
     </View>

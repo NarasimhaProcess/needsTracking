@@ -843,6 +843,15 @@ const CatalogScreen = ({ navigation, route }) => {
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {user && (
             <TouchableOpacity
+              style={{ marginRight: 15, padding: 4 }}
+              onPress={() => navigation.navigate('Profile')}
+              accessibilityLabel="Profile"
+            >
+              <Icon name="user-circle" size={20} color="#007AFF" />
+            </TouchableOpacity>
+          )}
+          {user && (
+            <TouchableOpacity
               style={{ marginRight: 15 }}
               onPress={() => {
                 showAlert('Logout', 'Are you sure you want to log out?', [

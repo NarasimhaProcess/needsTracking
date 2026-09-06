@@ -12,6 +12,7 @@ import {
   Modal,
   ActivityIndicator,
   Switch,
+  Platform,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import UniversalDateTimePicker from './UniversalDateTimePicker';

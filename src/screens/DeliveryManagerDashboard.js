@@ -473,10 +473,20 @@ const DeliveryManagerDashboard = ({ navigation }) => {
           <Text style={styles.headerTitle}>Delivery Partner</Text>
           <Text style={styles.headerSubtitle}>Live Order Management</Text>
         </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutWrapper}>
-          <Icon name="sign-out" size={18} color="#ef4444" style={{ marginRight: 6 }} />
-          <Text style={styles.logoutText}>Logout</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Profile')}
+            style={styles.profileWrapper}
+            accessibilityLabel="My Profile"
+          >
+            <Icon name="user-circle" size={16} color="#2563eb" style={{ marginRight: 6 }} />
+            <Text style={styles.profileText}>Profile</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutWrapper}>
+            <Icon name="sign-out" size={18} color="#ef4444" style={{ marginRight: 6 }} />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
@@ -591,6 +601,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     marginTop: 2,
+  },
+  profileWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    marginRight: 8,
+  },
+  profileText: {
+    fontSize: 14,
+    color: '#2563eb',
+    fontWeight: '600',
   },
   logoutWrapper: {
     flexDirection: 'row',

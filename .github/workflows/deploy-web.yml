@@ -41,24 +41,35 @@ jobs:
         run: |
           set -e
 
-          if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
-            echo "::error::SUPABASE_URL is missing!"
-            exit 1
-          fi
+          RESOLVED_URL="${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL || vars.EXPO_PUBLIC_SUPABASE_URL || vars.SUPABASE_URL }}"
+          RESOLVED_KEY="${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.EXPO_PUBLIC_SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}"
+          RESOLVED_MAPS_KEY="${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY || vars.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || vars.GOOGLE_MAPS_API_KEY }}"
+          RESOLVED_ORG="${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME || vars.EXPO_PUBLIC_ORG_NAME || vars.ORG_NAME || 'Store' }}"
 
-          if [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
-            echo "::error::SUPABASE_ANON_KEY is missing!"
-            exit 1
-          fi
+          if [ ! -f .env ]; then
+            if [ -z "$RESOLVED_URL" ]; then
+              echo "::error::SUPABASE_URL is missing! Please add SUPABASE_URL in GitHub Repository Secrets or Variables, or commit a .env file."
+              exit 1
+            fi
 
-          cat > .env << EOF
-          EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
-          EXPO_PUBLIC_ORG_NAME=${{ secrets.ORG_NAME }}
+            if [ -z "$RESOLVED_KEY" ]; then
+              echo "::error::SUPABASE_ANON_KEY is missing! Please add SUPABASE_ANON_KEY in GitHub Repository Secrets or Variables, or commit a .env file."
+              exit 1
+            fi
+
+            cat > .env << EOF
+          EXPO_PUBLIC_SUPABASE_URL=$RESOLVED_URL
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=$RESOLVED_KEY
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$RESOLVED_MAPS_KEY
+          EXPO_PUBLIC_ORG_NAME=$RESOLVED_ORG
+          SUPABASE_URL=$RESOLVED_URL
+          SUPABASE_ANON_KEY=$RESOLVED_KEY
           EOF
 
-          echo "✅ .env created"
+            echo "✅ .env created from GitHub Actions Secrets/Variables"
+          else
+            echo "✅ Using existing .env file found in repository"
+          fi
 
       # ----------------------------------------
       # 4. Install dependencies

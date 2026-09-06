@@ -34,7 +34,7 @@ import CartScreen from './src/screens/CartScreen';
 import CheckoutScreen from './src/screens/CheckoutScreen';
 import OrderConfirmationScreen from './src/screens/OrderConfirmationScreen';
 import OrderListScreen from './src/screens/OrderListScreen';
-// ProfileScreen, InventoryScreen, InvoiceScreen, ProductScreen will be imported by ProductTabNavigator
+import ProfileScreen from './src/screens/ProfileScreen';
 import TopProductsScreen from './src/screens/TopProductsScreen';
 import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import OrderEditScreen from './src/screens/OrderEditScreen';
@@ -472,6 +472,7 @@ export default function App() {
             <Stack.Screen name="AdminMap" component={AdminMapScreen} />
             <Stack.Screen name="CustomerDamage" component={CustomerDamageScreen} />
             <Stack.Screen name="DamageScreen" component={CustomerDamageScreen} />
+            <Stack.Screen name="Profile" component={ProfileScreen} />
             {/* ProductTabNavigator will handle Product, Inventory, Profile, Invoice screens */}
             <Stack.Screen name="ProductTabs" component={ProductTabNavigator} initialParams={{ session }} />
             {console.log('App.js: Session passed to ProductTabs:', session)}

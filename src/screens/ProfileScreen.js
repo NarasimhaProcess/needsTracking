@@ -75,6 +75,7 @@ const ProfileScreen = ({ navigation }) => {
   const [longitude, setLongitude] = useState(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const [printerConfig, setPrinterConfig] = useState(DEFAULT_PRINTER_CONFIG);
   const [markerLocation, setMarkerLocation] = useState(null);
   const [mapInitialRegion, setMapInitialRegion] = useState(null);
   const [upiQrCodeUrl, setUpiQrCodeUrl] = useState(null);
@@ -174,7 +175,7 @@ const ProfileScreen = ({ navigation }) => {
 
   const handleTogglePrintHeader = async (val) => {
     try {
-      const updated = { ...printerConfig, printHeader: val };
+      const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), printHeader: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
       showAlert(
@@ -190,7 +191,7 @@ const ProfileScreen = ({ navigation }) => {
 
   const handleToggleDayWiseNumber = async (val) => {
     try {
-      const updated = { ...printerConfig, printDayWiseNumber: val };
+      const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), printDayWiseNumber: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
       showAlert(
@@ -337,14 +338,14 @@ const ProfileScreen = ({ navigation }) => {
           setProfile(data);
           setName(data.full_name || user.user_metadata?.full_name || user.user_metadata?.name || '');
           setEmail(data.email || user.email || '');
-          setMobile(data.mobile || '');
-          setAddressLine1(data.address_line_1 || '');
-          setAddressLine2(data.address_line_2 || '');
-          setCity(data.city || '');
-          setState(data.state || '');
-          setZipCode(data.zip_code || '');
-          const lat = data.latitude != null && !isNaN(Number(data.latitude)) ? Number(data.latitude) : null;
-          const lon = data.longitude != null && !isNaN(Number(data.longitude)) ? Number(data.longitude) : null;
+          setMobile(data.mobile || user.user_metadata?.mobile || user.user_metadata?.phone || '');
+          setAddressLine1(data.address_line_1 || user.user_metadata?.address_line_1 || user.user_metadata?.address || '');
+          setAddressLine2(data.address_line_2 || user.user_metadata?.address_line_2 || '');
+          setCity(data.city || user.user_metadata?.city || '');
+          setState(data.state || user.user_metadata?.state || '');
+          setZipCode(data.zip_code || user.user_metadata?.zip_code || user.user_metadata?.postal_code || '');
+          const lat = data.latitude != null && !isNaN(Number(data.latitude)) ? Number(data.latitude) : (user.user_metadata?.latitude != null && !isNaN(Number(user.user_metadata.latitude)) ? Number(user.user_metadata.latitude) : null);
+          const lon = data.longitude != null && !isNaN(Number(data.longitude)) ? Number(data.longitude) : (user.user_metadata?.longitude != null && !isNaN(Number(user.user_metadata.longitude)) ? Number(user.user_metadata.longitude) : null);
           setLatitude(lat);
           setLongitude(lon);
           if (lat != null && lon != null) {
@@ -386,7 +387,20 @@ const ProfileScreen = ({ navigation }) => {
         } else {
           setName(user.user_metadata?.full_name || user.user_metadata?.name || '');
           setEmail(user.email || '');
-          setMobile(user.user_metadata?.mobile || '');
+          setMobile(user.user_metadata?.mobile || user.user_metadata?.phone || '');
+          setAddressLine1(user.user_metadata?.address_line_1 || user.user_metadata?.address || '');
+          setAddressLine2(user.user_metadata?.address_line_2 || '');
+          setCity(user.user_metadata?.city || '');
+          setState(user.user_metadata?.state || '');
+          setZipCode(user.user_metadata?.zip_code || user.user_metadata?.postal_code || '');
+          const lat = user.user_metadata?.latitude != null && !isNaN(Number(user.user_metadata.latitude)) ? Number(user.user_metadata.latitude) : null;
+          const lon = user.user_metadata?.longitude != null && !isNaN(Number(user.user_metadata.longitude)) ? Number(user.user_metadata.longitude) : null;
+          setLatitude(lat);
+          setLongitude(lon);
+          if (lat != null && lon != null) {
+            setMapInitialRegion({ latitude: lat, longitude: lon });
+            setMarkerLocation({ latitude: lat, longitude: lon });
+          }
           if (user.user_metadata?.store_settings) {
             const storeSettings = extractStoreSettings(user.user_metadata.store_settings);
             setIsStoreActive(storeSettings.is_store_active);
@@ -838,9 +852,13 @@ const ProfileScreen = ({ navigation }) => {
         updated_at: new Date().toISOString(),
       };
 
-      if (profile?.role) {
-        updates.role = profile.role;
-      }
+      const effectiveRole =
+        profile?.role ||
+        currentUser?.user_metadata?.role ||
+        user.user_metadata?.role ||
+        (userRole || 'customer');
+
+      updates.role = effectiveRole;
 
       // Try upserting to profiles table
       const { data: updatedData, error: profileError } = await supabase
@@ -856,33 +874,45 @@ const ProfileScreen = ({ navigation }) => {
         return;
       }
 
-      // Embed store settings into final media array for profiles
-      const finalMediaWithSettings = embedStoreSettings(finalMediaList, {
-        is_store_active: isStoreActive,
-        is_map_active: isMapActive,
-        is_product_active: isProductViewActive,
-      });
-
-      // Try updating media_urls column if present in table
-      try {
-        await supabase
-          .from('profiles')
-          .update({ media_urls: finalMediaWithSettings })
-          .eq('id', user.id);
-      } catch (colErr) {
-        console.warn('Notice: media_urls column update:', colErr);
-      }
-
-      // Also call setSellerStoreActiveStatus to ensure RPC is invoked
-      try {
-        await setSellerStoreActiveStatus(user.id, {
+      if (isSeller) {
+        // Embed store settings into final media array for profiles
+        const finalMediaWithSettings = embedStoreSettings(finalMediaList, {
           is_store_active: isStoreActive,
           is_map_active: isMapActive,
           is_product_active: isProductViewActive,
-          existingMedia: finalMediaList,
         });
-      } catch (stErr) {
-        console.warn('Notice: setSellerStoreActiveStatus:', stErr);
+
+        // Try updating media_urls column if present in table
+        try {
+          await supabase
+            .from('profiles')
+            .update({ media_urls: finalMediaWithSettings })
+            .eq('id', user.id);
+        } catch (colErr) {
+          console.warn('Notice: media_urls column update:', colErr);
+        }
+
+        // Also call setSellerStoreActiveStatus to ensure RPC is invoked
+        try {
+          await setSellerStoreActiveStatus(user.id, {
+            is_store_active: isStoreActive,
+            is_map_active: isMapActive,
+            is_product_active: isProductViewActive,
+            existingMedia: finalMediaList,
+          });
+        } catch (stErr) {
+          console.warn('Notice: setSellerStoreActiveStatus:', stErr);
+        }
+      } else {
+        // For buyers or delivery partners, save media_urls directly
+        try {
+          await supabase
+            .from('profiles')
+            .update({ media_urls: finalMediaList })
+            .eq('id', user.id);
+        } catch (colErr) {
+          console.warn('Notice: media_urls column update:', colErr);
+        }
       }
 
       // 2. Update auth user metadata (name/full_name/profile_media/store_settings/upi_id) and email if changed
@@ -893,11 +923,24 @@ const ProfileScreen = ({ navigation }) => {
           avatar_url: avatarUrl,
           profile_media: finalMediaList,
           upi_id: (upiId || '').trim(),
-          store_settings: {
-            is_store_active: isStoreActive,
-            is_map_active: isMapActive,
-            is_product_active: isProductViewActive,
-          },
+          mobile: trimmedMobile,
+          address_line_1: (addressLine1 || '').trim(),
+          address_line_2: (addressLine2 || '').trim(),
+          city: (city || '').trim(),
+          state: (state || '').trim(),
+          zip_code: (zipCode || '').trim(),
+          latitude: parsedLat,
+          longitude: parsedLon,
+          role: effectiveRole,
+          ...(isSeller
+            ? {
+                store_settings: {
+                  is_store_active: isStoreActive,
+                  is_map_active: isMapActive,
+                  is_product_active: isProductViewActive,
+                },
+              }
+            : {}),
         },
       };
 
@@ -1282,35 +1325,48 @@ const ProfileScreen = ({ navigation }) => {
     currentUser?.user_metadata?.user_type ||
     ''
   ).toLowerCase().trim();
+  const isDelivery = userRole === 'delivery_manager' || userRole === 'delivery_partner';
   const isAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'appadmin' || userRole === 'app_admin';
-  const isSeller = userRole === 'seller' || isAdmin || (sellerProducts && sellerProducts.length > 0);
+  const isSeller = !isDelivery && (userRole === 'seller' || isAdmin || (sellerProducts && sellerProducts.length > 0));
+  const isBuyer = !isAdmin && !isSeller && !isDelivery;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.profileHeaderBox}>
-        <Text style={styles.title}>Profile</Text>
-        {(profile?.role || profile?.user_type || isAdmin) && (
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {navigation?.canGoBack?.() && (
+            <TouchableOpacity
+              style={{ marginRight: 12, padding: 4 }}
+              onPress={() => navigation.goBack()}
+              accessibilityLabel="Back"
+            >
+              <Icon name="arrow-left" size={20} color="#007AFF" />
+            </TouchableOpacity>
+          )}
+          <Text style={styles.title}>Profile</Text>
+        </View>
+        {(profile?.role || profile?.user_type || isAdmin || isDelivery || isSeller) && (
           <View style={[
             styles.profileRoleBadge,
             isAdmin ? styles.roleBadgeAdmin :
-            userRole === 'seller' ? styles.roleBadgeSeller :
-            userRole === 'delivery_manager' ? styles.roleBadgeDelivery :
+            isSeller ? styles.roleBadgeSeller :
+            isDelivery ? styles.roleBadgeDelivery :
             styles.roleBadgeCustomer
           ]}>
             <Icon
-              name={isAdmin ? 'shield' : userRole === 'seller' ? 'home' : userRole === 'delivery_manager' ? 'truck' : 'user'}
+              name={isAdmin ? 'shield' : isSeller ? 'home' : isDelivery ? 'truck' : 'user'}
               size={12}
-              color={isAdmin ? '#D97706' : userRole === 'seller' ? '#059669' : userRole === 'delivery_manager' ? '#7C3AED' : '#0284C7'}
+              color={isAdmin ? '#D97706' : isSeller ? '#059669' : isDelivery ? '#7C3AED' : '#0284C7'}
               style={{ marginRight: 5 }}
             />
             <Text style={[
               styles.profileRoleBadgeText,
               isAdmin ? styles.roleBadgeTextAdmin :
-              userRole === 'seller' ? styles.roleBadgeTextSeller :
-              userRole === 'delivery_manager' ? styles.roleBadgeTextDelivery :
+              isSeller ? styles.roleBadgeTextSeller :
+              isDelivery ? styles.roleBadgeTextDelivery :
               styles.roleBadgeTextCustomer
             ]}>
-              {isAdmin ? (userRole === 'superadmin' ? 'Superadmin' : 'App Admin') : userRole === 'seller' ? 'Seller Account' : userRole === 'delivery_manager' ? 'Delivery Partner' : 'Customer / Buyer'}
+              {isAdmin ? (userRole === 'superadmin' ? 'Superadmin' : 'App Admin') : isSeller ? 'Seller Account' : isDelivery ? 'Delivery Partner' : 'Customer / Buyer'}
             </Text>
           </View>
         )}
@@ -1818,13 +1874,16 @@ const ProfileScreen = ({ navigation }) => {
       </View>
 
       {/* UPI QR Code & Payment Settings Section */}
-      <View style={styles.upiSectionCard}>
-        <View style={styles.upiHeaderRow}>
-          <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
-        </View>
-        <Text style={styles.sectionSubtitle}>
-          Set your UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.
-        </Text>
+      {(!isBuyer || Boolean(upiId && upiId.trim())) && (
+        <View style={styles.upiSectionCard}>
+          <View style={styles.upiHeaderRow}>
+            <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
+          </View>
+          <Text style={styles.sectionSubtitle}>
+            {isDelivery
+              ? 'Set your UPI ID (VPA) for receiving direct tips and delivery payouts.'
+              : 'Set your UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.'}
+          </Text>
 
         <Text style={styles.inputLabel}>UPI ID / VPA (e.g. mobile@upi, store@okaxis)</Text>
         <View style={styles.upiInputRow}>
@@ -1902,6 +1961,7 @@ const ProfileScreen = ({ navigation }) => {
           </TouchableOpacity>
         </View>
       </View>
+      )}
 
       {/* Input Fields */}
       <View style={styles.formGroup}>
@@ -2082,62 +2142,64 @@ const ProfileScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      {/* Receipt & Thermal Printer Settings Card */}
-      <View style={styles.printerSectionCard}>
-        <View style={styles.printerHeaderRow}>
-          <Icon name="print" size={18} color="#007AFF" style={{ marginRight: 8 }} />
-          <Text style={styles.printerSectionTitle}>Receipt & Thermal Printer Settings</Text>
-        </View>
-        <Text style={styles.printerSectionSub}>
-          Configure thermal POS printer layout, uncheck header part, and require day-wise token number.
-        </Text>
-
-        {/* Toggle 1: Print Receipt Header (Uncheck header part) */}
-        <View style={styles.printerToggleRow}>
-          <View style={{ flex: 1, marginRight: 12 }}>
-            <Text style={styles.printerToggleTitle}>Print Receipt Header</Text>
-            <Text style={styles.printerToggleSub}>
-              Include Store Name, Address, Contact, and GSTIN. Uncheck this option to skip the header part and save paper.
-            </Text>
+      {/* Receipt & Thermal Printer Settings Card (Sellers, Delivery, Admins) */}
+      {!isBuyer && (
+        <View style={styles.printerSectionCard}>
+          <View style={styles.printerHeaderRow}>
+            <Icon name="print" size={18} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={styles.printerSectionTitle}>Receipt & Thermal Printer Settings</Text>
           </View>
-          <Switch
-            value={printerConfig.printHeader !== false}
-            onValueChange={handleTogglePrintHeader}
-            trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-            thumbColor={printerConfig.printHeader !== false ? '#007AFF' : '#F1F5F9'}
-          />
-        </View>
-
-        <View style={styles.printerDivider} />
-
-        {/* Toggle 2: Required Daywise Number */}
-        <View style={styles.printerToggleRow}>
-          <View style={{ flex: 1, marginRight: 12 }}>
-            <Text style={styles.printerToggleTitle}>Required Day-wise Order Number</Text>
-            <Text style={styles.printerToggleSub}>
-              Prominently print Day-wise Order Number (Daily Token #) on every receipt for kitchen and dispatch.
-            </Text>
-          </View>
-          <Switch
-            value={printerConfig.printDayWiseNumber !== false}
-            onValueChange={handleToggleDayWiseNumber}
-            trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-            thumbColor={printerConfig.printDayWiseNumber !== false ? '#007AFF' : '#F1F5F9'}
-          />
-        </View>
-
-        {/* Full Printer Setup Modal Button */}
-        <TouchableOpacity
-          style={styles.printerSetupBtn}
-          onPress={() => setShowPrinterSettings(true)}
-          activeOpacity={0.8}
-        >
-          <Icon name="sliders" size={15} color="#007AFF" style={{ marginRight: 8 }} />
-          <Text style={styles.printerSetupBtnText}>
-            Full Thermal Printer Setup (Bluetooth, 58mm/80mm, Feed, Test Print)
+          <Text style={styles.printerSectionSub}>
+            Configure thermal POS printer layout, uncheck header part, and require day-wise token number.
           </Text>
-        </TouchableOpacity>
-      </View>
+
+          {/* Toggle 1: Print Receipt Header (Uncheck header part) */}
+          <View style={styles.printerToggleRow}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.printerToggleTitle}>Print Receipt Header</Text>
+              <Text style={styles.printerToggleSub}>
+                Include Store Name, Address, Contact, and GSTIN. Uncheck this option to skip the header part and save paper.
+              </Text>
+            </View>
+            <Switch
+              value={printerConfig?.printHeader !== false}
+              onValueChange={handleTogglePrintHeader}
+              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+              thumbColor={printerConfig?.printHeader !== false ? '#007AFF' : '#F1F5F9'}
+            />
+          </View>
+
+          <View style={styles.printerDivider} />
+
+          {/* Toggle 2: Required Daywise Number */}
+          <View style={styles.printerToggleRow}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.printerToggleTitle}>Required Day-wise Order Number</Text>
+              <Text style={styles.printerToggleSub}>
+                Prominently print Day-wise Order Number (Daily Token #) on every receipt for kitchen and dispatch.
+              </Text>
+            </View>
+            <Switch
+              value={printerConfig?.printDayWiseNumber !== false}
+              onValueChange={handleToggleDayWiseNumber}
+              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+              thumbColor={printerConfig?.printDayWiseNumber !== false ? '#007AFF' : '#F1F5F9'}
+            />
+          </View>
+
+          {/* Full Printer Setup Modal Button */}
+          <TouchableOpacity
+            style={styles.printerSetupBtn}
+            onPress={() => setShowPrinterSettings(true)}
+            activeOpacity={0.8}
+          >
+            <Icon name="sliders" size={15} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={styles.printerSetupBtnText}>
+              Full Thermal Printer Setup (Bluetooth, 58mm/80mm, Feed, Test Print)
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {Platform.OS === 'web' && (
         <View style={styles.webNotifCard}>

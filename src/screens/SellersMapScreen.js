@@ -2011,7 +2011,11 @@ export default function SellersMapScreen({ route }) {
               {/* If user is logged in, show user profile summary and quick links */}
               {user && (
                 <View style={styles.userSection}>
-                  <View style={styles.userProfileRow}>
+                  <TouchableOpacity
+                    style={styles.userProfileRow}
+                    activeOpacity={0.7}
+                    onPress={() => safeNavigate("Profile")}
+                  >
                     <View style={styles.userAvatar}>
                       <Text style={styles.userAvatarText}>
                         {(user.email || user.phone || "U").charAt(0).toUpperCase()}
@@ -2027,9 +2031,17 @@ export default function SellersMapScreen({ route }) {
                         </Text>
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
 
                   <View style={styles.userQuickLinks}>
+                    <TouchableOpacity
+                      style={styles.quickLinkItem}
+                      onPress={() => safeNavigate("Profile")}
+                    >
+                      <Icon name="user-circle" size={13} color="#6366F1" />
+                      <Text style={styles.quickLinkText}>My Profile</Text>
+                    </TouchableOpacity>
+
                     <TouchableOpacity
                       style={styles.quickLinkItem}
                       onPress={() => safeNavigate("OrderList")}

@@ -181,8 +181,6 @@ const FieldManagerScreen = ({ navigation, route }) => {
     return () => unsubscribe();
     */
 
-  }, [areaId]);
-
   const pickFiles = async () => {
     try {
       let result = await DocumentPicker.getDocumentAsync({

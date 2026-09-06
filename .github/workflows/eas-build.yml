@@ -46,13 +46,21 @@ jobs:
 
       - name: Create .env
         env:
-          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
-          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY }}
-          EXPO_PUBLIC_ORG_NAME: ${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL || vars.EXPO_PUBLIC_SUPABASE_URL || vars.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.EXPO_PUBLIC_SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY || vars.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || vars.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME || vars.EXPO_PUBLIC_ORG_NAME || vars.ORG_NAME }}
         shell: bash
         run: |
-          cat > .env << EOF
+          set -e
+
+          if [ ! -f .env ]; then
+            if [ -z "$EXPO_PUBLIC_SUPABASE_URL" ] || [ -z "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ]; then
+              echo "::error::SUPABASE_URL or SUPABASE_ANON_KEY is missing! Please configure them in GitHub Action Secrets/Variables or provide a .env file."
+              exit 1
+            fi
+
+            cat > .env << EOF
           EXPO_PUBLIC_SUPABASE_URL=$EXPO_PUBLIC_SUPABASE_URL
           EXPO_PUBLIC_SUPABASE_ANON_KEY=$EXPO_PUBLIC_SUPABASE_ANON_KEY
           EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
@@ -62,11 +70,15 @@ jobs:
           GOOGLE_MAPS_API_KEY=$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
           ORG_NAME=$EXPO_PUBLIC_ORG_NAME
           EOF
+            echo "✅ .env created from GitHub Action Secrets / Variables"
+          else
+            echo "✅ Using existing .env file from repository"
+          fi
 
       - name: Run EAS Build
         env:
-          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
-          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY }}
-          EXPO_PUBLIC_ORG_NAME: ${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL || vars.EXPO_PUBLIC_SUPABASE_URL || vars.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.EXPO_PUBLIC_SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY || vars.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || vars.GOOGLE_MAPS_API_KEY }}
+          EXPO_PUBLIC_ORG_NAME: ${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME || vars.EXPO_PUBLIC_ORG_NAME || vars.ORG_NAME }}
         run: eas build --platform ${{ github.event.inputs.platform }} --profile ${{ github.event.inputs.profile }} --non-interactive

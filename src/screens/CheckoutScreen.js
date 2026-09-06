@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,23 @@ import {
   Image,
   Linking,
   Platform,
+  Modal,
+  FlatList,
+  SafeAreaView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { Picker } from '@react-native-picker/picker';
 import * as Clipboard from 'expo-clipboard';
-import { supabase, getCart, getActiveQrCode } from '../services/supabase';
+import * as Location from 'expo-location';
+import LeafletMap from '../components/LeafletMap';
+import {
+  supabase,
+  getCart,
+  getActiveQrCode,
+  getUserAddresses,
+  addUserAddress,
+  deleteUserAddress,
+} from '../services/supabase';
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
@@ -25,15 +37,44 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [cart, setCart] = useState(initialCart || null);
   const [currentUser, setCurrentUser] = useState(null);
   const [name, setName] = useState('');
+  const [mobile, setMobile] = useState('');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [country, setCountry] = useState('India');
+  const [selectedCoords, setSelectedCoords] = useState(null);
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [profile, setProfile] = useState(null);
   const [orderType, setOrderType] = useState('Dine-in');
   const [tableNo, setTableNo] = useState('Main counter');
+
+  // Multiple Addresses Management States
+  const [savedAddresses, setSavedAddresses] = useState([]);
+  const [selectedAddressId, setSelectedAddressId] = useState(null);
+  const [showAddressModal, setShowAddressModal] = useState(false);
+  const [modalTag, setModalTag] = useState('Home'); // 'Home' | 'Work' | 'Other'
+  const [modalRecipientName, setModalRecipientName] = useState('');
+  const [modalMobile, setModalMobile] = useState('');
+  const [modalAddressLine1, setModalAddressLine1] = useState('');
+  const [modalCity, setModalCity] = useState('');
+  const [modalState, setModalState] = useState('');
+  const [modalZipCode, setModalZipCode] = useState('');
+  const [modalCoords, setModalCoords] = useState(null);
+  const [mapInitialRegion, setMapInitialRegion] = useState({ latitude: 28.6139, longitude: 77.2090 });
+  const [mapSearchQuery, setMapSearchQuery] = useState('');
+  const [mapSearchLoading, setMapSearchLoading] = useState(false);
+  const [mapSearchSuggestions, setMapSearchSuggestions] = useState([]);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [locatingGps, setLocatingGps] = useState(false);
+  const addressMapRef = useRef(null);
+
+  // Email OTP Mobile Validation States
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [sendingEmailOtp, setSendingEmailOtp] = useState(false);
+  const [verifyingEmailOtp, setVerifyingEmailOtp] = useState(false);
+  const [isMobileVerified, setIsMobileVerified] = useState(false);
 
   // UPI QR Code State
   const [sellerQr, setSellerQr] = useState(null);
@@ -85,9 +126,42 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         if (profileData) {
           setProfile(profileData);
+          if (profileData.mobile) {
+            setMobile((prev) => prev || profileData.mobile);
+            setIsMobileVerified(true);
+          } else if (user.user_metadata?.mobile || user.phone) {
+            setMobile((prev) => prev || user.user_metadata?.mobile || user.phone || '');
+          }
           setAddress((prev) => prev || profileData.address_line_1 || '');
           setCity((prev) => prev || profileData.city || '');
           setPostalCode((prev) => prev || profileData.zip_code || '');
+          if (profileData.latitude && profileData.longitude) {
+            const profCoords = {
+              latitude: Number(profileData.latitude),
+              longitude: Number(profileData.longitude),
+            };
+            setSelectedCoords(profCoords);
+            setMapInitialRegion(profCoords);
+          }
+        }
+
+        // Fetch multiple addresses for this buyer
+        const addresses = await getUserAddresses(user.id);
+        if (addresses && addresses.length > 0) {
+          setSavedAddresses(addresses);
+          const defaultAddr = addresses.find((a) => a.is_default) || addresses[0];
+          setSelectedAddressId(defaultAddr.id);
+          setName(defaultAddr.recipient_name || '');
+          setMobile(defaultAddr.mobile || '');
+          setAddress(defaultAddr.address_line_1 || '');
+          setCity(defaultAddr.city || '');
+          setPostalCode(defaultAddr.zip_code || '');
+          if (defaultAddr.latitude && defaultAddr.longitude) {
+            setSelectedCoords({
+              latitude: Number(defaultAddr.latitude),
+              longitude: Number(defaultAddr.longitude),
+            });
+          }
         }
 
         const userCart = await getCart(user.id);
@@ -125,21 +199,29 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   const [shippingAddress, setShippingAddress] = useState({
     name: '',
+    mobile: '',
+    phone: '',
     address: '',
     city: '',
     postalCode: '',
     country: 'India',
+    latitude: null,
+    longitude: null,
   });
 
   useEffect(() => {
     setShippingAddress({
       name,
+      mobile: (mobile || '').trim(),
+      phone: (mobile || '').trim(),
       address,
       city,
       postalCode,
       country,
+      latitude: selectedCoords?.latitude || null,
+      longitude: selectedCoords?.longitude || null,
     });
-  }, [name, address, city, postalCode, country]);
+  }, [name, mobile, address, city, postalCode, country, selectedCoords]);
 
   const cartItems = cart?.cart_items || [];
   const totalAmount = cartItems.reduce(
@@ -253,6 +335,312 @@ const CheckoutScreen = ({ navigation, route }) => {
     });
   };
 
+  // Handle Address selection
+  const handleSelectAddress = (addr) => {
+    setSelectedAddressId(addr.id);
+    setName(addr.recipient_name || '');
+    setMobile(addr.mobile || '');
+    setAddress(addr.address_line_1 || '');
+    setCity(addr.city || '');
+    setPostalCode(addr.zip_code || '');
+    if (addr.latitude && addr.longitude) {
+      setSelectedCoords({ latitude: Number(addr.latitude), longitude: Number(addr.longitude) });
+    } else {
+      setSelectedCoords(null);
+    }
+  };
+
+  const handleOpenAddAddressModal = () => {
+    setModalTag('Home');
+    setModalRecipientName(name || currentUser?.user_metadata?.full_name || '');
+    setModalMobile(mobile || profile?.mobile || '');
+    setModalAddressLine1('');
+    setModalCity(city || profile?.city || '');
+    setModalState(profile?.state || '');
+    setModalZipCode(postalCode || profile?.zip_code || '');
+    if (selectedCoords) {
+      setModalCoords(selectedCoords);
+      setMapInitialRegion(selectedCoords);
+    } else if (profile?.latitude && profile?.longitude) {
+      const c = { latitude: Number(profile.latitude), longitude: Number(profile.longitude) };
+      setModalCoords(c);
+      setMapInitialRegion(c);
+    } else {
+      const defCoords = { latitude: 28.6139, longitude: 77.2090 };
+      setModalCoords(defCoords);
+      setMapInitialRegion(defCoords);
+    }
+    setMapSearchQuery('');
+    setMapSearchSuggestions([]);
+    setShowAddressModal(true);
+  };
+
+  const reverseGeocodeAddress = async (lat, lon) => {
+    if (lat == null || lon == null) return;
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`,
+        {
+          headers: {
+            'User-Agent': 'NeedsTrackingApp/1.0',
+            'Accept-Language': 'en',
+          },
+        }
+      );
+      const data = await res.json();
+      if (data && data.address) {
+        const addr = data.address;
+        const street = [addr.road, addr.suburb, addr.neighbourhood].filter(Boolean).join(', ') || data.display_name?.split(',')[0] || '';
+        const cityName = addr.city || addr.town || addr.village || addr.county || '';
+        const stateName = addr.state || '';
+        const zip = addr.postcode || '';
+
+        if (street) setModalAddressLine1(street);
+        if (cityName) setModalCity(cityName);
+        if (stateName) setModalState(stateName);
+        if (zip) setModalZipCode(zip);
+      }
+    } catch (err) {
+      console.warn('Reverse geocode error in checkout:', err);
+    }
+  };
+
+  const handleUseCurrentLocation = async () => {
+    setLocatingGps(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        showAlert('Permission Denied', 'Permission to access current GPS location was denied.');
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (loc && loc.coords) {
+        const newCoords = {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        };
+        setModalCoords(newCoords);
+        setMapInitialRegion(newCoords);
+        if (addressMapRef.current?.centerOnLocation) {
+          addressMapRef.current.centerOnLocation(newCoords, 16);
+        }
+        await reverseGeocodeAddress(newCoords.latitude, newCoords.longitude);
+      }
+    } catch (err) {
+      console.warn('GPS location error:', err);
+      showAlert('GPS Notice', 'Could not fetch GPS automatically. Please tap directly on the map.');
+    } finally {
+      setLocatingGps(false);
+    }
+  };
+
+  const handleMapSearchChange = async (text) => {
+    setMapSearchQuery(text);
+    if (!text || text.trim().length < 3) {
+      setMapSearchSuggestions([]);
+      return;
+    }
+    setMapSearchLoading(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(text.trim())}&limit=5&addressdetails=1`,
+        {
+          headers: { 'User-Agent': 'NeedsTrackingApp/1.0', 'Accept-Language': 'en' },
+        }
+      );
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setMapSearchSuggestions(
+          data.map((item) => ({
+            id: String(item.place_id || Math.random()),
+            title: item.display_name?.split(',')[0] || item.name,
+            subtitle: item.display_name,
+            latitude: parseFloat(item.lat),
+            longitude: parseFloat(item.lon),
+            address: item.address,
+          }))
+        );
+      }
+    } catch (e) {
+      console.warn('Area search error:', e);
+    } finally {
+      setMapSearchLoading(false);
+    }
+  };
+
+  const handleSelectAreaSuggestion = (item) => {
+    const coords = { latitude: item.latitude, longitude: item.longitude };
+    setModalCoords(coords);
+    setMapInitialRegion(coords);
+    setMapSearchQuery(item.title);
+    setMapSearchSuggestions([]);
+
+    if (item.address) {
+      const addr = item.address;
+      const street = [addr.road, addr.suburb, addr.neighbourhood].filter(Boolean).join(', ') || item.title;
+      if (street) setModalAddressLine1(street);
+      if (addr.city || addr.town || addr.village) setModalCity(addr.city || addr.town || addr.village);
+      if (addr.state) setModalState(addr.state);
+      if (addr.postcode) setModalZipCode(addr.postcode);
+    }
+
+    if (addressMapRef.current?.centerOnLocation) {
+      addressMapRef.current.centerOnLocation(coords, 16);
+    }
+  };
+
+  const handleSaveModalAddress = async () => {
+    if (!modalRecipientName.trim()) {
+      showAlert('Required', 'Please enter recipient name.');
+      return;
+    }
+    const cleanMob = modalMobile.trim().replace(/[\s\-()]/g, '');
+    if (!cleanMob || !/^(?:\+91|91)?[6-9]\d{9}$/.test(cleanMob)) {
+      showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
+      return;
+    }
+    if (!modalAddressLine1.trim()) {
+      showAlert('Required', 'Please enter street or address details.');
+      return;
+    }
+    if (!modalCity.trim()) {
+      showAlert('Required', 'Please enter city.');
+      return;
+    }
+
+    setSavingAddress(true);
+    try {
+      const user = currentUser || (await supabase.auth.getUser()).data.user;
+      if (!user) {
+        showAlert('Sign In Required', 'Please sign in to save addresses.');
+        return;
+      }
+
+      const addrData = {
+        tag: modalTag,
+        recipient_name: modalRecipientName.trim(),
+        mobile: cleanMob.slice(-10),
+        address_line_1: modalAddressLine1.trim(),
+        city: modalCity.trim(),
+        state: modalState.trim(),
+        zip_code: modalZipCode.trim(),
+        latitude: modalCoords?.latitude || null,
+        longitude: modalCoords?.longitude || null,
+        is_default: savedAddresses.length === 0,
+      };
+
+      const saved = await addUserAddress(user.id, addrData);
+      const updatedList = [saved, ...savedAddresses];
+      setSavedAddresses(updatedList);
+      setSelectedAddressId(saved.id);
+
+      setName(saved.recipient_name);
+      setMobile(saved.mobile);
+      setAddress(saved.address_line_1);
+      setCity(saved.city);
+      setPostalCode(saved.zip_code);
+      setSelectedCoords(modalCoords);
+
+      if (!profile?.mobile) {
+        await supabase
+          .from('profiles')
+          .update({ mobile: cleanMob.slice(-10), updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+        setProfile((prev) => ({ ...(prev || {}), mobile: cleanMob.slice(-10) }));
+      }
+
+      setShowAddressModal(false);
+      showAlert('Address Saved', 'New delivery address added and selected!');
+    } catch (err) {
+      console.warn('Error saving address:', err);
+      showAlert('Error', err.message || 'Failed to save address.');
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
+  // Email OTP Handlers
+  const handleSendEmailOtp = async (targetMobile) => {
+    const mob = (targetMobile || mobile).trim().replace(/[\s\-()]/g, '');
+    if (!mob || !/^(?:\+91|91)?[6-9]\d{9}$/.test(mob)) {
+      showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number first.');
+      return;
+    }
+
+    const emailToSend = currentUser?.email || (await supabase.auth.getUser()).data?.user?.email;
+    if (!emailToSend) {
+      showAlert('Email Missing', 'No registered email found for this account. Please sign in with an email account.');
+      return;
+    }
+
+    setSendingEmailOtp(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: emailToSend,
+      });
+
+      if (error) throw error;
+
+      showAlert(
+        'Code Sent to Email',
+        `A 6-digit verification code has been sent to ${emailToSend}. Enter it below to verify your contact number.`
+      );
+      setShowOtpModal(true);
+    } catch (err) {
+      console.warn('Error sending email OTP:', err);
+      showAlert('Failed to Send Code', err.message || 'Could not send verification code.');
+    } finally {
+      setSendingEmailOtp(false);
+    }
+  };
+
+  const handleVerifyEmailOtp = async () => {
+    if (!otpCode.trim()) {
+      showAlert('Enter Code', 'Please enter the 6-digit code received on your email.');
+      return;
+    }
+
+    setVerifyingEmailOtp(true);
+    try {
+      const user = currentUser || (await supabase.auth.getUser()).data.user;
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: user.email,
+        token: otpCode.trim(),
+        type: 'email',
+      });
+
+      if (verifyError) throw verifyError;
+
+      const cleanMobile = mobile.trim().replace(/[\s\-()]/g, '').slice(-10);
+      const { error: profError } = await supabase
+        .from('profiles')
+        .update({
+          mobile: cleanMobile,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (profError) {
+        console.warn('Profile update notice:', profError);
+      }
+
+      await supabase.auth.updateUser({
+        data: { mobile: cleanMobile },
+      }).catch(() => {});
+
+      setIsMobileVerified(true);
+      setShowOtpModal(false);
+      setOtpCode('');
+      setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile }));
+
+      showAlert('✅ Verified', 'Your mobile number has been verified and updated in your profile!');
+    } catch (err) {
+      showAlert('Verification Failed', err.message || 'Invalid or expired code. Please try again.');
+    } finally {
+      setVerifyingEmailOtp(false);
+    }
+  };
+
   const handlePlaceOrder = async () => {
     if (!paymentMethod) {
       showAlert('Payment Method', 'Please select a payment method.');
@@ -289,10 +677,56 @@ const CheckoutScreen = ({ navigation, route }) => {
       return;
     }
 
+    const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
+    if (!cleanMobile) {
+      setLoading(false);
+      showAlert('Mobile Required', 'Please provide a 10-digit mobile number for order delivery.');
+      return;
+    }
+
+    if (!/^(?:\+91|91)?[6-9]\d{9}$/.test(cleanMobile)) {
+      setLoading(false);
+      showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
+      return;
+    }
+
+    // Require Email OTP verification if buyer has no mobile in profile and not yet verified this session
+    if (!profile?.mobile && !isMobileVerified) {
+      setLoading(false);
+      showAlert(
+        'Verify Contact Number',
+        `For your first checkout, please verify your mobile number. We will send a 6-digit verification code to your registered email (${user?.email || 'your account'}).`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Send Code to Email',
+            onPress: () => handleSendEmailOtp(cleanMobile),
+          },
+        ]
+      );
+      return;
+    }
+
     if (!address.trim()) {
       setLoading(false);
       showAlert('Shipping Details', 'Please enter your delivery address.');
       return;
+    }
+
+    // Persist mobile to profile if missing
+    if (!profile?.mobile || profile.mobile !== cleanMobile.slice(-10)) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({
+            mobile: cleanMobile.slice(-10),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', orderUserId);
+        setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile.slice(-10) }));
+      } catch (profErr) {
+        console.warn('Profile mobile sync notice:', profErr);
+      }
     }
 
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
@@ -441,6 +875,7 @@ const CheckoutScreen = ({ navigation, route }) => {
     sellerProfile?.id ||
     null;
   const resolvedSellerName = route?.params?.sellerName || sellerProfile?.full_name || null;
+  const resolvedCustomerId = customerId || currentUser?.id || null;
 
   if (!cartItems || cartItems.length === 0) {
     return (
@@ -556,43 +991,197 @@ const CheckoutScreen = ({ navigation, route }) => {
           <Text style={styles.summaryTotal}>Total: ₹{totalAmount.toFixed(2)}</Text>
         </View>
 
-        <Text style={styles.sectionHeading}>Shipping Address</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Full Name *"
-          placeholderTextColor="#94a3b8"
-          value={name}
-          onChangeText={setName}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Address / Street / Landmark *"
-          placeholderTextColor="#94a3b8"
-          value={address}
-          onChangeText={setAddress}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="City *"
-          placeholderTextColor="#94a3b8"
-          value={city}
-          onChangeText={setCity}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Postal Code"
-          placeholderTextColor="#94a3b8"
-          value={postalCode}
-          onChangeText={setPostalCode}
-          keyboardType="numeric"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Country"
-          placeholderTextColor="#94a3b8"
-          value={country}
-          onChangeText={setCountry}
-        />
+        {/* Delivery Address Header */}
+        <View style={styles.addressSectionHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sectionHeading}>Delivery Address & Contact</Text>
+            <Text style={styles.sectionSubheading}>Choose saved address or pick location with GPS map</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.addAddressHeaderBtn}
+            onPress={handleOpenAddAddressModal}
+            activeOpacity={0.8}
+          >
+            <Icon name="map-marker" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.addAddressHeaderBtnText}>+ Add / Map</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Saved Addresses Horizontal Carousel */}
+        {savedAddresses && savedAddresses.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.savedAddressesScroll}
+          >
+            {savedAddresses.map((addr) => {
+              const isSelected = selectedAddressId === addr.id;
+              return (
+                <TouchableOpacity
+                  key={addr.id}
+                  style={[styles.addressCard, isSelected && styles.addressCardSelected]}
+                  onPress={() => handleSelectAddress(addr)}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.addressCardTopRow}>
+                    <View
+                      style={[
+                        styles.addressTagBadge,
+                        addr.tag === 'Work'
+                          ? styles.tagWork
+                          : addr.tag === 'Other'
+                          ? styles.tagOther
+                          : styles.tagHome,
+                      ]}
+                    >
+                      <Icon
+                        name={addr.tag === 'Work' ? 'briefcase' : addr.tag === 'Other' ? 'map-pin' : 'home'}
+                        size={11}
+                        color="#0F172A"
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={styles.addressTagText}>{addr.tag || 'Home'}</Text>
+                    </View>
+                    <Icon
+                      name={isSelected ? 'check-circle' : 'circle-o'}
+                      size={18}
+                      color={isSelected ? '#007AFF' : '#94A3B8'}
+                    />
+                  </View>
+
+                  <Text style={styles.addressCardName} numberOfLines={1}>
+                    {addr.recipient_name}
+                  </Text>
+                  <Text style={styles.addressCardMobile}>
+                    <Icon name="phone" size={11} color="#64748B" /> {addr.mobile}
+                  </Text>
+                  <Text style={styles.addressCardDetails} numberOfLines={2}>
+                    {addr.address_line_1}, {addr.city} {addr.zip_code ? `- ${addr.zip_code}` : ''}
+                  </Text>
+
+                  {addr.latitude && addr.longitude && (
+                    <View style={styles.addressGpsBadge}>
+                      <Icon name="crosshairs" size={10} color="#10B981" style={{ marginRight: 4 }} />
+                      <Text style={styles.addressGpsText}>GPS Pinned</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        ) : (
+          <TouchableOpacity
+            style={styles.emptyAddressBanner}
+            onPress={handleOpenAddAddressModal}
+            activeOpacity={0.8}
+          >
+            <View style={styles.emptyAddressIconCircle}>
+              <Icon name="map-marker" size={20} color="#007AFF" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.emptyAddressTitle}>Set Delivery Location on Map</Text>
+              <Text style={styles.emptyAddressSubtitle}>
+                Tap to pick location from map and save your delivery address
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={14} color="#94A3B8" />
+          </TouchableOpacity>
+        )}
+
+        {/* Active Address Form Fields */}
+        <View style={styles.addressFormBox}>
+          <Text style={styles.formFieldLabel}>Recipient Full Name *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Full Name *"
+            placeholderTextColor="#94a3b8"
+            value={name}
+            onChangeText={setName}
+          />
+
+          <View style={styles.mobileInputHeaderRow}>
+            <Text style={styles.formFieldLabel}>Mobile Number (10 digits) *</Text>
+            {isMobileVerified || profile?.mobile ? (
+              <View style={styles.verifiedBadge}>
+                <Icon name="check-circle" size={12} color="#10B981" style={{ marginRight: 4 }} />
+                <Text style={styles.verifiedBadgeText}>Verified</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                onPress={() => handleSendEmailOtp()}
+                disabled={sendingEmailOtp}
+                style={styles.verifyOtpLinkBtn}
+              >
+                {sendingEmailOtp ? (
+                  <ActivityIndicator size="small" color="#007AFF" />
+                ) : (
+                  <Text style={styles.verifyOtpLinkText}>Verify via Email OTP</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.mobileInputWrap}>
+            <Text style={styles.countryCodePrefix}>+91</Text>
+            <TextInput
+              style={[styles.input, styles.mobileInputInner]}
+              placeholder="10-digit mobile number *"
+              placeholderTextColor="#94a3b8"
+              value={mobile}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9]/g, '').slice(0, 10);
+                setMobile(cleaned);
+                if (cleaned.length !== 10 && !profile?.mobile) {
+                  setIsMobileVerified(false);
+                }
+              }}
+              keyboardType="phone-pad"
+              maxLength={10}
+            />
+          </View>
+
+          <Text style={styles.formFieldLabel}>Address / Street / Landmark *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Address / Street / Landmark *"
+            placeholderTextColor="#94a3b8"
+            value={address}
+            onChangeText={setAddress}
+          />
+
+          <View style={styles.addressCityRow}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.formFieldLabel}>City *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="City *"
+                placeholderTextColor="#94a3b8"
+                value={city}
+                onChangeText={setCity}
+              />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={styles.formFieldLabel}>Postal Code</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Postal Code"
+                placeholderTextColor="#94a3b8"
+                value={postalCode}
+                onChangeText={setPostalCode}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          {selectedCoords && (
+            <View style={styles.activeCoordsRow}>
+              <Icon name="crosshairs" size={13} color="#10B981" style={{ marginRight: 6 }} />
+              <Text style={styles.activeCoordsText}>
+                GPS Coordinates: {selectedCoords.latitude.toFixed(5)}, {selectedCoords.longitude.toFixed(5)}
+              </Text>
+            </View>
+          )}
+        </View>
 
         {profile && profile.role === 'seller' && (
           <>
@@ -893,6 +1482,258 @@ const CheckoutScreen = ({ navigation, route }) => {
         customerId={customerId}
         forceShow={true}
       />
+
+      {/* EMAIL OTP VERIFICATION MODAL */}
+      <Modal
+        visible={showOtpModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowOtpModal(false)}
+      >
+        <View style={styles.otpModalOverlay}>
+          <View style={styles.otpModalCard}>
+            <View style={styles.otpModalHeader}>
+              <View style={styles.otpIconWrap}>
+                <Icon name="envelope-o" size={24} color="#007AFF" />
+              </View>
+              <Text style={styles.otpModalTitle}>Verify Contact Details</Text>
+              <Text style={styles.otpModalSub}>
+                We sent a 6-digit verification code to:
+              </Text>
+              <Text style={styles.otpModalEmail}>{currentUser?.email}</Text>
+            </View>
+
+            <TextInput
+              style={styles.otpInput}
+              placeholder="Enter 6-digit code"
+              placeholderTextColor="#94A3B8"
+              value={otpCode}
+              onChangeText={setOtpCode}
+              keyboardType="number-pad"
+              maxLength={6}
+              autoFocus={true}
+            />
+
+            <View style={styles.otpModalActions}>
+              <TouchableOpacity
+                style={styles.otpCancelBtn}
+                onPress={() => setShowOtpModal(false)}
+                disabled={verifyingEmailOtp}
+              >
+                <Text style={styles.otpCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.otpVerifyBtn}
+                onPress={handleVerifyEmailOtp}
+                disabled={verifyingEmailOtp}
+              >
+                {verifyingEmailOtp ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.otpVerifyBtnText}>Verify & Continue</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.otpResendBtn}
+              onPress={() => handleSendEmailOtp()}
+              disabled={sendingEmailOtp}
+            >
+              <Text style={styles.otpResendText}>
+                {sendingEmailOtp ? 'Resending...' : "Didn't receive code? Resend"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ADD / SELECT ADDRESS WITH MAP MODAL */}
+      <Modal
+        visible={showAddressModal}
+        animationType="slide"
+        onRequestClose={() => setShowAddressModal(false)}
+      >
+        <SafeAreaView style={styles.mapModalSafeArea}>
+          <View style={styles.mapModalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mapModalTitle}>📍 Delivery Address & Map</Text>
+              <Text style={styles.mapModalSubtitle}>
+                Pinpoint your delivery location or search your area
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowAddressModal(false)}
+              style={styles.mapModalCloseBtn}
+            >
+              <Icon name="times" size={18} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Search Area Input */}
+          <View style={styles.mapSearchContainer}>
+            <View style={styles.mapSearchInputWrap}>
+              <Icon name="search" size={14} color="#007AFF" style={{ marginRight: 8 }} />
+              <TextInput
+                value={mapSearchQuery}
+                onChangeText={handleMapSearchChange}
+                placeholder="Search area, landmark or street..."
+                placeholderTextColor="#94A3B8"
+                style={styles.mapSearchInput}
+                returnKeyType="search"
+              />
+              {mapSearchLoading && <ActivityIndicator size="small" color="#007AFF" />}
+            </View>
+            {mapSearchSuggestions && mapSearchSuggestions.length > 0 && (
+              <View style={styles.mapSuggestionsDropdown}>
+                {mapSearchSuggestions.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.suggestionRow}
+                    onPress={() => handleSelectAreaSuggestion(item)}
+                  >
+                    <Icon name="map-marker" size={13} color="#007AFF" style={{ marginRight: 8, marginTop: 2 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.suggestionTitle} numberOfLines={1}>{item.title}</Text>
+                      <Text style={styles.suggestionSub} numberOfLines={1}>{item.subtitle}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Interactive Leaflet Map Box */}
+          <View style={styles.mapViewportBox}>
+            <LeafletMap
+              ref={addressMapRef}
+              initialRegion={mapInitialRegion}
+              markerCoordinate={modalCoords || mapInitialRegion}
+              onMarkerDragEnd={(coords) => {
+                setModalCoords(coords);
+                reverseGeocodeAddress(coords.latitude, coords.longitude);
+              }}
+              onMapPress={(coords) => {
+                setModalCoords(coords);
+                reverseGeocodeAddress(coords.latitude, coords.longitude);
+              }}
+            />
+            {/* GPS Floating Button */}
+            <TouchableOpacity
+              style={styles.mapGpsFloatingBtn}
+              onPress={handleUseCurrentLocation}
+              disabled={locatingGps}
+              activeOpacity={0.8}
+            >
+              {locatingGps ? (
+                <ActivityIndicator size="small" color="#007AFF" />
+              ) : (
+                <Icon name="crosshairs" size={20} color="#007AFF" />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Address Form Scroll */}
+          <ScrollView style={styles.modalFormScroll} contentContainerStyle={{ padding: 16 }}>
+            {/* Tag Selection: Home, Work, Other */}
+            <Text style={styles.formFieldLabel}>Address Tag</Text>
+            <View style={styles.tagSelectorRow}>
+              {['Home', 'Work', 'Other'].map((tag) => (
+                <TouchableOpacity
+                  key={tag}
+                  style={[styles.tagOptionBtn, modalTag === tag && styles.tagOptionBtnSelected]}
+                  onPress={() => setModalTag(tag)}
+                >
+                  <Icon
+                    name={tag === 'Work' ? 'briefcase' : tag === 'Other' ? 'map-pin' : 'home'}
+                    size={13}
+                    color={modalTag === tag ? '#FFFFFF' : '#475569'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.tagOptionText, modalTag === tag && styles.tagOptionTextSelected]}>
+                    {tag}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.formFieldLabel}>Recipient Name *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. John Doe"
+              placeholderTextColor="#94a3b8"
+              value={modalRecipientName}
+              onChangeText={setModalRecipientName}
+            />
+
+            <Text style={styles.formFieldLabel}>Mobile Number (10 digits) *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="10-digit mobile number"
+              placeholderTextColor="#94a3b8"
+              value={modalMobile}
+              onChangeText={(text) => setModalMobile(text.replace(/[^0-9]/g, '').slice(0, 10))}
+              keyboardType="phone-pad"
+              maxLength={10}
+            />
+
+            <Text style={styles.formFieldLabel}>House / Flat / Street / Landmark *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Flat 302, Green Valley Apartments"
+              placeholderTextColor="#94a3b8"
+              value={modalAddressLine1}
+              onChangeText={setModalAddressLine1}
+            />
+
+            <View style={{ flexDirection: 'row' }}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.formFieldLabel}>City *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="City"
+                  placeholderTextColor="#94a3b8"
+                  value={modalCity}
+                  onChangeText={setModalCity}
+                />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.formFieldLabel}>Postal Code</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Postal Code"
+                  placeholderTextColor="#94a3b8"
+                  value={modalZipCode}
+                  onChangeText={setModalZipCode}
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            {modalCoords && (
+              <View style={styles.coordsIndicatorRow}>
+                <Icon name="check-circle" size={13} color="#10B981" style={{ marginRight: 6 }} />
+                <Text style={styles.coordsIndicatorText}>
+                  GPS Pinned: {modalCoords.latitude.toFixed(5)}, {modalCoords.longitude.toFixed(5)}
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.saveAddressModalBtn, savingAddress && { opacity: 0.7 }]}
+              onPress={handleSaveModalAddress}
+              disabled={savingAddress}
+              activeOpacity={0.85}
+            >
+              {savingAddress ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.saveAddressModalBtnText}>Save Delivery Address</Text>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 };
@@ -1429,6 +2270,488 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 15,
+  },
+
+  /* Multiple Addresses & Map Selection */
+  addressSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+    marginTop: 18,
+  },
+  sectionSubheading: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  addAddressHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  addAddressHeaderBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  savedAddressesScroll: {
+    paddingVertical: 6,
+    paddingRight: 12,
+  },
+  addressCard: {
+    width: 230,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginRight: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  addressCardSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#F0F9FF',
+  },
+  addressCardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  addressTagBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  tagHome: {
+    backgroundColor: '#E0F2FE',
+  },
+  tagWork: {
+    backgroundColor: '#FEF3C7',
+  },
+  tagOther: {
+    backgroundColor: '#F1F5F9',
+  },
+  addressTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  addressCardName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  addressCardMobile: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  addressCardDetails: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 16,
+  },
+  addressGpsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  addressGpsText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#10B981',
+  },
+  emptyAddressBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 12,
+  },
+  emptyAddressIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyAddressTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E40AF',
+  },
+  emptyAddressSubtitle: {
+    fontSize: 12,
+    color: '#3B82F6',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  addressFormBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  formFieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 5,
+    marginTop: 4,
+  },
+  mobileInputHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 5,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  verifiedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  verifyOtpLinkBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  verifyOtpLinkText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  mobileInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  countryCodePrefix: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderTopLeftRadius: 8,
+    borderBottomLeftRadius: 8,
+    marginBottom: 12,
+  },
+  mobileInputInner: {
+    flex: 1,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+  },
+  addressCityRow: {
+    flexDirection: 'row',
+  },
+  activeCoordsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  activeCoordsText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#10B981',
+  },
+
+  /* Email OTP Modal */
+  otpModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  otpModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  otpModalHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  otpIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  otpModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  otpModalSub: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  otpModalEmail: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#007AFF',
+    marginTop: 2,
+  },
+  otpInput: {
+    borderWidth: 1.5,
+    borderColor: '#007AFF',
+    borderRadius: 8,
+    paddingVertical: 12,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 8,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+    marginBottom: 16,
+  },
+  otpModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  otpCancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    marginRight: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+  },
+  otpCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  otpVerifyBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    marginLeft: 6,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+  },
+  otpVerifyBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  otpResendBtn: {
+    marginTop: 14,
+    alignItems: 'center',
+  },
+  otpResendText: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+
+  /* Address Map Modal */
+  mapModalSafeArea: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  mapModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 12 : 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  mapModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  mapModalSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  mapModalCloseBtn: {
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+  },
+  mapSearchContainer: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    zIndex: 99,
+  },
+  mapSearchInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+  },
+  mapSearchInput: {
+    flex: 1,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  mapSuggestionsDropdown: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 6,
+    maxHeight: 160,
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  suggestionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  suggestionSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  mapViewportBox: {
+    height: 220,
+    width: '100%',
+    position: 'relative',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  mapGpsFloatingBtn: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    backgroundColor: '#FFFFFF',
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    zIndex: 10,
+  },
+  modalFormScroll: {
+    flex: 1,
+  },
+  tagSelectorRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  tagOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  tagOptionBtnSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  tagOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  tagOptionTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  coordsIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 14,
+  },
+  coordsIndicatorText: {
+    fontSize: 11,
+    color: '#065F46',
+    fontWeight: '600',
+  },
+  saveAddressModalBtn: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 13,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 24,
+  },
+  saveAddressModalBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
 

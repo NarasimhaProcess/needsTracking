@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Video } from 'expo-av';
 import Swiper from 'react-native-swiper';
