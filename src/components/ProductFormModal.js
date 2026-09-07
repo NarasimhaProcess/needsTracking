@@ -18,25 +18,29 @@ import { Picker } from '@react-native-picker/picker';
 import UniversalDateTimePicker from './UniversalDateTimePicker';
 import * as ImagePicker from 'expo-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase, createProduct, saveProductMedia, createProductVariant, createVariantOption, deleteProductVariants, createProductVariantCombination } from '../services/supabase';
+import {
+  supabase,
+  createProduct,
+  saveProductMedia,
+  createProductVariant,
+  createVariantOption,
+  deleteProductVariants,
+  createProductVariantCombination,
+  getCategories,
+  getSubcategories,
+  DEFAULT_MASTER_CATEGORIES,
+} from '../services/supabase';
 import { Video } from 'expo-av';
 import VariantManager from './VariantManager';
 import { showAlert } from '../utils/alertUtils';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
-export const PRODUCT_CATEGORIES = [
-  { label: 'Grocery & Essentials', value: 'grocery' },
-  { label: 'Fruits & Vegetables', value: 'fruits_vegetables' },
-  { label: 'Dairy & Bakery', value: 'dairy_bakery' },
-  { label: 'Snacks & Beverages', value: 'snacks_beverages' },
-  { label: 'Clothing & Fashion', value: 'clothing' },
-  { label: 'Electronics & Gadgets', value: 'electronics' },
-  { label: 'Beauty & Personal Care', value: 'beauty_personal_care' },
-  { label: 'Home & Kitchen', value: 'home_kitchen' },
-  { label: 'Pharmacy & Health', value: 'pharmacy' },
-  { label: 'Other / General', value: 'other' },
-];
+export const PRODUCT_CATEGORIES = DEFAULT_MASTER_CATEGORIES.map(c => ({
+  label: c.name,
+  value: c.code,
+}));
+
 
 const generateVariantCombinations = (variants, basePrice = 0) => {
   const activeVariants = (variants || [])
@@ -144,7 +148,11 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
   const [productName, setProductName] = useState('');
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
-  const [productType, setProductType] = useState('other');
+  const [productType, setProductType] = useState('grocery');
+  const [categoriesList, setCategoriesList] = useState([]);
+  const [subcategoriesList, setSubcategoriesList] = useState([]);
+  const [subcategoryId, setSubcategoryId] = useState('');
+  const [subcategoryName, setSubcategoryName] = useState('');
   const [unit, setUnit] = useState('');
   const [stockQuantity, setStockQuantity] = useState('100');
   const [productVariants, setProductVariants] = useState([]);
@@ -167,12 +175,60 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
 
   const [showMatrix, setShowMatrix] = useState(false);
 
+  // Load categories from DB when modal is shown
+  useEffect(() => {
+    let isMounted = true;
+    const loadCats = async () => {
+      try {
+        const cats = await getCategories(false);
+        if (isMounted && cats && cats.length > 0) {
+          setCategoriesList(cats);
+        }
+      } catch (err) {
+        console.warn('Error loading categories in ProductFormModal:', err);
+      }
+    };
+    if (isVisible) {
+      loadCats();
+    }
+    return () => { isMounted = false; };
+  }, [isVisible]);
+
+  // Dynamically load subcategories whenever category (productType) changes
+  useEffect(() => {
+    let isMounted = true;
+    const loadSubs = async () => {
+      try {
+        const cat = categoriesList.find(c => c.code === productType || c.id === productType);
+        const subs = await getSubcategories(cat?.id, cat?.code || productType, false);
+        if (isMounted) {
+          setSubcategoriesList(subs || []);
+          if (subcategoryId) {
+            const match = (subs || []).find(s => s.id === subcategoryId || s.code === subcategoryId);
+            if (!match) {
+              setSubcategoryId('');
+              setSubcategoryName('');
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error loading subcategories in ProductFormModal:', err);
+      }
+    };
+    if (productType) {
+      loadSubs();
+    }
+    return () => { isMounted = false; };
+  }, [productType, categoriesList]);
+
   useEffect(() => {
     if (productToEdit) {
       setProductName(productToEdit.product_name || '');
       setDescription(productToEdit.description || '');
       setAmount(productToEdit.amount !== undefined && productToEdit.amount !== null ? productToEdit.amount.toString() : '');
-      setProductType(productToEdit.product_type || 'other');
+      setProductType(productToEdit.product_type || 'grocery');
+      setSubcategoryId(productToEdit.subcategory_id || productToEdit.subcategory || '');
+      setSubcategoryName(productToEdit.subcategory || '');
       setUnit(productToEdit.unit || '');
       setStartDate(productToEdit.start_date ? new Date(productToEdit.start_date) : new Date());
       setEndDate(productToEdit.end_date ? new Date(productToEdit.end_date) : new Date());
@@ -200,11 +256,10 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       const loadedVariants = (productToEdit.product_variants || []).map(v => ({
         ...v,
         variant_options: (v.variant_options || []).map(o => {
-          const optVal = typeof o === 'string' ? o : o?.value || '';
-          const matchCombo = loadedCombinations.find(c => {
-            const normalizedComb = (c.combination_string || '').replace(/\s/g, '').toLowerCase();
-            return normalizedComb === `${v.name}:${optVal}`.replace(/\s/g, '').toLowerCase() ||
-                   normalizedComb === optVal.replace(/\s/g, '').toLowerCase();
+          const optVal = (typeof o === 'string' ? o : o?.value || '').trim();
+          const matchCombo = (loadedCombinations || []).find(c => {
+            const parts = (c.combination_string || '').split(',').map(p => p.trim());
+            return parts.some(p => p.endsWith(`:${optVal}`) || p === optVal);
           });
           return {
             ...(typeof o === 'object' ? o : { value: o }),
@@ -225,7 +280,9 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       setProductName('');
       setDescription('');
       setAmount('');
-      setProductType('other');
+      setProductType('grocery');
+      setSubcategoryId('');
+      setSubcategoryName('');
       setUnit('');
       setStockQuantity('100');
       setStartDate(new Date());
@@ -345,12 +402,16 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       return;
     }
 
+    const matchingCat = categoriesList.find(c => c.code === productType || c.id === productType);
+    const selectedCatId = matchingCat?.id && matchingCat.id !== matchingCat.code ? matchingCat.id : null;
+    const selectedSub = subcategoriesList.find(s => s.id === subcategoryId || s.code === subcategoryId);
+
     const productData = {
       user_id: userId,
       product_name: productName,
       description: description,
       amount: parseFloat(amount),
-      product_type: productType,
+      product_type: matchingCat?.code || productType,
       unit: unit,
       start_date: startDate.toISOString().split('T')[0],
       end_date: endDate.toISOString().split('T')[0],
@@ -360,13 +421,35 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
       display_order: parseInt(displayOrder, 10),
     };
 
+    if (selectedCatId) {
+      productData.category_id = selectedCatId;
+    }
+    if (selectedSub?.id && selectedSub.id !== selectedSub.code) {
+      productData.subcategory_id = selectedSub.id;
+    }
+    if (selectedSub?.name || subcategoryName) {
+      productData.subcategory = selectedSub?.name || subcategoryName;
+    }
+
     let productResult;
     if (productToEdit) {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('products')
         .update(productData)
         .eq('id', productToEdit.id)
         .select();
+
+      if (error && (error.code === 'PGRST204' || (error.message && error.message.includes('column')))) {
+        console.warn('Retrying product update without category/subcategory columns:', error.message);
+        const fallbackData = { ...productData };
+        delete fallbackData.category_id;
+        delete fallbackData.subcategory_id;
+        delete fallbackData.subcategory;
+        const retry = await supabase.from('products').update(fallbackData).eq('id', productToEdit.id).select();
+        data = retry.data;
+        error = retry.error;
+      }
+
       if (error) {
         console.error("Error updating product:", error.message);
         showAlert("Error", "Failed to update product.");
@@ -509,10 +592,30 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
               style={styles.picker}
               onValueChange={(itemValue) => setProductType(itemValue)}
             >
-              {PRODUCT_CATEGORIES.map((cat) => (
-                <Picker.Item key={cat.value} label={cat.label} value={cat.value} />
+              {(categoriesList && categoriesList.length > 0
+                ? categoriesList
+                : PRODUCT_CATEGORIES.map(c => ({ id: c.value, code: c.value, name: c.label }))
+              ).map((cat) => (
+                <Picker.Item key={cat.code || cat.id} label={cat.name || cat.label} value={cat.code || cat.id} />
               ))}
             </Picker>
+
+            <Text style={styles.label}>Product Subcategory</Text>
+            <Picker
+              selectedValue={subcategoryId}
+              style={styles.picker}
+              onValueChange={(itemValue) => {
+                setSubcategoryId(itemValue);
+                const sub = subcategoriesList.find(s => s.id === itemValue || s.code === itemValue);
+                setSubcategoryName(sub ? sub.name : '');
+              }}
+            >
+              <Picker.Item label="-- None / General --" value="" />
+              {subcategoriesList.map((sub) => (
+                <Picker.Item key={sub.id || sub.code} label={sub.name} value={sub.id || sub.code} />
+              ))}
+            </Picker>
+
             <Text style={styles.label}>Unit</Text>
             <Picker
               selectedValue={unit}

@@ -1618,6 +1618,50 @@ const ProfileScreen = ({ navigation, route }) => {
             </TouchableOpacity>
           </View>
 
+          {/* Catalog & Sub-Catalog Master Maintenance Action */}
+          <View style={{ marginBottom: 12 }}>
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: '#EFF6FF',
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+                borderRadius: 10,
+                borderWidth: 1.5,
+                borderColor: '#3B82F6',
+              }}
+              onPress={() => navigation.navigate('CatalogManagement', { fromTab: 'profile' })}
+              activeOpacity={0.8}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <View
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 8,
+                    backgroundColor: '#007AFF',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginRight: 10,
+                  }}
+                >
+                  <Icon name="tags" size={15} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E3A8A' }}>
+                    Manage Catalog & Sub-Catalog
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#3B82F6', marginTop: 1 }}>
+                    Add, edit, active/inactive categories & subcategories for all users & sellers
+                  </Text>
+                </View>
+              </View>
+              <Icon name="chevron-right" size={13} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
+
           {/* Global Master Bulk Actions */}
           <View style={styles.adminGlobalActionsBox}>
             <Text style={styles.adminGlobalTitle}>Global Platform Actions (All Stores)</Text>

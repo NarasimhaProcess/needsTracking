@@ -67,10 +67,21 @@ export async function getTransactionsByCustomerId(customerId) {
 }
 
 export async function createProduct(productData) {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('products')
     .insert([productData])
     .select();
+
+  if (error && (error.code === 'PGRST204' || (error.message && error.message.includes('column')))) {
+    console.warn('Retrying createProduct without category_id/subcategory fields:', error.message);
+    const fallbackData = { ...productData };
+    delete fallbackData.category_id;
+    delete fallbackData.subcategory_id;
+    delete fallbackData.subcategory;
+    const retry = await supabase.from('products').insert([fallbackData]).select();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     console.error('Error creating product:', error.message);
@@ -2022,3 +2033,265 @@ export async function deleteUserAddress(addressId) {
   if (error) throw error;
   return true;
 }
+
+// =========================================================================
+// CATALOG & SUBCATALOG (CATEGORIES & SUBCATEGORIES) SERVICE LAYER
+// =========================================================================
+
+export const DEFAULT_MASTER_CATEGORIES = [
+  { id: 'grocery', name: 'Grocery & Essentials', code: 'grocery', icon: 'shopping-basket', display_order: 1, is_active: true },
+  { id: 'fruits_vegetables', name: 'Fruits & Vegetables', code: 'fruits_vegetables', icon: 'lemon-o', display_order: 2, is_active: true },
+  { id: 'dairy_bakery', name: 'Dairy & Bakery', code: 'dairy_bakery', icon: 'birthday-cake', display_order: 3, is_active: true },
+  { id: 'snacks_beverages', name: 'Snacks & Beverages', code: 'snacks_beverages', icon: 'coffee', display_order: 4, is_active: true },
+  { id: 'clothing', name: 'Clothing & Fashion', code: 'clothing', icon: 'tag', display_order: 5, is_active: true },
+  { id: 'electronics', name: 'Electronics & Gadgets', code: 'electronics', icon: 'laptop', display_order: 6, is_active: true },
+  { id: 'beauty_personal_care', name: 'Beauty & Personal Care', code: 'beauty_personal_care', icon: 'heart', display_order: 7, is_active: true },
+  { id: 'home_kitchen', name: 'Home & Kitchen', code: 'home_kitchen', icon: 'home', display_order: 8, is_active: true },
+  { id: 'pharmacy', name: 'Pharmacy & Health', code: 'pharmacy', icon: 'medkit', display_order: 9, is_active: true },
+  { id: 'other', name: 'Other / General', code: 'other', icon: 'cube', display_order: 10, is_active: true },
+];
+
+export const DEFAULT_MASTER_SUBCATEGORIES = {
+  grocery: [
+    { id: 'atta_flours', category_code: 'grocery', name: 'Atta, Flours & Grains', code: 'atta_flours', display_order: 1, is_active: true },
+    { id: 'rice_products', category_code: 'grocery', name: 'Rice & Rice Products', code: 'rice_products', display_order: 2, is_active: true },
+    { id: 'dals_pulses', category_code: 'grocery', name: 'Dals & Pulses', code: 'dals_pulses', display_order: 3, is_active: true },
+    { id: 'oils_ghee', category_code: 'grocery', name: 'Edible Oils & Ghee', code: 'oils_ghee', display_order: 4, is_active: true },
+    { id: 'spices_masalas', category_code: 'grocery', name: 'Spices & Masalas', code: 'spices_masalas', display_order: 5, is_active: true },
+    { id: 'salt_sugar', category_code: 'grocery', name: 'Salt, Sugar & Jaggery', code: 'salt_sugar', display_order: 6, is_active: true },
+  ],
+  fruits_vegetables: [
+    { id: 'fresh_vegetables', category_code: 'fruits_vegetables', name: 'Fresh Vegetables', code: 'fresh_vegetables', display_order: 1, is_active: true },
+    { id: 'fresh_fruits', category_code: 'fruits_vegetables', name: 'Fresh Fruits', code: 'fresh_fruits', display_order: 2, is_active: true },
+    { id: 'leafy_greens', category_code: 'fruits_vegetables', name: 'Leafy Greens & Herbs', code: 'leafy_greens', display_order: 3, is_active: true },
+    { id: 'organic_exotic', category_code: 'fruits_vegetables', name: 'Organic & Exotic', code: 'organic_exotic', display_order: 4, is_active: true },
+  ],
+  dairy_bakery: [
+    { id: 'milk_cream', category_code: 'dairy_bakery', name: 'Milk & Cream', code: 'milk_cream', display_order: 1, is_active: true },
+    { id: 'curd_yogurt', category_code: 'dairy_bakery', name: 'Curd & Yogurt', code: 'curd_yogurt', display_order: 2, is_active: true },
+    { id: 'paneer_cheese', category_code: 'dairy_bakery', name: 'Paneer, Butter & Cheese', code: 'paneer_cheese', display_order: 3, is_active: true },
+    { id: 'breads_pav', category_code: 'dairy_bakery', name: 'Breads & Pav', code: 'breads_pav', display_order: 4, is_active: true },
+    { id: 'cakes_rusk', category_code: 'dairy_bakery', name: 'Cakes & Rusk', code: 'cakes_rusk', display_order: 5, is_active: true },
+  ],
+  snacks_beverages: [
+    { id: 'biscuits_cookies', category_code: 'snacks_beverages', name: 'Biscuits & Cookies', code: 'biscuits_cookies', display_order: 1, is_active: true },
+    { id: 'chips_namkeen', category_code: 'snacks_beverages', name: 'Chips & Namkeen', code: 'chips_namkeen', display_order: 2, is_active: true },
+    { id: 'tea_coffee', category_code: 'snacks_beverages', name: 'Tea & Coffee', code: 'tea_coffee', display_order: 3, is_active: true },
+    { id: 'cold_drinks_juices', category_code: 'snacks_beverages', name: 'Cold Drinks & Juices', code: 'cold_drinks_juices', display_order: 4, is_active: true },
+    { id: 'instant_food', category_code: 'snacks_beverages', name: 'Noodles & Instant Food', code: 'instant_food', display_order: 5, is_active: true },
+  ],
+  clothing: [
+    { id: 'mens_wear', category_code: 'clothing', name: "Men's Wear", code: 'mens_wear', display_order: 1, is_active: true },
+    { id: 'womens_wear', category_code: 'clothing', name: "Women's Wear", code: 'womens_wear', display_order: 2, is_active: true },
+    { id: 'kids_clothing', category_code: 'clothing', name: "Kids' Clothing", code: 'kids_clothing', display_order: 3, is_active: true },
+    { id: 'footwear', category_code: 'clothing', name: 'Footwear', code: 'footwear', display_order: 4, is_active: true },
+    { id: 'fashion_accessories', category_code: 'clothing', name: 'Fashion Accessories', code: 'fashion_accessories', display_order: 5, is_active: true },
+  ],
+  electronics: [
+    { id: 'mobile_accessories', category_code: 'electronics', name: 'Mobile Accessories', code: 'mobile_accessories', display_order: 1, is_active: true },
+    { id: 'audio_earphones', category_code: 'electronics', name: 'Audio & Earphones', code: 'audio_earphones', display_order: 2, is_active: true },
+    { id: 'smart_wearables', category_code: 'electronics', name: 'Smart Wearables', code: 'smart_wearables', display_order: 3, is_active: true },
+    { id: 'small_appliances', category_code: 'electronics', name: 'Small Appliances', code: 'small_appliances', display_order: 4, is_active: true },
+  ],
+  beauty_personal_care: [
+    { id: 'skincare', category_code: 'beauty_personal_care', name: 'Skin & Face Care', code: 'skincare', display_order: 1, is_active: true },
+    { id: 'haircare', category_code: 'beauty_personal_care', name: 'Hair Care', code: 'haircare', display_order: 2, is_active: true },
+    { id: 'bath_body', category_code: 'beauty_personal_care', name: 'Bath & Body', code: 'bath_body', display_order: 3, is_active: true },
+    { id: 'oral_care', category_code: 'beauty_personal_care', name: 'Oral Care', code: 'oral_care', display_order: 4, is_active: true },
+  ],
+  home_kitchen: [
+    { id: 'cleaning_detergents', category_code: 'home_kitchen', name: 'Cleaning & Detergents', code: 'cleaning_detergents', display_order: 1, is_active: true },
+    { id: 'cookware_utensils', category_code: 'home_kitchen', name: 'Cookware & Utensils', code: 'cookware_utensils', display_order: 2, is_active: true },
+    { id: 'pooja_needs', category_code: 'home_kitchen', name: 'Pooja Needs', code: 'pooja_needs', display_order: 3, is_active: true },
+    { id: 'disposables', category_code: 'home_kitchen', name: 'Disposables & Trash Bags', code: 'disposables', display_order: 4, is_active: true },
+  ],
+  pharmacy: [
+    { id: 'first_aid', category_code: 'pharmacy', name: 'First Aid & Antiseptics', code: 'first_aid', display_order: 1, is_active: true },
+    { id: 'vitamins_supplements', category_code: 'pharmacy', name: 'Vitamins & Supplements', code: 'vitamins_supplements', display_order: 2, is_active: true },
+    { id: 'healthcare_devices', category_code: 'pharmacy', name: 'Healthcare Devices', code: 'healthcare_devices', display_order: 3, is_active: true },
+    { id: 'digestives_pain', category_code: 'pharmacy', name: 'Digestives & Pain Relief', code: 'digestives_pain', display_order: 4, is_active: true },
+  ],
+  other: [
+    { id: 'stationery', category_code: 'other', name: 'Stationery & School', code: 'stationery', display_order: 1, is_active: true },
+    { id: 'hardware_electricals', category_code: 'other', name: 'Hardware & Electricals', code: 'hardware_electricals', display_order: 2, is_active: true },
+    { id: 'general_misc', category_code: 'other', name: 'General Miscellaneous', code: 'general_misc', display_order: 3, is_active: true },
+  ],
+};
+
+export async function getCategories(includeInactive = false) {
+  try {
+    let query = supabase.from('categories').select('*').order('display_order', { ascending: true });
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) {
+      return DEFAULT_MASTER_CATEGORIES.filter(c => includeInactive || c.is_active);
+    }
+    return data;
+  } catch (err) {
+    console.warn('getCategories error, using fallback master data:', err);
+    return DEFAULT_MASTER_CATEGORIES.filter(c => includeInactive || c.is_active);
+  }
+}
+
+export async function getSubcategories(categoryId = null, categoryCode = null, includeInactive = false) {
+  try {
+    let query = supabase.from('subcategories').select('*').order('display_order', { ascending: true });
+    if (categoryId) {
+      query = query.eq('category_id', categoryId);
+    }
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) {
+      let list = [];
+      if (categoryCode && DEFAULT_MASTER_SUBCATEGORIES[categoryCode]) {
+        list = DEFAULT_MASTER_SUBCATEGORIES[categoryCode];
+      } else if (categoryId) {
+        const cat = DEFAULT_MASTER_CATEGORIES.find(c => c.id === categoryId || c.code === categoryId);
+        if (cat && DEFAULT_MASTER_SUBCATEGORIES[cat.code]) {
+          list = DEFAULT_MASTER_SUBCATEGORIES[cat.code];
+        }
+      } else {
+        Object.values(DEFAULT_MASTER_SUBCATEGORIES).forEach(arr => list.push(...arr));
+      }
+      return list.filter(s => includeInactive || s.is_active);
+    }
+    return data;
+  } catch (err) {
+    console.warn('getSubcategories error, using fallback:', err);
+    let list = [];
+    if (categoryCode && DEFAULT_MASTER_SUBCATEGORIES[categoryCode]) {
+      list = DEFAULT_MASTER_SUBCATEGORIES[categoryCode];
+    } else {
+      Object.values(DEFAULT_MASTER_SUBCATEGORIES).forEach(arr => list.push(...arr));
+    }
+    return list.filter(s => includeInactive || s.is_active);
+  }
+}
+
+export async function getAllCategoriesWithSubcategories(includeInactive = false) {
+  try {
+    let query = supabase
+      .from('categories')
+      .select('*, subcategories(*)')
+      .order('display_order', { ascending: true });
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) {
+      return DEFAULT_MASTER_CATEGORIES.filter(c => includeInactive || c.is_active).map(cat => ({
+        ...cat,
+        subcategories: (DEFAULT_MASTER_SUBCATEGORIES[cat.code] || []).filter(s => includeInactive || s.is_active),
+      }));
+    }
+    return data;
+  } catch (err) {
+    console.warn('getAllCategoriesWithSubcategories error, fallback:', err);
+    return DEFAULT_MASTER_CATEGORIES.filter(c => includeInactive || c.is_active).map(cat => ({
+      ...cat,
+      subcategories: (DEFAULT_MASTER_SUBCATEGORIES[cat.code] || []).filter(s => includeInactive || s.is_active),
+    }));
+  }
+}
+
+export async function createCategory(categoryData) {
+  const { data, error } = await supabase.from('categories').insert([categoryData]).select();
+  if (error) {
+    console.error('Error creating category:', error.message);
+    throw error;
+  }
+  return data?.[0] || null;
+}
+
+export async function updateCategory(id, categoryData) {
+  const { data, error } = await supabase.from('categories').update(categoryData).eq('id', id).select();
+  if (error) {
+    console.error('Error updating category:', error.message);
+    throw error;
+  }
+  return data?.[0] || null;
+}
+
+export async function deleteCategory(id) {
+  const { error } = await supabase.from('categories').delete().eq('id', id);
+  if (error) {
+    console.error('Error deleting category:', error.message);
+    throw error;
+  }
+  return true;
+}
+
+export async function createSubcategory(subcategoryData) {
+  const { data, error } = await supabase.from('subcategories').insert([subcategoryData]).select();
+  if (error) {
+    console.error('Error creating subcategory:', error.message);
+    throw error;
+  }
+  return data?.[0] || null;
+}
+
+export async function updateSubcategory(id, subcategoryData) {
+  const { data, error } = await supabase.from('subcategories').update(subcategoryData).eq('id', id).select();
+  if (error) {
+    console.error('Error updating subcategory:', error.message);
+    throw error;
+  }
+  return data?.[0] || null;
+}
+
+export async function deleteSubcategory(id) {
+  const { error } = await supabase.from('subcategories').delete().eq('id', id);
+  if (error) {
+    console.error('Error deleting subcategory:', error.message);
+    throw error;
+  }
+  return true;
+}
+
+export async function seedMasterCatalogData() {
+  try {
+    for (const cat of DEFAULT_MASTER_CATEGORIES) {
+      const { data: catData, error: catError } = await supabase
+        .from('categories')
+        .upsert(
+          {
+            name: cat.name,
+            code: cat.code,
+            icon: cat.icon,
+            display_order: cat.display_order,
+            description: cat.name,
+            is_active: true,
+          },
+          { onConflict: 'code' }
+        )
+        .select();
+
+      if (!catError && catData && catData[0]) {
+        const catId = catData[0].id;
+        const subList = DEFAULT_MASTER_SUBCATEGORIES[cat.code] || [];
+        for (const sub of subList) {
+          await supabase.from('subcategories').upsert(
+            {
+              category_id: catId,
+              name: sub.name,
+              code: sub.code,
+              display_order: sub.display_order,
+              description: sub.name,
+              is_active: true,
+            },
+            { onConflict: 'category_id,code' }
+          );
+        }
+      }
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('Error in seedMasterCatalogData:', err);
+    return { success: false, error: err.message };
+  }
+}
+

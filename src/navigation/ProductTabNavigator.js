@@ -19,6 +19,7 @@ import CheckoutScreen from '../screens/CheckoutScreen';
 import UpiQrScreen from '../screens/UpiQrScreen';
 import OrderConfirmationScreen from '../screens/OrderConfirmationScreen';
 import CartScreen from '../screens/CartScreen';
+import CatalogManagementScreen from '../screens/CatalogManagementScreen';
 
 const Tab = createBottomTabNavigator();
 const OrdersStack = createStackNavigator();
@@ -110,6 +111,16 @@ function CatalogStackNavigator({ route }) {
       <CatalogStack.Screen
         name="OrderDetail"
         component={OrderDetailScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="CatalogManagement"
+        component={CatalogManagementScreen}
+        initialParams={route?.params}
+      />
+      <CatalogStack.Screen
+        name="CategoryManagement"
+        component={CatalogManagementScreen}
         initialParams={route?.params}
       />
     </CatalogStack.Navigator>

@@ -31,3 +31,40 @@ VALUES
 ('Enterprise', 'Corporate clients with custom contract agreements');
 
 
+
+-- Master Categories & Subcategories
+INSERT INTO public.categories (name, code, icon, display_order, description, is_active)
+VALUES
+    ('Grocery & Essentials', 'grocery', 'shopping-basket', 1, 'Daily grocery staples, pulses, grains and cooking essentials', true),
+    ('Fruits & Vegetables', 'fruits_vegetables', 'lemon-o', 2, 'Fresh seasonal fruits, greens and vegetables', true),
+    ('Dairy & Bakery', 'dairy_bakery', 'birthday-cake', 3, 'Milk, butter, curd, bread and fresh bakery items', true),
+    ('Snacks & Beverages', 'snacks_beverages', 'coffee', 4, 'Biscuits, chips, namkeen, cold drinks, tea and coffee', true),
+    ('Clothing & Fashion', 'clothing', 'tag', 5, 'Men, women and kids apparel and fashion accessories', true),
+    ('Electronics & Gadgets', 'electronics', 'laptop', 6, 'Mobile accessories, small electronics and gadgets', true),
+    ('Beauty & Personal Care', 'beauty_personal_care', 'heart', 7, 'Skincare, haircare, oral care and personal grooming', true),
+    ('Home & Kitchen', 'home_kitchen', 'home', 8, 'Cleaning supplies, kitchen utilities and home storage', true),
+    ('Pharmacy & Health', 'pharmacy', 'medkit', 9, 'Over-the-counter medicine, first aid and wellness products', true),
+    ('Other / General', 'other', 'cube', 10, 'General merchandise and miscellaneous items', true)
+ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name,
+    icon = EXCLUDED.icon,
+    display_order = EXCLUDED.display_order,
+    description = EXCLUDED.description,
+    is_active = EXCLUDED.is_active;
+
+INSERT INTO public.subcategories (category_id, name, code, display_order, description, is_active)
+SELECT id, s.name, s.code, s.display_order, s.description, true
+FROM public.categories,
+(VALUES
+    ('Atta, Flours & Grains', 'atta_flours', 1, 'Wheat flour, maida, sooji, besan and grains'),
+    ('Rice & Rice Products', 'rice_products', 2, 'Basmati, sona masoori, poha and murmura'),
+    ('Dals & Pulses', 'dals_pulses', 3, 'Toor dal, moong dal, chana dal, urad dal and beans'),
+    ('Edible Oils & Ghee', 'oils_ghee', 4, 'Mustard, sunflower, groundnut oil and pure ghee'),
+    ('Spices & Masalas', 'spices_masalas', 5, 'Whole and powdered spices, blended masalas'),
+    ('Salt, Sugar & Jaggery', 'salt_sugar', 6, 'Iodized salt, white sugar, brown sugar and jaggery')
+) AS s(name, code, display_order, description)
+WHERE public.categories.code = 'grocery'
+ON CONFLICT (category_id, code) DO UPDATE SET
+    name = EXCLUDED.name,
+    display_order = EXCLUDED.display_order,
+    description = EXCLUDED.description;

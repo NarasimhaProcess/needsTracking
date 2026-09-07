@@ -12,6 +12,9 @@ const StoreNavigationFooter = ({
   customerId: propCustomerId,
   onStorePress,
   onStoresPress,
+  onCartPress,
+  onOrdersPress,
+  onProfilePress,
   forceShow = false,
 }) => {
   const { cart, cartItemCount: contextCartItemCount, user } = useCart();
@@ -71,6 +74,12 @@ const StoreNavigationFooter = ({
         onStorePress();
       } else if (tab === 'stores' && onStoresPress) {
         onStoresPress();
+      } else if (tab === 'cart' && onCartPress) {
+        onCartPress();
+      } else if (tab === 'orders' && onOrdersPress) {
+        onOrdersPress();
+      } else if (tab === 'profile' && onProfilePress) {
+        onProfilePress();
       }
       return;
     }

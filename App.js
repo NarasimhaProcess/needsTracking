@@ -48,6 +48,8 @@ import DeliveryManagerSignupScreen from './src/screens/DeliveryManagerSignupScre
 import AdminMapScreen from './src/screens/AdminMapScreen';
 import UpiQrScreen from './src/screens/UpiQrScreen';
 import CustomerDamageScreen from './src/screens/CustomerDamageScreen';
+import CatalogManagementScreen from './src/screens/CatalogManagementScreen';
+import ProductDetailScreen from './src/screens/ProductDetailScreen';
 
 // Import custom navigators
 import ProductTabNavigator from './src/navigation/ProductTabNavigator';
@@ -473,6 +475,10 @@ export default function App() {
             <Stack.Screen name="CustomerDamage" component={CustomerDamageScreen} />
             <Stack.Screen name="DamageScreen" component={CustomerDamageScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
+            <Stack.Screen name="CatalogManagement" component={CatalogManagementScreen} />
+            <Stack.Screen name="CategoryManagement" component={CatalogManagementScreen} />
+            <Stack.Screen name="ProductDetailScreen" component={ProductDetailScreen} />
+            <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
             {/* ProductTabNavigator will handle Product, Inventory, Profile, Invoice screens */}
             <Stack.Screen name="ProductTabs" component={ProductTabNavigator} initialParams={{ session }} />
             {console.log('App.js: Session passed to ProductTabs:', session)}

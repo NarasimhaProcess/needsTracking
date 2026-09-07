@@ -21,7 +21,18 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getActiveProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase, setSellerProductsActiveStatus, ensureUserProfile } from '../services/supabase';
+import {
+  getActiveProductsWithDetails,
+  addToCart,
+  getCart,
+  updateCartItem,
+  removeCartItem,
+  supabase,
+  setSellerProductsActiveStatus,
+  ensureUserProfile,
+  getCategories,
+  getSubcategories,
+} from '../services/supabase';
 import { getGuestCart } from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
@@ -78,11 +89,15 @@ const CatalogScreen = ({ navigation, route }) => {
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [catalogCategories, setCatalogCategories] = useState(CATALOG_CATEGORIES);
+  const [catalogSubcategories, setCatalogSubcategories] = useState([]);
+  const [selectedSubcategory, setSelectedSubcategory] = useState('all');
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
   const [guestCart, setGuestCart] = useState([]);
   const [isCartModalVisible, setIsCartModalVisible] = useState(false);
   const [user, setUser] = useState(null);
+  const [userRole, setUserRole] = useState('');
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
   const [updatingCart, setUpdatingCart] = useState(false);
@@ -91,6 +106,62 @@ const CatalogScreen = ({ navigation, route }) => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [selectedVariantFilter, setSelectedVariantFilter] = useState(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchCatalogData = async () => {
+      try {
+        const cats = await getCategories(false);
+        if (isMounted && cats && cats.length > 0) {
+          const mapped = [
+            { id: 'all', label: 'All Items', icon: 'th-large', code: 'all' },
+            ...cats.map((c) => ({
+              id: c.code || c.id,
+              dbId: c.id,
+              code: c.code,
+              label: c.name,
+              icon: c.icon || 'tag',
+            })),
+          ];
+          setCatalogCategories(mapped);
+        }
+      } catch (err) {
+        console.warn('[CatalogScreen] Error fetching categories:', err);
+      }
+    };
+    fetchCatalogData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchSubcategoriesData = async () => {
+      if (!selectedCategory || selectedCategory === 'all') {
+        setCatalogSubcategories([]);
+        setSelectedSubcategory('all');
+        return;
+      }
+      try {
+        const catObj = catalogCategories.find(
+          (c) => c.id === selectedCategory || c.code === selectedCategory
+        );
+        const subs = await getSubcategories(catObj?.dbId, catObj?.code || selectedCategory, false);
+        if (isMounted) {
+          setCatalogSubcategories(subs || []);
+          setSelectedSubcategory('all');
+        }
+      } catch (err) {
+        console.warn('[CatalogScreen] Error fetching subcategories:', err);
+      }
+    };
+    fetchSubcategoriesData();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedCategory, catalogCategories]);
+
 
   const getProductCombinations = useCallback((product) => {
     if (!product) return [];
@@ -208,15 +279,21 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const getCategoryLabel = useCallback((productType) => {
     if (!productType) return 'General';
-    const cat = CATALOG_CATEGORIES.find(c => c.id === productType.toLowerCase());
+    const cat = catalogCategories.find(
+      c => (c.id || '').toLowerCase() === productType.toLowerCase() ||
+           (c.code || '').toLowerCase() === productType.toLowerCase()
+    );
     return cat ? cat.label : productType.charAt(0).toUpperCase() + productType.slice(1);
-  }, []);
+  }, [catalogCategories]);
 
   const categoryCounts = useMemo(() => {
     const counts = { all: products.length };
     products.forEach((p) => {
       const cat = (p?.product_type || 'other').toLowerCase();
       counts[cat] = (counts[cat] || 0) + 1;
+      if (p?.category_id) {
+        counts[p.category_id.toLowerCase()] = (counts[p.category_id.toLowerCase()] || 0) + 1;
+      }
     });
     return counts;
   }, [products]);
@@ -225,9 +302,25 @@ const CatalogScreen = ({ navigation, route }) => {
     let result = products;
 
     if (selectedCategory && selectedCategory !== 'all') {
+      const targetCat = selectedCategory.toLowerCase();
+      const catObj = catalogCategories.find(c => c.id === targetCat || c.code === targetCat);
       result = result.filter((product) => {
         const pType = (product?.product_type || 'other').toLowerCase();
-        return pType === selectedCategory.toLowerCase();
+        const pCatId = (product?.category_id || '').toLowerCase();
+        return pType === targetCat || (catObj?.code && pType === catObj.code.toLowerCase()) || (catObj?.dbId && pCatId === catObj.dbId.toLowerCase());
+      });
+    }
+
+    if (selectedSubcategory && selectedSubcategory !== 'all') {
+      const targetSub = selectedSubcategory.toLowerCase();
+      const subObj = catalogSubcategories.find(s => (s.id && s.id.toLowerCase() === targetSub) || (s.code && s.code.toLowerCase() === targetSub));
+      result = result.filter((product) => {
+        const pSubId = (product?.subcategory_id || '').toLowerCase();
+        const pSubName = (product?.subcategory || '').toLowerCase();
+        return pSubId === targetSub ||
+               pSubName === targetSub ||
+               (subObj && pSubName === subObj.name.toLowerCase()) ||
+               (subObj && subObj.code && pSubId === subObj.code.toLowerCase());
       });
     }
 
@@ -237,9 +330,10 @@ const CatalogScreen = ({ navigation, route }) => {
         const nameMatch = (product?.product_name || '').toLowerCase().includes(query);
         const descMatch = (product?.description || '').toLowerCase().includes(query);
         const typeMatch = (product?.product_type || '').toLowerCase().includes(query);
+        const subMatch = (product?.subcategory || '').toLowerCase().includes(query);
         const unitMatch = (product?.unit || '').toLowerCase().includes(query);
 
-        const catObj = CATALOG_CATEGORIES.find(c => c.id === (product?.product_type || '').toLowerCase());
+        const catObj = catalogCategories.find(c => c.id === (product?.product_type || '').toLowerCase() || c.code === (product?.product_type || '').toLowerCase());
         const catLabelMatch = catObj ? catObj.label.toLowerCase().includes(query) : false;
 
         const variantMatch = (product?.product_variant_combinations || []).some(
@@ -255,12 +349,12 @@ const CatalogScreen = ({ navigation, route }) => {
                })
         );
 
-        return nameMatch || descMatch || typeMatch || unitMatch || catLabelMatch || variantMatch || variantOptionMatch;
+        return nameMatch || descMatch || typeMatch || subMatch || unitMatch || catLabelMatch || variantMatch || variantOptionMatch;
       });
     }
 
     return result;
-  }, [products, searchQuery, selectedCategory]);
+  }, [products, searchQuery, selectedCategory, selectedSubcategory, catalogCategories, catalogSubcategories]);
 
   useFocusEffect(
     useCallback(() => {
@@ -279,6 +373,7 @@ const CatalogScreen = ({ navigation, route }) => {
             try {
               const profile = await ensureUserProfile(currentUser);
               const r = (profile?.role || currentUser.user_metadata?.role || '').toLowerCase();
+              if (isMounted) setUserRole(r);
               isCustomer = r === 'customer' || r === 'buyer';
             } catch (_) {}
           }
@@ -704,9 +799,18 @@ const CatalogScreen = ({ navigation, route }) => {
           )}
         </TouchableOpacity>
         <View style={styles.productDetails}>
-          {item.product_type ? (
-            <View style={styles.cardCategoryTag}>
-              <Text style={styles.cardCategoryTagText}>{getCategoryLabel(item.product_type)}</Text>
+          {item.product_type || item.subcategory ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
+              {item.product_type ? (
+                <View style={styles.cardCategoryTag}>
+                  <Text style={styles.cardCategoryTagText}>{getCategoryLabel(item.product_type)}</Text>
+                </View>
+              ) : null}
+              {item.subcategory ? (
+                <View style={[styles.cardCategoryTag, { backgroundColor: '#ECFDF5' }]}>
+                  <Text style={[styles.cardCategoryTagText, { color: '#059669' }]}>{item.subcategory}</Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
           <TouchableOpacity onPress={() => openProductModal(item)}>
@@ -841,6 +945,15 @@ const CatalogScreen = ({ navigation, route }) => {
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {user && (userRole === 'seller' || userRole === 'admin' || userRole === 'superadmin') && (
+            <TouchableOpacity
+              style={{ marginRight: 15, padding: 4 }}
+              onPress={() => navigation.navigate('CatalogManagement', { fromTab: 'store', sellerId: activeSellerId, customerId: paramCustomerId })}
+              accessibilityLabel="Catalog Manager"
+            >
+              <Icon name="tags" size={19} color="#007AFF" />
+            </TouchableOpacity>
+          )}
           {user && (
             <TouchableOpacity
               style={{ marginRight: 15, padding: 4 }}
@@ -930,7 +1043,7 @@ const CatalogScreen = ({ navigation, route }) => {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoryScrollContainer}
         >
-          {CATALOG_CATEGORIES.map((cat) => {
+          {catalogCategories.map((cat) => {
             const isSelected = selectedCategory === cat.id;
             const count = categoryCounts[cat.id] || 0;
             if (cat.id !== 'all' && count === 0 && !isSelected) return null;
@@ -944,11 +1057,12 @@ const CatalogScreen = ({ navigation, route }) => {
                 ]}
                 onPress={() => {
                   setSelectedCategory(cat.id === selectedCategory ? 'all' : cat.id);
+                  setSelectedSubcategory('all');
                 }}
                 activeOpacity={0.7}
               >
                 <Icon
-                  name={cat.icon}
+                  name={cat.icon || 'tag'}
                   size={12}
                   color={isSelected ? '#FFFFFF' : '#475569'}
                   style={{ marginRight: 6 }}
@@ -966,6 +1080,61 @@ const CatalogScreen = ({ navigation, route }) => {
           })}
         </ScrollView>
       </View>
+
+      {/* Subcategory Horizontal Filter Bar (Visible when category is selected & subcategories exist) */}
+      {selectedCategory !== 'all' && catalogSubcategories && catalogSubcategories.length > 0 && (
+        <View style={styles.subcategoryBarWrapper}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.subcategoryScrollContainer}
+          >
+            <TouchableOpacity
+              style={[
+                styles.subcategoryChip,
+                selectedSubcategory === 'all' && styles.subcategoryChipSelected,
+              ]}
+              onPress={() => setSelectedSubcategory('all')}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.subcategoryChipText,
+                  selectedSubcategory === 'all' && styles.subcategoryChipTextSelected,
+                ]}
+              >
+                All Subcategories
+              </Text>
+            </TouchableOpacity>
+            {catalogSubcategories.map((sub) => {
+              const subIdVal = sub.code || sub.id;
+              const isSubSelected = selectedSubcategory === subIdVal;
+              return (
+                <TouchableOpacity
+                  key={sub.id || sub.code}
+                  style={[
+                    styles.subcategoryChip,
+                    isSubSelected && styles.subcategoryChipSelected,
+                  ]}
+                  onPress={() => {
+                    setSelectedSubcategory(isSubSelected ? 'all' : subIdVal);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.subcategoryChipText,
+                      isSubSelected && styles.subcategoryChipTextSelected,
+                    ]}
+                  >
+                    {sub.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
 
       <FlatList
         data={filteredProducts}
@@ -1075,6 +1244,14 @@ const CatalogScreen = ({ navigation, route }) => {
                         <Icon name="tag" size={11} color="#007AFF" style={{ marginRight: 4 }} />
                         <Text style={styles.swiggyCategoryBadgeText}>
                           {getCategoryLabel(selectedProduct.product_type)}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {selectedProduct?.subcategory ? (
+                      <View style={[styles.swiggyCategoryBadge, { backgroundColor: '#ECFDF5' }]}>
+                        <Icon name="bookmark" size={10} color="#059669" style={{ marginRight: 4 }} />
+                        <Text style={[styles.swiggyCategoryBadgeText, { color: '#059669' }]}>
+                          {selectedProduct.subcategory}
                         </Text>
                       </View>
                     ) : null}
@@ -2146,6 +2323,40 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#007AFF',
+  },
+  subcategoryBarWrapper: {
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingVertical: 7,
+    flexShrink: 0,
+  },
+  subcategoryScrollContainer: {
+    paddingHorizontal: 12,
+    gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  subcategoryChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  subcategoryChipSelected: {
+    backgroundColor: '#10B981',
+    borderColor: '#10B981',
+  },
+  subcategoryChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  subcategoryChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });
 

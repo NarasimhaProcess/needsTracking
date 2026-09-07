@@ -226,7 +226,30 @@ const ProductDetailScreen = ({ navigation, route }) => {
 
       <View style={styles.detailsContainer}>
         <Text style={styles.productName}>{product.product_name}</Text>
-        <Text style={styles.productPrice}>₹{product.amount}</Text>
+        <Text style={styles.productPrice}>₹{product.amount}{product.unit ? ` / ${product.unit}` : ''}</Text>
+
+        {(product.product_type || product.subcategory) && (
+          <View style={styles.badgeRow}>
+            {product.product_type ? (
+              <View style={styles.catBadge}>
+                <Icon name="tag" size={11} color="#007AFF" style={{ marginRight: 4 }} />
+                <Text style={styles.catBadgeText}>
+                  {(product.product_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </Text>
+              </View>
+            ) : null}
+            {product.subcategory ? (
+              <View style={styles.subCatBadge}>
+                <Icon name="bookmark" size={11} color="#059669" style={{ marginRight: 4 }} />
+                <Text style={styles.subCatBadgeText}>{product.subcategory}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+
+        {product.description ? (
+          <Text style={styles.productDescription}>{product.description}</Text>
+        ) : null}
 
         {(product.product_variants || []).map((variant) => (
           <View key={variant.id} style={styles.variantContainer}>
@@ -326,9 +349,60 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   productPrice: {
-    fontSize: 18,
-    color: '#888',
-    marginBottom: 20,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#007AFF',
+    marginBottom: 8,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 12,
+  },
+  catBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: '#BFDBFE',
+    marginRight: 6,
+    marginBottom: 4,
+  },
+  catBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  subCatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: '#A7F3D0',
+    marginRight: 6,
+    marginBottom: 4,
+  },
+  subCatBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#059669',
+  },
+  productDescription: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    marginBottom: 16,
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#007AFF',
   },
   variantContainer: {
     marginBottom: 20,
