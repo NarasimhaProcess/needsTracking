@@ -363,22 +363,7 @@ export async function getProductsWithDetails(userId) {
 }
 
 export async function getActiveProductsWithDetails(userId) {
-  try {
-    if (userId) {
-      const { data, error } = await supabase.rpc('get_active_products_with_details', {
-        p_user_id: userId,
-      });
-
-      if (!error && data && data.length > 0) {
-        console.log('Fetched active products via RPC:', data);
-        return data;
-      }
-    }
-  } catch (rpcErr) {
-    console.warn('RPC get_active_products_with_details failed:', rpcErr);
-  }
-
-  // Fallback: direct query on products table with relations
+  // Primary: Direct query on products table with relations (guarantees category_id, subcategory_id, subcategory columns)
   try {
     let query = supabase
       .from('products')
@@ -399,16 +384,34 @@ export async function getActiveProductsWithDetails(userId) {
     }
 
     const { data, error } = await query.order('display_order', { ascending: true });
-    if (error) {
-      console.error('Error in getActiveProductsWithDetails direct query:', error.message);
-      return [];
+    if (!error && data) {
+      console.log('Fetched active products via direct query:', data.length);
+      return data;
     }
-    console.log('Fetched active products via direct query:', data);
-    return data || [];
+    if (error) {
+      console.warn('getActiveProductsWithDetails direct query returned error, trying RPC fallback:', error.message);
+    }
   } catch (err) {
-    console.error('Error fetching active products:', err);
-    return [];
+    console.warn('getActiveProductsWithDetails direct query exception, trying RPC fallback:', err);
   }
+
+  // Fallback: RPC get_active_products_with_details
+  try {
+    if (userId) {
+      const { data, error } = await supabase.rpc('get_active_products_with_details', {
+        p_user_id: userId,
+      });
+
+      if (!error && data && data.length > 0) {
+        console.log('Fetched active products via RPC fallback:', data);
+        return data;
+      }
+    }
+  } catch (rpcErr) {
+    console.warn('RPC get_active_products_with_details failed:', rpcErr);
+  }
+
+  return [];
 }
 
 export async function getTopProductsWithDetails() {
@@ -2137,37 +2140,109 @@ export async function getCategories(includeInactive = false) {
 
 export async function getSubcategories(categoryId = null, categoryCode = null, includeInactive = false) {
   try {
-    let query = supabase.from('subcategories').select('*').order('display_order', { ascending: true });
-    if (categoryId) {
-      query = query.eq('category_id', categoryId);
+    const isUuid = (str) =>
+      typeof str === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+    const isSpecificCategory =
+      (Boolean(categoryId) && categoryId !== 'all') ||
+      (Boolean(categoryCode) && categoryCode !== 'all');
+
+    let effectiveCategoryId = isUuid(categoryId) ? categoryId : null;
+    let codeToSearch = categoryCode || (!isUuid(categoryId) && categoryId !== 'all' ? categoryId : null);
+    if (codeToSearch) {
+      codeToSearch = String(codeToSearch).toLowerCase().trim();
     }
+
+    // If categoryId was not a UUID but a code was provided, look up category UUID from categories table
+    if (!effectiveCategoryId && codeToSearch && codeToSearch !== 'all') {
+      try {
+        const { data: catData } = await supabase
+          .from('categories')
+          .select('id, code')
+          .or(`code.eq.${codeToSearch},id.eq.${codeToSearch}`)
+          .maybeSingle();
+        if (catData?.id) {
+          effectiveCategoryId = catData.id;
+          if (catData.code) {
+            codeToSearch = catData.code.toLowerCase().trim();
+          }
+        }
+      } catch (err) {
+        console.warn('Error resolving category UUID for code', codeToSearch, err);
+      }
+    }
+
+    // If we have effectiveCategoryId UUID but no codeToSearch, look up code from categories table
+    if (effectiveCategoryId && (!codeToSearch || codeToSearch === 'all')) {
+      try {
+        const { data: catData } = await supabase
+          .from('categories')
+          .select('code')
+          .eq('id', effectiveCategoryId)
+          .maybeSingle();
+        if (catData?.code) {
+          codeToSearch = catData.code.toLowerCase().trim();
+        }
+      } catch (err) {
+        console.warn('Error resolving category code for UUID', effectiveCategoryId, err);
+      }
+    }
+
+    // 1. If a specific category was requested (via code or UUID):
+    if (isSpecificCategory) {
+      if (effectiveCategoryId) {
+        let query = supabase
+          .from('subcategories')
+          .select('*')
+          .eq('category_id', effectiveCategoryId)
+          .order('display_order', { ascending: true });
+        if (!includeInactive) {
+          query = query.eq('is_active', true);
+        }
+        const { data, error } = await query;
+        if (!error && data && data.length > 0) {
+          return data;
+        }
+      }
+
+      // If DB query returned 0 rows or errored, try master fallback for this specific category
+      if (codeToSearch && codeToSearch !== 'all') {
+        const fallbackList = DEFAULT_MASTER_SUBCATEGORIES[codeToSearch] || [];
+        return fallbackList.filter(s => includeInactive || s.is_active);
+      }
+
+      // Specific category has no subcategories in DB and no master fallback:
+      // STRICTLY return empty array - NEVER leak all subcategories into a category filter!
+      return [];
+    }
+
+    // 2. Only if NO specific category was requested at all (caller explicitly wanted all subcategories across all categories):
+    let query = supabase.from('subcategories').select('*').order('display_order', { ascending: true });
     if (!includeInactive) {
       query = query.eq('is_active', true);
     }
     const { data, error } = await query;
     if (error || !data || data.length === 0) {
       let list = [];
-      if (categoryCode && DEFAULT_MASTER_SUBCATEGORIES[categoryCode]) {
-        list = DEFAULT_MASTER_SUBCATEGORIES[categoryCode];
-      } else if (categoryId) {
-        const cat = DEFAULT_MASTER_CATEGORIES.find(c => c.id === categoryId || c.code === categoryId);
-        if (cat && DEFAULT_MASTER_SUBCATEGORIES[cat.code]) {
-          list = DEFAULT_MASTER_SUBCATEGORIES[cat.code];
-        }
-      } else {
-        Object.values(DEFAULT_MASTER_SUBCATEGORIES).forEach(arr => list.push(...arr));
-      }
+      Object.values(DEFAULT_MASTER_SUBCATEGORIES).forEach(arr => list.push(...arr));
       return list.filter(s => includeInactive || s.is_active);
     }
     return data;
   } catch (err) {
     console.warn('getSubcategories error, using fallback:', err);
-    let list = [];
-    if (categoryCode && DEFAULT_MASTER_SUBCATEGORIES[categoryCode]) {
-      list = DEFAULT_MASTER_SUBCATEGORIES[categoryCode];
-    } else {
-      Object.values(DEFAULT_MASTER_SUBCATEGORIES).forEach(arr => list.push(...arr));
+    const isSpecificCategory =
+      (Boolean(categoryId) && categoryId !== 'all') ||
+      (Boolean(categoryCode) && categoryCode !== 'all');
+    if (isSpecificCategory) {
+      const codeToSearch = String(categoryCode || categoryId || '').toLowerCase().trim();
+      if (codeToSearch && DEFAULT_MASTER_SUBCATEGORIES[codeToSearch]) {
+        return DEFAULT_MASTER_SUBCATEGORIES[codeToSearch].filter(s => includeInactive || s.is_active);
+      }
+      return [];
     }
+    let list = [];
+    Object.values(DEFAULT_MASTER_SUBCATEGORIES).forEach(arr => list.push(...arr));
     return list.filter(s => includeInactive || s.is_active);
   }
 }

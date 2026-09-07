@@ -51,17 +51,17 @@ const isImageMedia = (media) => {
 };
 
 export const CATALOG_CATEGORIES = [
-  { id: 'all', label: 'All Items', icon: 'th-large' },
-  { id: 'grocery', label: 'Grocery', icon: 'shopping-basket' },
-  { id: 'fruits_vegetables', label: 'Fruits & Veg', icon: 'lemon-o' },
-  { id: 'dairy_bakery', label: 'Dairy & Bakery', icon: 'birthday-cake' },
-  { id: 'snacks_beverages', label: 'Snacks & Drinks', icon: 'coffee' },
-  { id: 'clothing', label: 'Clothing', icon: 'tag' },
-  { id: 'electronics', label: 'Electronics', icon: 'laptop' },
-  { id: 'beauty_personal_care', label: 'Beauty & Care', icon: 'heart' },
-  { id: 'home_kitchen', label: 'Home & Kitchen', icon: 'home' },
-  { id: 'pharmacy', label: 'Pharmacy', icon: 'medkit' },
-  { id: 'other', label: 'Other', icon: 'cube' },
+  { id: 'all', label: 'All Items', icon: 'th-large', code: 'all' },
+  { id: 'grocery', label: 'Grocery', icon: 'shopping-basket', code: 'grocery' },
+  { id: 'fruits_vegetables', label: 'Fruits & Veg', icon: 'lemon-o', code: 'fruits_vegetables' },
+  { id: 'dairy_bakery', label: 'Dairy & Bakery', icon: 'birthday-cake', code: 'dairy_bakery' },
+  { id: 'snacks_beverages', label: 'Snacks & Drinks', icon: 'coffee', code: 'snacks_beverages' },
+  { id: 'clothing', label: 'Clothing', icon: 'tag', code: 'clothing' },
+  { id: 'electronics', label: 'Electronics', icon: 'laptop', code: 'electronics' },
+  { id: 'beauty_personal_care', label: 'Beauty & Care', icon: 'heart', code: 'beauty_personal_care' },
+  { id: 'home_kitchen', label: 'Home & Kitchen', icon: 'home', code: 'home_kitchen' },
+  { id: 'pharmacy', label: 'Pharmacy', icon: 'medkit', code: 'pharmacy' },
+  { id: 'other', label: 'Other', icon: 'cube', code: 'other' },
 ];
 
 const CatalogScreen = ({ navigation, route }) => {
@@ -118,7 +118,7 @@ const CatalogScreen = ({ navigation, route }) => {
             ...cats.map((c) => ({
               id: c.code || c.id,
               dbId: c.id,
-              code: c.code,
+              code: c.code || c.id,
               label: c.name,
               icon: c.icon || 'tag',
             })),
@@ -144,10 +144,19 @@ const CatalogScreen = ({ navigation, route }) => {
         return;
       }
       try {
+        const lowerCat = String(selectedCategory).toLowerCase().trim();
         const catObj = catalogCategories.find(
-          (c) => c.id === selectedCategory || c.code === selectedCategory
+          (c) =>
+            (c.id && String(c.id).toLowerCase().trim() === lowerCat) ||
+            (c.code && String(c.code).toLowerCase().trim() === lowerCat) ||
+            (c.dbId && String(c.dbId).toLowerCase().trim() === lowerCat) ||
+            (c.label && String(c.label).toLowerCase().trim() === lowerCat)
         );
-        const subs = await getSubcategories(catObj?.dbId, catObj?.code || selectedCategory, false);
+        const subs = await getSubcategories(
+          catObj?.dbId || (catObj?.id !== 'all' ? catObj?.id : null),
+          catObj?.code || catObj?.id || selectedCategory,
+          false
+        );
         if (isMounted) {
           setCatalogSubcategories(subs || []);
           setSelectedSubcategory('all');
@@ -289,38 +298,131 @@ const CatalogScreen = ({ navigation, route }) => {
   const categoryCounts = useMemo(() => {
     const counts = { all: products.length };
     products.forEach((p) => {
-      const cat = (p?.product_type || 'other').toLowerCase();
-      counts[cat] = (counts[cat] || 0) + 1;
-      if (p?.category_id) {
-        counts[p.category_id.toLowerCase()] = (counts[p.category_id.toLowerCase()] || 0) + 1;
+      const pType = String(p?.product_type || '').toLowerCase().trim();
+      const pCatId = String(p?.category_id || '').toLowerCase().trim();
+
+      const matchedCat = catalogCategories.find(c =>
+        (c.id && String(c.id).toLowerCase().trim() === pType) ||
+        (c.code && String(c.code).toLowerCase().trim() === pType) ||
+        (c.dbId && String(c.dbId).toLowerCase().trim() === pCatId) ||
+        (c.label && String(c.label).toLowerCase().trim() === pType)
+      );
+
+      if (matchedCat) {
+        counts[matchedCat.id] = (counts[matchedCat.id] || 0) + 1;
+      } else if (pType) {
+        counts[pType] = (counts[pType] || 0) + 1;
+      }
+      if (pCatId) {
+        counts[pCatId] = (counts[pCatId] || 0) + 1;
       }
     });
     return counts;
-  }, [products]);
+  }, [products, catalogCategories]);
+
+  const currentCategoryProducts = useMemo(() => {
+    if (!selectedCategory || selectedCategory === 'all') return products;
+    const targetCat = String(selectedCategory).toLowerCase().trim();
+    const catObj = catalogCategories.find(
+      (c) =>
+        (c.id && String(c.id).toLowerCase().trim() === targetCat) ||
+        (c.code && String(c.code).toLowerCase().trim() === targetCat) ||
+        (c.dbId && String(c.dbId).toLowerCase().trim() === targetCat) ||
+        (c.label && String(c.label).toLowerCase().trim() === targetCat)
+    );
+    const catCode = String(catObj?.code || '').toLowerCase().trim();
+    const catDbId = String(catObj?.dbId || '').toLowerCase().trim();
+    const catLabel = String(catObj?.label || '').toLowerCase().trim();
+
+    return products.filter((product) => {
+      const pType = String(product?.product_type || 'other').toLowerCase().trim();
+      const pCatId = String(product?.category_id || '').toLowerCase().trim();
+      return (
+        pType === targetCat ||
+        (catCode && pType === catCode) ||
+        (catDbId && pCatId === catDbId) ||
+        (catLabel && pType === catLabel) ||
+        (targetCat && pCatId === targetCat)
+      );
+    });
+  }, [products, selectedCategory, catalogCategories]);
+
+  const subcategoryCounts = useMemo(() => {
+    const slugify = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const counts = {};
+
+    currentCategoryProducts.forEach((product) => {
+      const pSubId = String(product?.subcategory_id || '').toLowerCase().trim();
+      const pSubName = String(product?.subcategory || '').toLowerCase().trim();
+
+      catalogSubcategories.forEach((sub) => {
+        const subId = String(sub.id || '').toLowerCase().trim();
+        const subCode = String(sub.code || '').toLowerCase().trim();
+        const subName = String(sub.name || '').toLowerCase().trim();
+        const key = sub.code || sub.id;
+
+        const isMatch =
+          (subId && pSubId === subId) ||
+          (subCode && (pSubId === subCode || pSubName === subCode || slugify(pSubName) === slugify(subCode))) ||
+          (subName && (pSubName === subName || slugify(pSubName) === slugify(subName) || pSubId === subName));
+
+        if (isMatch) {
+          counts[key] = (counts[key] || 0) + 1;
+        }
+      });
+    });
+
+    return counts;
+  }, [currentCategoryProducts, catalogSubcategories]);
 
   const filteredProducts = useMemo(() => {
-    let result = products;
-
-    if (selectedCategory && selectedCategory !== 'all') {
-      const targetCat = selectedCategory.toLowerCase();
-      const catObj = catalogCategories.find(c => c.id === targetCat || c.code === targetCat);
-      result = result.filter((product) => {
-        const pType = (product?.product_type || 'other').toLowerCase();
-        const pCatId = (product?.category_id || '').toLowerCase();
-        return pType === targetCat || (catObj?.code && pType === catObj.code.toLowerCase()) || (catObj?.dbId && pCatId === catObj.dbId.toLowerCase());
-      });
-    }
+    let result = currentCategoryProducts;
 
     if (selectedSubcategory && selectedSubcategory !== 'all') {
-      const targetSub = selectedSubcategory.toLowerCase();
-      const subObj = catalogSubcategories.find(s => (s.id && s.id.toLowerCase() === targetSub) || (s.code && s.code.toLowerCase() === targetSub));
+      const targetSub = String(selectedSubcategory).toLowerCase().trim();
+      const subObj = catalogSubcategories.find(
+        (s) =>
+          (s.id && String(s.id).toLowerCase().trim() === targetSub) ||
+          (s.code && String(s.code).toLowerCase().trim() === targetSub) ||
+          (s.name && String(s.name).toLowerCase().trim() === targetSub)
+      );
+
+      const slugify = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
       result = result.filter((product) => {
-        const pSubId = (product?.subcategory_id || '').toLowerCase();
-        const pSubName = (product?.subcategory || '').toLowerCase();
-        return pSubId === targetSub ||
-               pSubName === targetSub ||
-               (subObj && pSubName === subObj.name.toLowerCase()) ||
-               (subObj && subObj.code && pSubId === subObj.code.toLowerCase());
+        const pSubId = String(product?.subcategory_id || '').toLowerCase().trim();
+        const pSubName = String(product?.subcategory || '').toLowerCase().trim();
+
+        // 1. Direct match with targetSub
+        if (pSubId && pSubId === targetSub) return true;
+        if (pSubName && pSubName === targetSub) return true;
+        if (pSubName && slugify(pSubName) === slugify(targetSub)) return true;
+
+        // 2. Match using resolved subObj (UUID ID, code slug, or display name)
+        if (subObj) {
+          const subId = String(subObj.id || '').toLowerCase().trim();
+          const subCode = String(subObj.code || '').toLowerCase().trim();
+          const subName = String(subObj.name || '').toLowerCase().trim();
+
+          // Match by subcategory UUID ID
+          if (subId && pSubId === subId) return true;
+
+          // Match by code slug
+          if (subCode) {
+            if (pSubId === subCode) return true;
+            if (pSubName === subCode) return true;
+            if (slugify(pSubName) === slugify(subCode)) return true;
+          }
+
+          // Match by display name
+          if (subName) {
+            if (pSubName === subName) return true;
+            if (slugify(pSubName) === slugify(subName)) return true;
+            if (pSubId === subName) return true;
+          }
+        }
+
+        return false;
       });
     }
 
@@ -354,7 +456,7 @@ const CatalogScreen = ({ navigation, route }) => {
     }
 
     return result;
-  }, [products, searchQuery, selectedCategory, selectedSubcategory, catalogCategories, catalogSubcategories]);
+  }, [currentCategoryProducts, searchQuery, selectedSubcategory, catalogCategories, catalogSubcategories]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1103,15 +1205,21 @@ const CatalogScreen = ({ navigation, route }) => {
                   selectedSubcategory === 'all' && styles.subcategoryChipTextSelected,
                 ]}
               >
-                All Subcategories
+                All Subcategories ({currentCategoryProducts.length})
               </Text>
             </TouchableOpacity>
             {catalogSubcategories.map((sub) => {
               const subIdVal = sub.code || sub.id;
-              const isSubSelected = selectedSubcategory === subIdVal;
+              const isSubSelected =
+                selectedSubcategory !== 'all' &&
+                (selectedSubcategory === subIdVal ||
+                 (sub.code && selectedSubcategory.toLowerCase() === String(sub.code).toLowerCase()) ||
+                 (sub.id && selectedSubcategory.toLowerCase() === String(sub.id).toLowerCase()) ||
+                 (sub.name && selectedSubcategory.toLowerCase() === String(sub.name).toLowerCase()));
+              const subCount = subcategoryCounts[subIdVal];
               return (
                 <TouchableOpacity
-                  key={sub.id || sub.code}
+                  key={sub.id || sub.code || sub.name}
                   style={[
                     styles.subcategoryChip,
                     isSubSelected && styles.subcategoryChipSelected,
@@ -1127,7 +1235,7 @@ const CatalogScreen = ({ navigation, route }) => {
                       isSubSelected && styles.subcategoryChipTextSelected,
                     ]}
                   >
-                    {sub.name}
+                    {sub.name} {subCount !== undefined && subCount > 0 ? `(${subCount})` : ''}
                   </Text>
                 </TouchableOpacity>
               );

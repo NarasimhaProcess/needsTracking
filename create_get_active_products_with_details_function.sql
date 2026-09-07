@@ -9,6 +9,9 @@ RETURNS TABLE(
     user_id uuid,
     latitude float,
     longitude float,
+    category_id uuid,
+    subcategory_id uuid,
+    subcategory text,
     product_media json,
     product_variants json,
     product_variant_combinations json
@@ -25,6 +28,9 @@ BEGIN
         p.user_id,
         prof.latitude,
         prof.longitude,
+        p.category_id,
+        p.subcategory_id,
+        p.subcategory,
         COALESCE(
             (
                 SELECT json_agg(
