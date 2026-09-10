@@ -78,10 +78,16 @@ jobs:
           echo "GEMINI_API_KEY is configured."
 
       - name: Set up YouTube Cookies
-        if: ${{ secrets.YT_COOKIES != '' }}
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
-          printf '%s\n' '${{ secrets.YT_COOKIES }}' > cookies.txt
-          echo "YouTube cookies configured."
+          if [ -n "$YT_COOKIES" ]; then
+            printf '%s\n' "$YT_COOKIES" > cookies.txt
+            echo "YouTube cookies configured."
+          else
+            echo "YT_COOKIES not configured."
+            echo "Continuing without YouTube cookies."
+          fi
 
       - name: Run Video Translation Script
         env:
