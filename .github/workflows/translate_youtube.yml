@@ -18,10 +18,10 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4.2.2
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v5.4.0
       with:
         python-version: '3.10'
 
@@ -35,14 +35,25 @@ jobs:
         python -m pip install --upgrade pip
         pip install google-genai gtts yt-dlp
 
+    # --- NEW: Write the YouTube authentication cookies securely to a file ---
+    - name: Set up YouTube Cookies
+      run: |
+        echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+
     - name: Run Video Translation Script
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
         python process_video.py --url "${{ github.event.inputs.video_url }}" --lang "${{ github.event.inputs.target_language }}"
 
+    # --- NEW: Securely purge cookie files post-run ---
+    - name: Clean up sensitive files
+      if: always()
+      run: |
+        rm -f cookies.txt
+
     - name: Upload Translated Video Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.6.1
       with:
         name: translated-youtube-video
         path: output/translated_video.mp4
