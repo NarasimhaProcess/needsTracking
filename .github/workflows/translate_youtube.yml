@@ -1,0 +1,48 @@
+name: Translate YouTube Video via Gemini
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'The YouTube Video URL'
+        required: true
+        type: string
+      target_language:
+        description: 'Target language (e.g., Telugu, Indian English, Hindi, French)'
+        required: true
+        default: 'Telugu'
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install google-genai gtts yt-dlp
+
+    - name: Run Video Translation Script
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        python process_video.py --url "${{ github.event.inputs.video_url }}" --lang "${{ github.event.inputs.target_language }}"
+
+    - name: Upload Translated Video Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: translated-youtube-video
+        path: output/translated_video.mp4
