@@ -4,57 +4,103 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'The YouTube Video URL'
+        description: "The YouTube Video URL"
         required: true
         type: string
+
       target_language:
-        description: 'Target language (e.g., Telugu, Indian English, Hindi, French)'
+        description: "Target language (e.g. Telugu, Indian English, Hindi, French)"
         required: true
-        default: 'Telugu'
+        default: "Telugu"
+        type: string
 
 jobs:
   translate:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4.2.2
 
-    - name: Set up Python
-      uses: actions/setup-python@v5.4.0
-      with:
-        python-version: '3.10'
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
 
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: "3.10"
 
-    - name: Install Python Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install google-genai gtts yt-dlp
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
-    - name: Set up YouTube Cookies
-      run: |
-        cat << 'EOF' > cookies.txt
-        ${{ secrets.YT_COOKIES }}
-        EOF
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade google-genai gtts yt-dlp
 
-    - name: Run Video Translation Script
-      env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        USER_AGENT: ${{ secrets.USER_AGENT }}
-      run: |
-        python process_audio.py --url "${{ github.event.inputs.video_url }}" --lang "${{ github.event.inputs.target_language }}"
+      - name: Verify Repository Files
+        run: |
+          echo "Current directory:"
+          pwd
 
-    - name: Clean up sensitive files
-      if: always()
-      run: |
-        rm -f cookies.txt
+          echo ""
+          echo "Repository files:"
+          ls -la
 
-    - name: Upload Translated Video Artifact
-      uses: actions/upload-artifact@v4.6.1
-      with:
-        name: translated-youtube-video
-        path: output/translated_video.mp4
+          echo ""
+          echo "Checking process_video.py..."
+
+          if [ ! -f "process_video.py" ]; then
+            echo "ERROR: process_video.py was not found!"
+            exit 1
+          fi
+
+          echo "process_video.py found successfully."
+
+      - name: Check Gemini Configuration
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "ERROR: GEMINI_API_KEY secret is missing."
+            echo ""
+            echo "Go to:"
+            echo "Repository Settings"
+            echo " -> Secrets and variables"
+            echo " -> Actions"
+            echo " -> New repository secret"
+            echo ""
+            echo "Secret name must be exactly:"
+            echo "GEMINI_API_KEY"
+            exit 1
+          fi
+
+          echo "GEMINI_API_KEY is configured."
+
+      - name: Set up YouTube Cookies
+        if: ${{ secrets.YT_COOKIES != '' }}
+        run: |
+          printf '%s\n' '${{ secrets.YT_COOKIES }}' > cookies.txt
+          echo "YouTube cookies configured."
+
+      - name: Run Video Translation Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          USER_AGENT: ${{ secrets.USER_AGENT }}
+        run: |
+          python process_video.py \
+            --url "${{ github.event.inputs.video_url }}" \
+            --lang "${{ github.event.inputs.target_language }}"
+
+      - name: Clean up sensitive files
+        if: always()
+        run: |
+          rm -f cookies.txt
+
+      - name: Upload Translated Video Artifact
+        if: success()
+        uses: actions/upload-artifact@v4.6.1
+        with:
+          name: translated-youtube-video
+          path: output/translated_video.mp4
+          if-no-files-found: error
