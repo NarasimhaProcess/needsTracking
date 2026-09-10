@@ -8,7 +8,7 @@ import yt_dlp
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--url', required=True, help="YouTube Video URL")
-    parser.add_argument('--lang', required=True, help="Target language (e.g. Telugu, Hindi, French)")
+    parser.add_argument('--lang', required=True, help="Target language (e.g. Telugu, Indian English, Hindi, French)")
     args = parser.parse_args()
 
     os.makedirs("output", exist_ok=True)
@@ -18,14 +18,23 @@ def main():
     translated_audio = "output/translated.mp3"
     adjusted_audio = "output/translated_adjusted.mp3"
     final_video = "output/translated_video.mp4"
+    cookie_file_path = "cookies.txt"
 
-    # Step 1: Download Video and Audio from YouTube
-    print("Downloading video from YouTube...")
+    # Step 1: Download Video and Audio from YouTube using Cookie Authentication
+    print("Downloading video from YouTube using secure cookie files...")
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': downloaded_video,
         'merge_output_format': 'mp4',
     }
+    
+    # Check if the GitHub action created the cookie file successfully
+    if os.path.exists(cookie_file_path):
+        print("Cookies configuration file detected. Applying for authentication bypass...")
+        ydl_opts['cookiefile'] = cookie_file_path
+    else:
+        print("Warning: cookies.txt not found. Running download without account sessions...")
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([args.url])
 
