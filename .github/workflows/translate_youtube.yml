@@ -35,10 +35,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install google-genai gtts yt-dlp
 
-    # --- NEW: Write the YouTube authentication cookies securely to a file ---
     - name: Set up YouTube Cookies
       run: |
-        echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+        cat << 'EOF' > cookies.txt
+        ${{ secrets.YT_COOKIES }}
+        EOF
 
     - name: Run Video Translation Script
       env:
@@ -46,7 +47,6 @@ jobs:
       run: |
         python process_video.py --url "${{ github.event.inputs.video_url }}" --lang "${{ github.event.inputs.target_language }}"
 
-    # --- NEW: Securely purge cookie files post-run ---
     - name: Clean up sensitive files
       if: always()
       run: |
