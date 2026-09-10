@@ -1,14 +1,14 @@
-name: Translate YouTube Video via Gemini
+name: Translate Uploaded Audio via Gemini
 
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: 'The YouTube Video URL'
+      audio_file:
+        description: 'Upload your video audio track (MP3, WAV, or M4A)'
         required: true
-        type: string
+        type: file
       target_language:
-        description: 'Target language (e.g., Telugu, Indian English, Hindi, French)'
+        description: 'Target language (e.g., Telugu, Indian English, Hindi)'
         required: true
         default: 'Telugu'
 
@@ -33,27 +33,16 @@ jobs:
     - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install google-genai gtts yt-dlp
+        pip install google-genai gtts
 
-    - name: Set up YouTube Cookies
-      run: |
-        cat << 'EOF' > cookies.txt
-        ${{ secrets.YT_COOKIES }}
-        EOF
-
-    - name: Run Video Translation Script
+    - name: Run Audio Translation Script
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
-        python process_video.py --url "${{ github.event.inputs.video_url }}" --lang "${{ github.event.inputs.target_language }}"
+        python process_audio.py --file "${{ github.event.inputs.audio_file }}" --lang "${{ github.event.inputs.target_language }}"
 
-    - name: Clean up sensitive files
-      if: always()
-      run: |
-        rm -f cookies.txt
-
-    - name: Upload Translated Video Artifact
+    - name: Upload Translated Audio Artifact
       uses: actions/upload-artifact@v4.6.1
       with:
-        name: translated-youtube-video
-        path: output/translated_video.mp4
+        name: translated-audio-track
+        path: output/translated_audio.mp3
