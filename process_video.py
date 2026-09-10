@@ -35,13 +35,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install google-genai gtts yt-dlp
 
-    # --- FIXED: Securely prints the exact plain text line breaks without system alterations ---
     - name: Set up YouTube Cookies
-      env:
-        COOKIES_DATA: ${{ secrets.YT_COOKIES }}
       run: |
         cat << 'EOF' > cookies.txt
-        $COOKIES_DATA
+        ${{ secrets.YT_COOKIES }}
         EOF
 
     - name: Run Video Translation Script
