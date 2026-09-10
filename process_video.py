@@ -8,7 +8,7 @@ import yt_dlp
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--url', required=True, help="YouTube Video URL")
-    parser.add_argument('--lang', required=True, help="Target language (e.g. Telugu, Indian English, Hindi, French)")
+    parser.add_argument('--lang', required=True, help="Target language (e.g. Telugu, Indian English)")
     args = parser.parse_args()
 
     os.makedirs("output", exist_ok=True)
@@ -28,15 +28,22 @@ def main():
         'merge_output_format': 'mp4',
     }
     
-    # Check if the GitHub action created the cookie file successfully
     if os.path.exists(cookie_file_path):
         print("Cookies configuration file detected. Applying for authentication bypass...")
         ydl_opts['cookiefile'] = cookie_file_path
     else:
         print("Warning: cookies.txt not found. Running download without account sessions...")
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([args.url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([args.url])
+    except Exception as e:
+        print("\n❌ CRITICAL ERROR IN YT-DLP DOWNLOAD PHASE:")
+        print(f"{str(e)}")
+        print("\nCommon fixes:")
+        print("1. If the log reads 'does not look like a Netscape format', your YT_COOKIES secret text format is wrong.")
+        print("2. Ensure your exported cookie file's very first line reads: # Netscape HTTP Cookie File")
+        exit(1)
 
     # Step 2: Extract Audio stream for Gemini processing
     print("Extracting audio stream...")
@@ -47,7 +54,7 @@ def main():
 
     # Step 3: Upload Audio to Gemini AI Studio
     print("Uploading audio to Gemini AI Studio...")
-    client = genai.Client() # Automatically reads GEMINI_API_KEY from environment variables
+    client = genai.Client()
     audio_file = client.files.upload(file=extracted_audio)
     
     # Step 4: Ask Gemini to Transcribe and Translate
@@ -71,7 +78,6 @@ def main():
     print("Generating new voice track...")
     target_lang_lower = args.lang.lower()
     
-    # Map languages to gTTS language codes and top-level domains for accents
     lang_codes = {
         "telugu": ("te", "com"),
         "hindi": ("hi", "com"),
@@ -91,19 +97,15 @@ def main():
     # Step 6: Automatically Adjust Audio Speed to Match Video Duration
     print("Adjusting audio speed to match video duration perfectly...")
     
-    # Get total video duration using FFprobe
     vid_dur_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:key=value', downloaded_video]
     video_duration = float(subprocess.check_output(vid_dur_cmd).decode().strip())
     
-    # Get total generated audio duration using FFprobe
     aud_dur_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:key=value', translated_audio]
     audio_duration = float(subprocess.check_output(aud_dur_cmd).decode().strip())
     
-    # Calculate required speed ratio
     speed_ratio = audio_duration / video_duration
     print(f"Original Video: {video_duration:.2f}s | New Audio: {audio_duration:.2f}s | Speed Ratio: {speed_ratio:.2f}x")
     
-    # FFmpeg safely allows speed adjustments between 0.5x and 2.0x without pitch distortion
     if 0.5 <= speed_ratio <= 2.0:
         subprocess.run([
             'ffmpeg', '-y', '-i', translated_audio,
