@@ -9,7 +9,7 @@ on:
         type: string
 
       target_language:
-        description: "Target language"
+        description: "Target language (e.g. Telugu, Hindi, Indian English, French)"
         required: true
         default: "Telugu"
         type: string
@@ -20,79 +20,154 @@ jobs:
 
     steps:
 
+      # --------------------------------------------------
+      # Checkout repository
+      # --------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
+
+      # --------------------------------------------------
+      # Setup Python
+      # --------------------------------------------------
 
       - name: Set up Python
         uses: actions/setup-python@v5.4.0
         with:
           python-version: "3.10"
 
+      # --------------------------------------------------
+      # Install FFmpeg
+      # --------------------------------------------------
+
       - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Python packages
+      # --------------------------------------------------
+      # Install Python dependencies
+      # --------------------------------------------------
+
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade google-genai gtts yt-dlp
 
-      - name: Verify files
+      # --------------------------------------------------
+      # Verify repository
+      # --------------------------------------------------
+
+      - name: Verify Repository Files
         run: |
-          echo "Working directory:"
+          echo "========================================"
+          echo "CURRENT DIRECTORY"
+          echo "========================================"
           pwd
 
-          echo "Files:"
+          echo ""
+          echo "========================================"
+          echo "REPOSITORY FILES"
+          echo "========================================"
           ls -la
 
-          test -f process_video.py || {
-            echo "ERROR: process_video.py not found"
-            exit 1
-          }
+          echo ""
+          echo "========================================"
+          echo "CHECKING process_video.py"
+          echo "========================================"
 
-      - name: Check Gemini API
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "ERROR: GEMINI_API_KEY is missing."
+          if [ ! -f "process_video.py" ]; then
+            echo "ERROR: process_video.py was not found."
+            echo "The file must be in the repository root."
             exit 1
           fi
 
-          echo "Gemini API key detected."
+          echo "process_video.py found successfully."
 
-      - name: Prepare YouTube cookies
+      # --------------------------------------------------
+      # Check Gemini API
+      # --------------------------------------------------
+
+      - name: Check Gemini API Configuration
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "Checking Gemini API configuration..."
+
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo ""
+            echo "ERROR: GEMINI_API_KEY is missing."
+            echo ""
+            echo "Add this repository secret:"
+            echo ""
+            echo "GEMINI_API_KEY"
+            echo ""
+            echo "GitHub:"
+            echo "Settings"
+            echo " -> Secrets and variables"
+            echo " -> Actions"
+            echo " -> New repository secret"
+            exit 1
+          fi
+
+          echo "GEMINI_API_KEY is configured."
+
+      # --------------------------------------------------
+      # Prepare YouTube cookies
+      # --------------------------------------------------
+
+      - name: Prepare YouTube Cookies
         env:
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
           if [ -n "$YT_COOKIES" ]; then
             printf '%s\n' "$YT_COOKIES" > cookies.txt
-            echo "YouTube cookies available."
+            echo "YouTube cookies are configured."
           else
-            echo "No YouTube cookies configured."
+            echo "YT_COOKIES is not configured."
+            echo "The workflow will attempt a normal YouTube download."
           fi
 
-      - name: Update yt-dlp
+      # --------------------------------------------------
+      # Display yt-dlp version
+      # --------------------------------------------------
+
+      - name: Check yt-dlp
         run: |
+          echo "yt-dlp version:"
           yt-dlp --version
-          yt-dlp -U || true
+
+      # --------------------------------------------------
+      # Run translation
+      # --------------------------------------------------
 
       - name: Run Video Translation
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           USER_AGENT: ${{ secrets.USER_AGENT }}
         run: |
+          echo "========================================"
+          echo "STARTING VIDEO TRANSLATION"
+          echo "========================================"
+
           python process_video.py \
             --url "${{ github.event.inputs.video_url }}" \
             --lang "${{ github.event.inputs.target_language }}"
 
-      - name: Clean sensitive files
+      # --------------------------------------------------
+      # Clean sensitive files
+      # --------------------------------------------------
+
+      - name: Clean Sensitive Files
         if: always()
         run: |
           rm -f cookies.txt
 
-      - name: Upload translated video
+      # --------------------------------------------------
+      # Upload final video
+      # --------------------------------------------------
+
+      - name: Upload Translated Video
         if: success()
         uses: actions/upload-artifact@v4.6.1
         with:
