@@ -91,9 +91,9 @@ export default {
     },
     "sdkVersion": "53.0.0",
     "extra": {
-      "ORG_NAME": process.env.EXPO_PUBLIC_ORG_NAME || process.env.ORG_NAME || "Store",
-      "SUPABASE_URL": process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || null,
-      "SUPABASE_ANON_KEY": process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || null,
+      "ORG_NAME": (typeof process.env.EXPO_PUBLIC_ORG_NAME === 'string' && process.env.EXPO_PUBLIC_ORG_NAME) || (typeof process.env.ORG_NAME === 'string' && process.env.ORG_NAME) || "Store",
+      "SUPABASE_URL": (typeof process.env.EXPO_PUBLIC_SUPABASE_URL === 'string' && process.env.EXPO_PUBLIC_SUPABASE_URL) || (typeof process.env.SUPABASE_URL === 'string' && process.env.SUPABASE_URL) || "https://cikxysaxvbixrcwlgzds.supabase.co",
+      "SUPABASE_ANON_KEY": (typeof process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY === 'string' && process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY) || (typeof process.env.SUPABASE_ANON_KEY === 'string' && process.env.SUPABASE_ANON_KEY) || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpa3h5c2F4dmJpeHJjd2xnemRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MzA2MjgsImV4cCI6MjEwNDIwNjYyOH0.YIc4KXr055r1D3-mKW1bCn06GNWWK4TXettqhazgpg4",
       "eas": {
         "projectId": "3ce03f97-e109-4f80-a0ba-b0fa19f6ad0b"
       }

@@ -21,28 +21,26 @@ if (Platform.OS === 'web') {
 }
 
 // Credentials resolution for Standalone / APK / EAS / Web / Expo Go builds
+const DEFAULT_SUPABASE_URL = 'https://cikxysaxvbixrcwlgzds.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpa3h5c2F4dmJpeHJjd2xnemRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MzA2MjgsImV4cCI6MjEwNDIwNjYyOH0.YIc4KXr055r1D3-mKW1bCn06GNWWK4TXettqhazgpg4';
+
+const getValidString = (val) => (typeof val === 'string' && val.trim().length > 0 ? val.trim() : null);
+
 const supabaseUrl =
-  process.env.EXPO_PUBLIC_SUPABASE_URL ||
-  process.env.SUPABASE_URL ||
-  Constants?.expoConfig?.extra?.SUPABASE_URL ||
-  '';
+  getValidString(process.env.EXPO_PUBLIC_SUPABASE_URL) ||
+  getValidString(process.env.SUPABASE_URL) ||
+  getValidString(Constants?.expoConfig?.extra?.SUPABASE_URL) ||
+  DEFAULT_SUPABASE_URL;
 
 const supabaseAnonKey =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.SUPABASE_ANON_KEY ||
-  Constants?.expoConfig?.extra?.SUPABASE_ANON_KEY ||
-  '';
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
-    '⚠️ [Supabase Warning] SUPABASE_URL or SUPABASE_ANON_KEY is missing!\n' +
-    'Please configure them in your .env file, GitHub Action Secrets/Variables, or EAS environment.'
-  );
-}
+  getValidString(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY) ||
+  getValidString(process.env.SUPABASE_ANON_KEY) ||
+  getValidString(Constants?.expoConfig?.extra?.SUPABASE_ANON_KEY) ||
+  DEFAULT_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-anon-key',
+  supabaseUrl,
+  supabaseAnonKey,
   {
     auth: {
       storage: Storage,
