@@ -120,3 +120,7 @@
      - Added `StoreNavigationFooter` into [SellersMapScreen.js](file:///workspaces/needsTracking/src/screens/SellersMapScreen.js) docked above safe area.
      - Added `StoreNavigationFooter` into [ProfileScreen.js](file:///workspaces/needsTracking/src/screens/ProfileScreen.js) with `rootWrapper` flex viewport containment and extra bottom scroll clearance (`paddingBottom: 90`).
   3. **Production Web Build**: Tested and verified clean compilation and web export bundle (`dist/`).
+
+## 2026-09-13 05:00:00 UTC
+- **User Request**: "can u upload and depoly the github pags"
+- **Summary**: Exported fresh Expo web build to `dist/`, verified compilation integrity, staged and committed updated web assets to `master`, pushed commits to remote repository, and deployed `dist/` to the `gh-pages` branch for GitHub Pages hosting.
