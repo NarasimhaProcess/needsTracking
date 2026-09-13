@@ -3,9 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
     <title>Needs Tracker</title>
-    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+
+    <!-- PWA & Mobile Web Meta Tags -->
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#007AFF" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Needs Tracker" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="icon" type="image/png" href="./icon-192.png" />
+
+    <!-- The `react-native-web` recommended style reset -->
     <style id="expo-reset">
       /* These styles make the body full-height */
       html,
@@ -23,7 +34,25 @@
         flex: 1;
       }
     </style>
-  <link rel="icon" href="/needsTracking/favicon.ico" /></head>
+
+    <!-- PWA Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          var swUrl = './sw.js';
+          navigator.serviceWorker.register(swUrl)
+            .then(function(reg) {
+              console.log('[PWA] Service Worker registered with scope:', reg.scope);
+            })
+            .catch(function(err) {
+              console.warn('[PWA] Service Worker registration notice:', err);
+            });
+        });
+      }
+    </script>
+  <meta name="theme-color" content="#007AFF">
+<meta name="description" content="Real-time delivery tracking, orders, and local marketplace">
+</head>
 
   <body>
     <!-- Use static rendering with Expo Router to support running without JavaScript. -->
@@ -32,6 +61,6 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
-  <script src="/needsTracking/_expo/static/js/web/AppEntry-adc13267fc583f4fc11c0a1947f7bbca.js" defer></script>
+  <script src="/needsTracking/_expo/static/js/web/AppEntry-f31082aaf3041c653cbf93078b20fb9f.js" defer></script>
 </body>
 </html>
