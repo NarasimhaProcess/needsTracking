@@ -466,6 +466,110 @@ const PrinterSettingsModal = ({ visible, onClose }) => {
                 />
               </View>
 
+              {/* Tax & Service Charge Settings */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Taxes & Service Charges (GST & Billing)</Text>
+
+                {/* Enable GST */}
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.switchLabel}>Enable GST (CGST + SGST)</Text>
+                    <Text style={styles.switchDescription}>
+                      Automatically calculate and add CGST & SGST percentages to bills and receipts.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={config.enableTax === true}
+                    onValueChange={(val) => setConfig({ ...config, enableTax: val })}
+                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                    thumbColor={config.enableTax ? '#007AFF' : '#F1F5F9'}
+                  />
+                </View>
+
+                {config.enableTax && (
+                  <View style={[styles.rowTwoInputs, { marginTop: 10 }]}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={styles.inputLabel}>CGST Rate (%)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={String(config.cgstRate !== undefined ? config.cgstRate : '2.5')}
+                        onChangeText={(text) => {
+                          const clean = text.replace(/[^0-9.]/g, '');
+                          setConfig({ ...config, cgstRate: clean === '' ? '' : Number(clean) });
+                        }}
+                        placeholder="2.5"
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.inputLabel}>SGST Rate (%)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={String(config.sgstRate !== undefined ? config.sgstRate : '2.5')}
+                        onChangeText={(text) => {
+                          const clean = text.replace(/[^0-9.]/g, '');
+                          setConfig({ ...config, sgstRate: clean === '' ? '' : Number(clean) });
+                        }}
+                        placeholder="2.5"
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.settingDivider} />
+
+                {/* Enable Service Cost / Fee */}
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.switchLabel}>Enable Service Charge / Cost</Text>
+                    <Text style={styles.switchDescription}>
+                      Add restaurant or packaging service charge percentage to the order total.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={config.enableServiceCost === true}
+                    onValueChange={(val) => setConfig({ ...config, enableServiceCost: val })}
+                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                    thumbColor={config.enableServiceCost ? '#007AFF' : '#F1F5F9'}
+                  />
+                </View>
+
+                {config.enableServiceCost && (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={styles.inputLabel}>Service Charge Rate (%)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={String(config.serviceCostRate !== undefined ? config.serviceCostRate : '5')}
+                      onChangeText={(text) => {
+                        const clean = text.replace(/[^0-9.]/g, '');
+                        setConfig({ ...config, serviceCostRate: clean === '' ? '' : Number(clean) });
+                      }}
+                      placeholder="e.g. 5"
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                )}
+
+                <View style={styles.settingDivider} />
+
+                {/* Print Breakdown Toggle */}
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.switchLabel}>Print Tax & Service Charge Breakdown</Text>
+                    <Text style={styles.switchDescription}>
+                      Print itemized CGST, SGST, and Service Charge rows separately on thermal receipts.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={config.printTaxBreakdown !== false}
+                    onValueChange={(val) => setConfig({ ...config, printTaxBreakdown: val })}
+                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                    thumbColor={config.printTaxBreakdown !== false ? '#007AFF' : '#F1F5F9'}
+                  />
+                </View>
+              </View>
+
               {/* Test Print Slip */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Printer Diagnostics</Text>

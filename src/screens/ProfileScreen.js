@@ -206,6 +206,97 @@ const ProfileScreen = ({ navigation, route }) => {
     }
   };
 
+  const handleToggleTax = async (val) => {
+    try {
+      const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), enableTax: val };
+      setPrinterConfig(updated);
+      await savePrinterConfig(updated);
+      if (profile?.id) {
+        try {
+          await supabase.from('profiles').update({ enable_tax: val }).eq('id', profile.id);
+        } catch (_) {}
+      }
+      showAlert(
+        'GST Setting Updated',
+        val
+          ? 'GST (CGST + SGST) will be applied to billing and receipts.'
+          : 'GST calculation turned OFF.'
+      );
+    } catch (err) {
+      console.warn('Error updating enableTax:', err);
+    }
+  };
+
+  const handleUpdateCgstRate = async (val) => {
+    const clean = String(val).replace(/[^0-9.]/g, '');
+    const rate = clean === '' ? 0 : Number(clean);
+    const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), cgstRate: rate };
+    setPrinterConfig(updated);
+    await savePrinterConfig(updated);
+    if (profile?.id) {
+      try {
+        await supabase.from('profiles').update({ cgst_rate: rate }).eq('id', profile.id);
+      } catch (_) {}
+    }
+  };
+
+  const handleUpdateSgstRate = async (val) => {
+    const clean = String(val).replace(/[^0-9.]/g, '');
+    const rate = clean === '' ? 0 : Number(clean);
+    const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), sgstRate: rate };
+    setPrinterConfig(updated);
+    await savePrinterConfig(updated);
+    if (profile?.id) {
+      try {
+        await supabase.from('profiles').update({ sgst_rate: rate }).eq('id', profile.id);
+      } catch (_) {}
+    }
+  };
+
+  const handleToggleServiceCost = async (val) => {
+    try {
+      const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), enableServiceCost: val };
+      setPrinterConfig(updated);
+      await savePrinterConfig(updated);
+      if (profile?.id) {
+        try {
+          await supabase.from('profiles').update({ enable_service_cost: val }).eq('id', profile.id);
+        } catch (_) {}
+      }
+      showAlert(
+        'Service Charge Updated',
+        val
+          ? 'Service Charge percentage will be added to billing and receipts.'
+          : 'Service Charge turned OFF.'
+      );
+    } catch (err) {
+      console.warn('Error updating enableServiceCost:', err);
+    }
+  };
+
+  const handleUpdateServiceCostRate = async (val) => {
+    const clean = String(val).replace(/[^0-9.]/g, '');
+    const rate = clean === '' ? 0 : Number(clean);
+    const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), serviceCostRate: rate };
+    setPrinterConfig(updated);
+    await savePrinterConfig(updated);
+    if (profile?.id) {
+      try {
+        await supabase.from('profiles').update({ service_cost_rate: rate }).eq('id', profile.id);
+      } catch (_) {}
+    }
+  };
+
+  const handleTogglePrintTaxBreakdown = async (val) => {
+    try {
+      const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), printTaxBreakdown: val };
+      setPrinterConfig(updated);
+      await savePrinterConfig(updated);
+    } catch (err) {
+      console.warn('Error updating printTaxBreakdown:', err);
+    }
+  };
+
   const loadVoicePreference = async () => {
     try {
       const v = await getVoiceSettings();
@@ -238,21 +329,30 @@ const ProfileScreen = ({ navigation, route }) => {
 
   useEffect(() => {
     const handleNotifications = async () => {
-      if (profile) {
+      if (profile?.id) {
         const token = await registerForPushNotificationsAsync();
-        if (token && token !== profile.push_token) {
-          const { error } = await supabase
-            .from('profiles')
-            .update({ push_token: token })
-            .eq('id', profile.id);
-          if (error) {
-            console.error('Error updating push token:', error.message);
+        if (token) {
+          try {
+            await supabase.from('push_tokens').upsert(
+              { user_id: profile.id, token: token },
+              { onConflict: 'token' }
+            );
+          } catch (e) {
+            console.warn('Push token upsert notice:', e);
+          }
+          if (token !== profile.push_token) {
+            try {
+              await supabase
+                .from('profiles')
+                .update({ push_token: token })
+                .eq('id', profile.id);
+            } catch (_) {}
           }
         }
       }
     };
     handleNotifications();
-  }, [profile]);
+  }, [profile?.id]);
 
   const fetchAdminSellersList = async () => {
     setAdminLoading(true);
@@ -2233,6 +2333,100 @@ const ProfileScreen = ({ navigation, route }) => {
             />
           </View>
 
+          <View style={styles.printerDivider} />
+
+          {/* Tax & Service Charges Section */}
+          <View style={styles.printerToggleRow}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.printerToggleTitle}>Enable GST (CGST + SGST)</Text>
+              <Text style={styles.printerToggleSub}>
+                Automatically calculate and add CGST & SGST percentages to bills and receipts.
+              </Text>
+            </View>
+            <Switch
+              value={printerConfig?.enableTax === true}
+              onValueChange={handleToggleTax}
+              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+              thumbColor={printerConfig?.enableTax ? '#007AFF' : '#F1F5F9'}
+            />
+          </View>
+
+          {printerConfig?.enableTax && (
+            <View style={styles.profileTaxInputRow}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.profileTaxInputLabel}>CGST Rate (%)</Text>
+                <TextInput
+                  style={styles.profileTaxInputField}
+                  value={String(printerConfig?.cgstRate !== undefined ? printerConfig.cgstRate : '2.5')}
+                  onChangeText={handleUpdateCgstRate}
+                  placeholder="2.5"
+                  keyboardType="decimal-pad"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileTaxInputLabel}>SGST Rate (%)</Text>
+                <TextInput
+                  style={styles.profileTaxInputField}
+                  value={String(printerConfig?.sgstRate !== undefined ? printerConfig.sgstRate : '2.5')}
+                  onChangeText={handleUpdateSgstRate}
+                  placeholder="2.5"
+                  keyboardType="decimal-pad"
+                />
+              </View>
+            </View>
+          )}
+
+          <View style={styles.printerDivider} />
+
+          {/* Service Charge Toggle */}
+          <View style={styles.printerToggleRow}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.printerToggleTitle}>Enable Service Charge / Cost</Text>
+              <Text style={styles.printerToggleSub}>
+                Add restaurant or packaging service charge percentage to the order total.
+              </Text>
+            </View>
+            <Switch
+              value={printerConfig?.enableServiceCost === true}
+              onValueChange={handleToggleServiceCost}
+              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+              thumbColor={printerConfig?.enableServiceCost ? '#007AFF' : '#F1F5F9'}
+            />
+          </View>
+
+          {printerConfig?.enableServiceCost && (
+            <View style={[styles.profileTaxInputRow, { marginTop: 4 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileTaxInputLabel}>Service Charge Rate (%)</Text>
+                <TextInput
+                  style={styles.profileTaxInputField}
+                  value={String(printerConfig?.serviceCostRate !== undefined ? printerConfig.serviceCostRate : '5')}
+                  onChangeText={handleUpdateServiceCostRate}
+                  placeholder="e.g. 5"
+                  keyboardType="decimal-pad"
+                />
+              </View>
+            </View>
+          )}
+
+          <View style={styles.printerDivider} />
+
+          {/* Print Tax Breakdown on Receipt Toggle */}
+          <View style={styles.printerToggleRow}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.printerToggleTitle}>Print Tax & Service Breakdown on Receipts</Text>
+              <Text style={styles.printerToggleSub}>
+                Print separate itemized lines for CGST, SGST, and Service Charge on receipts.
+              </Text>
+            </View>
+            <Switch
+              value={printerConfig?.printTaxBreakdown !== false}
+              onValueChange={handleTogglePrintTaxBreakdown}
+              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+              thumbColor={printerConfig?.printTaxBreakdown !== false ? '#007AFF' : '#F1F5F9'}
+            />
+          </View>
+
           {/* Full Printer Setup Modal Button */}
           <TouchableOpacity
             style={styles.printerSetupBtn}
@@ -3700,6 +3894,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#007AFF',
+  },
+  profileTaxInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  profileTaxInputLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  profileTaxInputField: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#0F172A',
   },
   webNotifCard: {
     backgroundColor: '#FFFFFF',

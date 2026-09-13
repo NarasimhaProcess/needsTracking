@@ -249,13 +249,23 @@ export default function App() {
     // Register notifications across Web and Native
     registerForPushNotificationsAsync()
       .then(token => {
-        if (token && typeof token === 'string' && token.startsWith('ExponentPushToken')) {
+        if (token && typeof token === 'string' && (token.startsWith('ExponentPushToken') || token.startsWith('web:') || token.startsWith('{'))) {
           setExpoPushToken(token);
         }
       })
       .catch(err => {
         console.warn('Push notification initialization error:', err);
       });
+
+    // PWA: Listen for 'beforeinstallprompt' event
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleBeforeInstall = (e) => {
+        e.preventDefault();
+        window.deferredPrompt = e;
+        console.log('[PWA] App install prompt captured');
+      };
+      window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    }
 
     if (Platform.OS !== 'web') {
       try {

@@ -6,11 +6,14 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import UniversalDateTimePicker from '../components/UniversalDateTimePicker';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import { useCart } from '../context/CartContext';
 
 const OrderListScreen = ({ navigation, route }) => {
   const { sellerId, sellerName, customerId } = route?.params || {};
+  const { role: contextRole } = useCart();
   const [orders, setOrders] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [userRole, setUserRole] = useState(contextRole || null);
   const [sectionedOrders, setSectionedOrders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState(null);
@@ -20,21 +23,59 @@ const OrderListScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  useEffect(() => {
+    if (contextRole) {
+      setUserRole(contextRole);
+    }
+  }, [contextRole]);
+
+  const canManageOrders = userRole === 'seller' || userRole === 'admin' || userRole === 'superadmin';
+
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const { customerId } = route.params || {};
       const { data: { user } = {} } = await supabase.auth.getUser();
       setCurrentUser(user || null);
-      const targetUserId = customerId || user?.id;
 
-      if (targetUserId) {
-        const fetchedOrders = await getOrders(targetUserId);
-        if (fetchedOrders && Array.isArray(fetchedOrders)) {
-          setOrders(fetchedOrders);
+      if (!user) {
+        setOrders([]);
+        return;
+      }
+
+      // Fetch or confirm profile role
+      let effectiveRole = contextRole || userRole;
+      if (!effectiveRole) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
+        effectiveRole = prof?.role || 'buyer';
+        setUserRole(effectiveRole);
+      }
+
+      const isSeller = effectiveRole === 'seller';
+      const isAdmin = effectiveRole === 'admin' || effectiveRole === 'superadmin';
+
+      let fetchedOrders = [];
+      if (isSeller) {
+        // Seller views all orders received by their store
+        fetchedOrders = await getOrders(user.id, { role: 'seller', isSeller: true });
+      } else if (isAdmin) {
+        // Admin views store orders or all orders
+        const targetSeller = route?.params?.sellerId;
+        if (targetSeller) {
+          fetchedOrders = await getOrders(targetSeller, { role: 'seller', isSeller: true });
         } else {
-          setOrders([]);
+          fetchedOrders = await getOrders(user.id, { role: 'admin' });
         }
+      } else {
+        // Buyer views strictly their own orders (never seller's store orders)
+        fetchedOrders = await getOrders(user.id, { role: 'buyer', isSeller: false });
+      }
+
+      if (fetchedOrders && Array.isArray(fetchedOrders)) {
+        setOrders(fetchedOrders);
       } else {
         setOrders([]);
       }
@@ -44,7 +85,7 @@ const OrderListScreen = ({ navigation, route }) => {
     } finally {
       setLoading(false);
     }
-  }, [route.params]);
+  }, [contextRole, userRole, route?.params]);
 
   useEffect(() => {
     fetchOrders();
@@ -55,16 +96,14 @@ const OrderListScreen = ({ navigation, route }) => {
         fetchOrders();
       } else {
         setCurrentUser(null);
-        if (!route.params?.customerId) {
-          setOrders([]);
-        }
+        setOrders([]);
       }
     });
 
     return () => {
       authListener?.subscription?.unsubscribe?.();
     };
-  }, [fetchOrders, route.params]);
+  }, [fetchOrders]);
 
   useEffect(() => {
     let filtered = orders;
@@ -154,6 +193,10 @@ const OrderListScreen = ({ navigation, route }) => {
   };
 
   const handleDeleteOrder = async (orderId) => {
+    if (!canManageOrders) {
+      showAlert('Access Denied', 'Buyers are not permitted to delete orders.');
+      return;
+    }
     showAlert(
       'Delete Order',
       'Are you sure you want to delete this order? This action cannot be undone.',
@@ -201,7 +244,6 @@ const OrderListScreen = ({ navigation, route }) => {
     });
   };
 
-
   const renderOrderItem = ({ item }) => {
     const { orderNumber, dayOrderNo } = extractOrderNumbers(item);
     return (
@@ -221,6 +263,11 @@ const OrderListScreen = ({ navigation, route }) => {
         <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
         <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
         {item.table_no && <Text style={styles.orderDate}>Table No: {item.table_no}</Text>}
+        {item.customer_name ? (
+          <Text style={styles.orderCustomer}>
+            Customer: {item.customer_name} {item.customer_mobile ? `• ${item.customer_mobile}` : ''}
+          </Text>
+        ) : null}
         <View style={styles.actionButtons}>
           <TouchableOpacity
             onPress={() => announceOrderPrint(item)}
@@ -236,12 +283,23 @@ const OrderListScreen = ({ navigation, route }) => {
           >
             <Icon name="print" size={20} color="#10B981" style={styles.actionIcon} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('OrderEdit', { orderId: item.id, sellerId, sellerName, customerId })}>
-            <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => handleDeleteOrder(item.id)}>
-            <Icon name="trash" size={20} color="#FF3B30" style={styles.actionIcon} />
-          </TouchableOpacity>
+          {/* Edit and Delete are strictly restricted to Sellers and Admins */}
+          {canManageOrders && (
+            <>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('OrderEdit', { orderId: item.id, sellerId, sellerName, customerId })}
+                accessibilityLabel="Edit Order Status"
+              >
+                <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleDeleteOrder(item.id)}
+                accessibilityLabel="Delete Order"
+              >
+                <Icon name="trash" size={20} color="#FF3B30" style={styles.actionIcon} />
+              </TouchableOpacity>
+            </>
+          )}
           {item.order_type !== 'shop-order' && item.shipping_address && (
             <TouchableOpacity
               onPress={() => openMapsDirections(item.shipping_address)}
@@ -264,7 +322,7 @@ const OrderListScreen = ({ navigation, route }) => {
     );
   }
 
-  const isGuest = !currentUser && !route.params?.customerId;
+  const isGuest = !currentUser;
 
   return (
     <View
@@ -286,7 +344,7 @@ const OrderListScreen = ({ navigation, route }) => {
           >
             <Icon name="home" size={22} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Your Orders</Text>
+          <Text style={styles.headerTitle}>{userRole === 'seller' ? 'Store Orders' : 'Your Orders'}</Text>
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => navigation.navigate('Invoice')} style={{ marginRight: 15 }}>
@@ -432,8 +490,12 @@ const OrderListScreen = ({ navigation, route }) => {
           {sectionedOrders.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Icon name="inbox" size={54} color="#cbd5e1" style={{ marginBottom: 12 }} />
-              <Text style={styles.noOrdersText}>No orders found.</Text>
-              <Text style={styles.noOrdersSubtext}>Looks like you haven't placed any orders matching this filter.</Text>
+              <Text style={styles.noOrdersText}>{userRole === 'seller' ? 'No store orders found.' : 'No orders found.'}</Text>
+              <Text style={styles.noOrdersSubtext}>
+                {userRole === 'seller'
+                  ? "Looks like your store hasn't received any customer orders matching this filter."
+                  : "Looks like you haven't placed any orders matching this filter."}
+              </Text>
               <TouchableOpacity
                 style={styles.browseButton}
                 onPress={() => navigation.navigate('Catalog', { sellerId, sellerName, customerId })}
@@ -694,6 +756,12 @@ const styles = StyleSheet.create({
   orderDate: {
     fontSize: 12,
     color: '#64748B',
+  },
+  orderCustomer: {
+    fontSize: 12,
+    color: '#0284C7',
+    fontWeight: '600',
+    marginTop: 2,
   },
   actionButtons: {
     flexDirection: 'row',

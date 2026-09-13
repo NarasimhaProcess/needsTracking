@@ -762,8 +762,17 @@ const CheckoutScreen = ({ navigation, route }) => {
     try {
       for (const sellerKey of sellerKeys) {
         const sellerGroup = itemsBySeller[sellerKey];
+        const rawSellerId = sellerGroup.sellerId && sellerGroup.sellerId !== 'store'
+          ? sellerGroup.sellerId
+          : (isShopOrder ? profile?.id : null);
+        const isValidUUID = (val) =>
+          typeof val === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+        const targetSellerId = isValidUUID(rawSellerId) ? rawSellerId.trim() : null;
+
         const orderPayload = {
           user_id: orderUserId,
+          seller_id: targetSellerId,
           shipping_address: shippingAddress,
           total_amount: sellerGroup.subtotal,
           status: orderStatus,
@@ -775,11 +784,20 @@ const CheckoutScreen = ({ navigation, route }) => {
           orderPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
         }
 
-        const { data: order, error: orderError } = await supabase
+        let { data: order, error: orderError } = await supabase
           .from('orders')
           .insert(orderPayload)
           .select()
           .single();
+
+        if (orderError && (orderError.code === 'PGRST204' || (orderError.message && orderError.message.includes('column')))) {
+          console.warn('Retrying sub-order creation without seller_id column:', orderError.message);
+          const fallbackPayload = { ...orderPayload };
+          delete fallbackPayload.seller_id;
+          const retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+          order = retry.data;
+          orderError = retry.error;
+        }
 
         if (orderError) {
           console.error('Error creating sub-order:', orderError.message);

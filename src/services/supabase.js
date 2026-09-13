@@ -824,6 +824,23 @@ export async function deleteProduct(productId) {
 
 export async function deleteOrder(orderId) {
   try {
+    // Check user role before allowing deletion: buyers are not permitted to delete orders
+    const { data: { user } = {} } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('deleteOrder: User not authenticated');
+      return false;
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profile?.role === 'buyer') {
+      console.warn('deleteOrder: Buyers are not authorized to delete orders.');
+      return false;
+    }
+
     // Delete associated order items first
     const { error: deleteItemsError } = await supabase
       .from('order_items')
@@ -1161,38 +1178,158 @@ export async function getCustomerDocuments(customerId) {
 }
 
 // Order Management Functions
-export async function getOrders(userId) {
-  console.log('getOrders: userId', userId);
+export async function getOrders(userId, options = {}) {
+  console.log('getOrders: userId', userId, 'options', options);
+  if (!userId) return [];
 
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      *,
-      order_items (
+  const isSeller = options.role === 'seller' || options.isSeller;
+  const isAdmin = options.role === 'admin' || options.role === 'superadmin';
+
+  const selectQuery = `
+    *,
+    order_items (
+      id,
+      quantity,
+      price,
+      product_variant_combination_id,
+      product_variant_combinations (
         id,
-        quantity,
+        combination_string,
         price,
-        product_variant_combinations (
+        products (
           id,
-          combination_string,
-          products (
-            id,
-            product_name,
-            customer_id,
-            product_media (media_url, media_type)
-          )
+          product_name,
+          user_id,
+          customer_id,
+          product_media (media_url, media_type)
         )
       )
-    `)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    )
+  `;
 
-  if (error) {
-    console.error('getOrders: Error fetching orders:', error.message);
-    return null;
+  let orders = [];
+
+  if (isSeller) {
+    // 1. Try querying orders where seller_id = userId OR user_id = userId (for shop orders created by seller)
+    try {
+      const { data: sellerData, error: sellerErr } = await supabase
+        .from('orders')
+        .select(selectQuery)
+        .or(`seller_id.eq.${userId},user_id.eq.${userId}`)
+        .order('created_at', { ascending: false });
+
+      if (!sellerErr && Array.isArray(sellerData)) {
+        orders = sellerData;
+      } else if (sellerErr) {
+        console.warn('getOrders: seller_id query notice:', sellerErr.message);
+      }
+    } catch (err) {
+      console.warn('getOrders: seller_id query exception:', err);
+    }
+
+    // 2. Product-linked fallback for older orders created prior to seller_id column
+    try {
+      const { data: myProducts } = await supabase
+        .from('products')
+        .select('id')
+        .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
+
+      if (myProducts && myProducts.length > 0) {
+        const prodIds = myProducts.map((p) => p.id);
+        const { data: combinations } = await supabase
+          .from('product_variant_combinations')
+          .select('id')
+          .in('product_id', prodIds);
+
+        if (combinations && combinations.length > 0) {
+          const combiIds = combinations.map((c) => c.id);
+          const { data: items } = await supabase
+            .from('order_items')
+            .select('order_id')
+            .in('product_variant_combination_id', combiIds);
+
+          if (items && items.length > 0) {
+            const linkedOrderIds = Array.from(new Set(items.map((it) => it.order_id).filter(Boolean)));
+            if (linkedOrderIds.length > 0) {
+              const existingIds = new Set(orders.map((o) => o.id));
+              const missingIds = linkedOrderIds.filter((id) => !existingIds.has(id));
+
+              if (missingIds.length > 0) {
+                const { data: extraOrders } = await supabase
+                  .from('orders')
+                  .select(selectQuery)
+                  .in('id', missingIds)
+                  .order('created_at', { ascending: false });
+
+                if (extraOrders && extraOrders.length > 0) {
+                  orders = [...orders, ...extraOrders].sort(
+                    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (fallbackErr) {
+      console.warn('getOrders fallback product search notice:', fallbackErr);
+    }
+  } else if (isAdmin && !options.buyerOnly) {
+    const { data: adminData, error: adminErr } = await supabase
+      .from('orders')
+      .select(selectQuery)
+      .order('created_at', { ascending: false });
+
+    if (!adminErr && adminData) {
+      orders = adminData;
+    }
+  } else {
+    // Buyer query: strictly orders placed by this buyer
+    const { data: buyerData, error: buyerErr } = await supabase
+      .from('orders')
+      .select(selectQuery)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (buyerErr) {
+      console.error('getOrders: Error fetching buyer orders:', buyerErr.message);
+      return null;
+    }
+    orders = buyerData || [];
   }
-  console.log('getOrders: Fetched orders data', data);
-  return data;
+
+  // Enrich orders with buyer profiles if missing customer names
+  try {
+    const missingProfileUserIds = Array.from(
+      new Set(
+        orders
+          .filter((o) => o.user_id && !o.customer_name)
+          .map((o) => o.user_id)
+      )
+    );
+
+    if (missingProfileUserIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, mobile')
+        .in('id', missingProfileUserIds);
+
+      if (profiles && profiles.length > 0) {
+        const profMap = new Map(profiles.map((p) => [p.id, p]));
+        orders.forEach((ord) => {
+          if (ord.user_id && profMap.has(ord.user_id)) {
+            const p = profMap.get(ord.user_id);
+            if (!ord.customer_name && p.full_name) ord.customer_name = p.full_name;
+            if (!ord.customer_mobile && p.mobile) ord.customer_mobile = p.mobile;
+          }
+        });
+      }
+    }
+  } catch (profErr) {
+    console.warn('getOrders profile enrichment notice:', profErr);
+  }
+
+  return orders;
 }
 
 export async function getOrderById(orderId) {
@@ -1281,18 +1418,26 @@ export async function updateOrderStatus(orderId, newStatus) {
   return data ? data[0] : null;
 }
 
-export async function getPendingOrdersCount(userId) {
-  const { count, error } = await supabase
+export async function getPendingOrdersCount(userId, options = {}) {
+  const isSeller = options.role === 'seller' || options.isSeller;
+  let query = supabase
     .from('orders')
     .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .in('status', ['pending', 'processing']);
+    .in('status', ['pending', 'processing', 'pending_payment']);
+
+  if (isSeller) {
+    query = query.or(`seller_id.eq.${userId},user_id.eq.${userId}`);
+  } else {
+    query = query.eq('user_id', userId);
+  }
+
+  const { count, error } = await query;
 
   if (error) {
     console.error('Error fetching pending orders count:', error.message);
     return 0;
   }
-  return count;
+  return count || 0;
 }
 
 export async function getAssignedOrders(deliveryManagerId) {

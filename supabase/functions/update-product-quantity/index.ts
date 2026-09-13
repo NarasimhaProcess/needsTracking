@@ -1,68 +1,98 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeaders } from '../_shared/cors.ts';
 
-// These should be set as environment variables in your Supabase project settings
-const supabaseUrl = Deno.env.get('SUPABASE_URL')
-const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 serve(async (req) => {
-  const { order_id } = await req.json()
-
-  if (!order_id) {
-    return new Response('Missing order_id', { status: 400 })
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
   }
 
-  // Use the service role key to bypass RLS policies
-  const supabase = createClient(supabaseUrl, serviceRoleKey)
+  try {
+    const body = await req.json().catch(() => ({}));
+    const order_id = body?.order_id;
 
-  const { data: orderItems, error: orderItemsError } = await supabase
-    .from('order_items')
-    .select('product_variant_combination_id, quantity')
-    .eq('order_id', order_id)
-
-  if (orderItemsError) {
-    console.error('Error fetching order items:', orderItemsError)
-    return new Response('Error fetching order items', { status: 500 })
-  }
-
-  for (const item of orderItems) {
-    const { data: variant, error: variantError } = await supabase
-      .from('product_variant_combinations')
-      .select('quantity')
-      .eq('id', item.product_variant_combination_id)
-      .single()
-
-    if (variantError) {
-      console.error('Error fetching variant quantity:', variantError)
-      continue // Or handle more gracefully
+    if (!order_id) {
+      return new Response(JSON.stringify({ error: 'Missing order_id' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
-    const newQuantity = variant.quantity - item.quantity
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(JSON.stringify({ error: 'Supabase configuration missing' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    const { error: updateError } = await supabase
-      .from('product_variant_combinations')
-      .update({ quantity: newQuantity })
-      .eq('id', item.product_variant_combination_id)
+    // Use the service role key to bypass RLS policies
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    if (updateError) {
-      console.error('Error updating variant quantity:', updateError)
-      // Decide if you want to stop or continue
-    } else {
-      const { error: historyError } = await supabase
-        .from('inventory_history')
-        .insert({
-          product_variant_combination_id: item.product_variant_combination_id,
-          change_type: 'sale',
-          quantity_change: -item.quantity,
-          new_quantity: newQuantity,
-          order_id: order_id,
-        })
+    const { data: orderItems, error: orderItemsError } = await supabase
+      .from('order_items')
+      .select('product_variant_combination_id, quantity')
+      .eq('order_id', order_id);
 
-      if (historyError) {
-        console.error('Error inserting into inventory history:', historyError)
+    if (orderItemsError) {
+      console.error('Error fetching order items:', orderItemsError);
+      return new Response(JSON.stringify({ error: 'Error fetching order items' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    for (const item of (orderItems || [])) {
+      if (!item.product_variant_combination_id) continue;
+
+      const { data: variant, error: variantError } = await supabase
+        .from('product_variant_combinations')
+        .select('quantity')
+        .eq('id', item.product_variant_combination_id)
+        .single();
+
+      if (variantError || !variant) {
+        console.error('Error fetching variant quantity:', variantError);
+        continue;
+      }
+
+      const newQuantity = (variant.quantity || 0) - item.quantity;
+
+      const { error: updateError } = await supabase
+        .from('product_variant_combinations')
+        .update({ quantity: newQuantity })
+        .eq('id', item.product_variant_combination_id);
+
+      if (updateError) {
+        console.error('Error updating variant quantity:', updateError);
+      } else {
+        const { error: historyError } = await supabase
+          .from('inventory_history')
+          .insert({
+            product_variant_combination_id: item.product_variant_combination_id,
+            change_type: 'sale',
+            quantity_change: -item.quantity,
+            new_quantity: newQuantity,
+            order_id: order_id,
+          });
+
+        if (historyError) {
+          console.error('Error inserting into inventory history:', historyError);
+        }
       }
     }
-  }
 
-  return new Response('OK')
-})
+    return new Response(JSON.stringify({ success: true, message: 'Inventory updated' }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    console.error('update-product-quantity error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});

@@ -10,13 +10,13 @@ import { useCart } from '../context/CartContext';
 import { getPendingOrdersCount, supabase } from '../services/supabase';
 
 const OrderIconComponent = ({ navigation }) => {
-  const { user } = useCart();
+  const { user, role } = useCart();
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
 
   useEffect(() => {
     if (user) {
       const fetchOrdersCount = async () => {
-        const count = await getPendingOrdersCount(user.id);
+        const count = await getPendingOrdersCount(user.id, { role, isSeller: role === 'seller' });
         setPendingOrdersCount(count);
       };
 

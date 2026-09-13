@@ -1,35 +1,48 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeaders } from '../_shared/cors.ts';
 
-const supabaseUrl = process.env.SUPABASE_URL
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY
+const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 serve(async (req) => {
-  const { latitude, longitude, radius } = await req.json()
-
-  if (!latitude || !longitude || !radius) {
-    return new Response('Missing latitude, longitude, or radius', { status: 400 })
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
   }
 
-  const supabase = createClient(supabaseUrl, supabaseAnonKey)
+  try {
+    const { latitude, longitude, radius } = await req.json();
 
-  // Enable the earthdistance extension if not already enabled
-  await supabase.rpc('sql', { sql: 'CREATE EXTENSION IF NOT EXISTS cube;' })
-  await supabase.rpc('sql', { sql: 'CREATE EXTENSION IF NOT EXISTS earthdistance;' })
+    if (!latitude || !longitude || !radius) {
+      return new Response(JSON.stringify({ error: 'Missing latitude, longitude, or radius' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const { data, error } = await supabase.rpc('get_customers_in_radius', {
-    user_lat: latitude,
-    user_lon: longitude,
-    radius_km: radius,
-  })
+    const { data, error } = await supabase.rpc('get_customers_in_radius', {
+      user_lat: latitude,
+      user_lon: longitude,
+      radius_km: radius,
+    });
 
-  if (error) {
-    console.error('Error fetching customers by location:', error)
-    return new Response('Error fetching customers by location', { status: 500 })
+    if (error) {
+      console.error('Error fetching customers by location:', error);
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify(data), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
-
-  return new Response(JSON.stringify(data), {
-    headers: { 'Content-Type': 'application/json' },
-  })
-})
+});

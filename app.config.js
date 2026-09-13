@@ -55,7 +55,14 @@ export default {
     },
     "web": {
       "bundler": "metro",
-      "favicon": "./assets/icon.png"
+      "favicon": "./assets/icon.png",
+      "name": "Needs Tracker",
+      "shortName": "NeedsTracker",
+      "description": "Real-time delivery tracking, orders, and local marketplace",
+      "themeColor": "#007AFF",
+      "backgroundColor": "#ffffff",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "experiments": {
       "baseUrl": "/needsTracking/"

@@ -25,6 +25,12 @@ export const DEFAULT_PRINTER_CONFIG = {
   cutPaper: true,
   printHeader: true, // Option to check/uncheck header part (store name, address, tax invoice title)
   printDayWiseNumber: true, // Option to check/require Day-wise order number on receipts
+  enableTax: false, // Option to enable/disable CGST + SGST tax on billing & receipts
+  cgstRate: 2.5, // Central GST percentage e.g. 2.5%
+  sgstRate: 2.5, // State GST percentage e.g. 2.5%
+  enableServiceCost: false, // Option to enable/disable service charge on billing & receipts
+  serviceCostRate: 0, // Service cost percentage e.g. 5%
+  printTaxBreakdown: true, // Option to print CGST, SGST, Service Cost itemized rows on receipt
 };
 
 // Global active Web Bluetooth BLE device/characteristic instance
@@ -46,6 +52,12 @@ export const getPrinterConfig = async () => {
         bottomFeedLines: parsed.bottomFeedLines !== undefined ? Number(parsed.bottomFeedLines) : 1,
         printHeader: parsed.printHeader !== undefined ? Boolean(parsed.printHeader) : true,
         printDayWiseNumber: parsed.printDayWiseNumber !== undefined ? Boolean(parsed.printDayWiseNumber) : true,
+        enableTax: parsed.enableTax !== undefined ? Boolean(parsed.enableTax) : false,
+        cgstRate: parsed.cgstRate !== undefined ? Number(parsed.cgstRate) : 2.5,
+        sgstRate: parsed.sgstRate !== undefined ? Number(parsed.sgstRate) : 2.5,
+        enableServiceCost: parsed.enableServiceCost !== undefined ? Boolean(parsed.enableServiceCost) : false,
+        serviceCostRate: parsed.serviceCostRate !== undefined ? Number(parsed.serviceCostRate) : 0,
+        printTaxBreakdown: parsed.printTaxBreakdown !== undefined ? Boolean(parsed.printTaxBreakdown) : true,
       };
     }
   } catch (err) {
@@ -420,24 +432,45 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
       ? data.amount
       : null;
 
+  const cgstAmount = safeParseNumber(data.cgstAmount, 0);
+  const sgstAmount = safeParseNumber(data.sgstAmount, 0);
+  const serviceCost = safeParseNumber(data.serviceCost, 0);
+  const cgstRate = data.cgstRate !== undefined ? data.cgstRate : (config.cgstRate || 2.5);
+  const sgstRate = data.sgstRate !== undefined ? data.sgstRate : (config.sgstRate || 2.5);
+  const serviceCostRate = data.serviceCostRate !== undefined ? data.serviceCostRate : (config.serviceCostRate || 0);
+
+  const hasTaxesOrCharges = (config.printTaxBreakdown !== false) && (cgstAmount > 0 || sgstAmount > 0 || serviceCost > 0);
+
   const computedTotal =
     rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
       ? safeParseNumber(rawTotal, 0)
       : safeParseNumber(data.subtotal, 0) > 0
-      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0)
+      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0) + cgstAmount + sgstAmount + serviceCost
       : data.items && Array.isArray(data.items) && data.items.length > 0
-      ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0)
+      ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0) + cgstAmount + sgstAmount + serviceCost
       : 0;
 
   const hasMetaTotals =
     (data.subtotal !== undefined && safeParseNumber(data.subtotal, 0) > 0) ||
     (data.deliveryFee && safeParseNumber(data.deliveryFee) > 0) ||
-    (data.discount && safeParseNumber(data.discount) > 0);
+    (data.discount && safeParseNumber(data.discount) > 0) ||
+    hasTaxesOrCharges;
 
   addText(separator);
   if (hasMetaTotals) {
     if (data.subtotal !== undefined && safeParseNumber(data.subtotal, 0) > 0) {
       addText(formatTwoColumns('Subtotal:', safeFormatPrice(data.subtotal, currencySymbol), width));
+    }
+    if (config.printTaxBreakdown !== false) {
+      if (cgstAmount > 0) {
+        addText(formatTwoColumns(`CGST (${cgstRate}%):`, safeFormatPrice(cgstAmount, currencySymbol), width));
+      }
+      if (sgstAmount > 0) {
+        addText(formatTwoColumns(`SGST (${sgstRate}%):`, safeFormatPrice(sgstAmount, currencySymbol), width));
+      }
+      if (serviceCost > 0) {
+        addText(formatTwoColumns(`Service Charge (${serviceCostRate}%):`, safeFormatPrice(serviceCost, currencySymbol), width));
+      }
     }
     if (data.deliveryFee && safeParseNumber(data.deliveryFee) > 0) {
       addText(formatTwoColumns('Delivery Fee:', safeFormatPrice(data.deliveryFee, currencySymbol), width));
@@ -512,13 +545,17 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
       ? data.amount
       : null;
 
+  const cgstAmount = safeParseNumber(data.cgstAmount, 0);
+  const sgstAmount = safeParseNumber(data.sgstAmount, 0);
+  const serviceCost = safeParseNumber(data.serviceCost, 0);
+
   const computedTotal =
     rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
       ? safeParseNumber(rawTotal, 0)
       : safeParseNumber(data.subtotal, 0) > 0
-      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0)
+      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0) + cgstAmount + sgstAmount + serviceCost
       : data.items && Array.isArray(data.items) && data.items.length > 0
-      ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0)
+      ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0) + cgstAmount + sgstAmount + serviceCost
       : 0;
 
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
@@ -670,6 +707,9 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
           <div class="divider"></div>
 
           ${data.subtotal !== undefined ? `<div class="meta-row"><span>Subtotal:</span><span>${currencySymbol}${safeFormatNumber(data.subtotal)}</span></div>` : ''}
+          ${config.printTaxBreakdown !== false && cgstAmount > 0 ? `<div class="meta-row"><span>CGST (${data.cgstRate || config.cgstRate || 2.5}%):</span><span>${currencySymbol}${safeFormatNumber(cgstAmount)}</span></div>` : ''}
+          ${config.printTaxBreakdown !== false && sgstAmount > 0 ? `<div class="meta-row"><span>SGST (${data.sgstRate || config.sgstRate || 2.5}%):</span><span>${currencySymbol}${safeFormatNumber(sgstAmount)}</span></div>` : ''}
+          ${config.printTaxBreakdown !== false && serviceCost > 0 ? `<div class="meta-row"><span>Service Charge (${data.serviceCostRate || config.serviceCostRate || 0}%):</span><span>${currencySymbol}${safeFormatNumber(serviceCost)}</span></div>` : ''}
           ${data.deliveryFee ? `<div class="meta-row"><span>Delivery:</span><span>${currencySymbol}${safeFormatNumber(data.deliveryFee)}</span></div>` : ''}
           ${data.discount ? `<div class="meta-row"><span>Discount:</span><span>-${currencySymbol}${safeFormatNumber(data.discount)}</span></div>` : ''}
 
@@ -1079,6 +1119,22 @@ export const printReceipt = async (orderDetails, options = {}) => {
       total = itemsTotal + deliveryFee - discount;
     }
 
+    const config = await getPrinterConfig();
+    let cgstAmount = Number(order.cgst_amount || order.cgstAmount || 0);
+    let sgstAmount = Number(order.sgst_amount || order.sgstAmount || 0);
+    let serviceCost = Number(order.service_cost || order.serviceCost || 0);
+    const cgstRate = Number(order.cgst_rate !== undefined ? order.cgst_rate : (config.cgstRate || 2.5));
+    const sgstRate = Number(order.sgst_rate !== undefined ? order.sgst_rate : (config.sgstRate || 2.5));
+    const serviceCostRate = Number(order.service_cost_rate !== undefined ? order.service_cost_rate : (config.serviceCostRate || 0));
+
+    if (cgstAmount === 0 && sgstAmount === 0 && config.enableTax && subtotal > 0) {
+      cgstAmount = Math.round(subtotal * (cgstRate / 100) * 100) / 100;
+      sgstAmount = Math.round(subtotal * (sgstRate / 100) * 100) / 100;
+    }
+    if (serviceCost === 0 && config.enableServiceCost && subtotal > 0 && serviceCostRate > 0) {
+      serviceCost = Math.round(subtotal * (serviceCostRate / 100) * 100) / 100;
+    }
+
     const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
     const resolvedDayOrderNo = options.dayOrderNo || options.dailyOrderNumber || dayOrderNo;
 
@@ -1105,6 +1161,12 @@ export const printReceipt = async (orderDetails, options = {}) => {
       tableNo: order.table_no,
       items,
       subtotal,
+      cgstAmount,
+      sgstAmount,
+      serviceCost,
+      cgstRate,
+      sgstRate,
+      serviceCostRate,
       deliveryFee,
       discount,
       total,
@@ -1170,13 +1232,33 @@ export const printPreBill = async (cart) => {
       };
     });
 
+    const config = await getPrinterConfig();
+    const subtotal = totalAmount;
+    let cgstAmount = 0;
+    let sgstAmount = 0;
+    let serviceCost = 0;
+    if (config.enableTax && subtotal > 0) {
+      cgstAmount = Math.round(subtotal * ((config.cgstRate || 2.5) / 100) * 100) / 100;
+      sgstAmount = Math.round(subtotal * ((config.sgstRate || 2.5) / 100) * 100) / 100;
+    }
+    if (config.enableServiceCost && subtotal > 0 && (config.serviceCostRate || 0) > 0) {
+      serviceCost = Math.round(subtotal * ((config.serviceCostRate || 0) / 100) * 100) / 100;
+    }
+    const computedEstimateTotal = subtotal + cgstAmount + sgstAmount + serviceCost;
+
     const payload = {
       title: '*** PRE-BILL / ESTIMATE ***',
       orderId: 'EST-' + Math.floor(100000 + Math.random() * 900000),
       date: new Date().toLocaleString(),
       items,
-      subtotal: totalAmount,
-      total: totalAmount,
+      subtotal,
+      cgstAmount,
+      sgstAmount,
+      serviceCost,
+      cgstRate: config.cgstRate || 2.5,
+      sgstRate: config.sgstRate || 2.5,
+      serviceCostRate: config.serviceCostRate || 0,
+      total: computedEstimateTotal,
       paymentMethod: 'NOT PAID (ESTIMATE)',
       paymentStatus: 'DRAFT',
     };

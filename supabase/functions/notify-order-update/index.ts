@@ -13,11 +13,12 @@ serve(async (req) => {
 
     // Get the order records from the request body (sent by the database trigger)
     const { record: updatedOrder, old_record: oldOrder } = await req.json();
-    
+
     const userId = updatedOrder.user_id;
     const newStatus = updatedOrder.status;
-    const oldStatus = oldOrder.status;
+    const oldStatus = oldOrder?.status;
     const orderId = updatedOrder.id;
+    const orderNumber = updatedOrder.order_number || String(orderId).substring(0, 8).toUpperCase();
 
     // Fetch all push tokens for the user associated with the order
     const { data: tokens, error: tokensError } = await supabase
@@ -30,45 +31,97 @@ serve(async (req) => {
     }
 
     // Filter out any null/empty tokens
-    const pushTokens = tokens.map(t => t.token).filter(Boolean);
+    const rawTokens = (tokens || []).map((t: { token: string }) => t.token).filter(Boolean);
 
-    if (pushTokens.length === 0) {
+    if (rawTokens.length === 0) {
       return new Response(JSON.stringify({ message: "User has no registered push tokens." }), {
         headers: { "Content-Type": "application/json" },
         status: 200,
       });
     }
 
-    // Construct the notification payload for Expo
-    const notificationPayload = {
-      to: pushTokens,
-      title: "Order Update",
-      body: `The status of your order #${orderId.substring(0, 8)} has changed to '${newStatus}'.`,
-      sound: "default",
-      data: { orderId: orderId }, // Pass orderId to navigate to the order details on tap
-    };
+    // 1. Separate mobile (Expo) tokens from Web Push tokens
+    const expoTokens = rawTokens.filter((t: string) =>
+      t.startsWith("ExponentPushToken") || t.startsWith("ExpoPushToken")
+    );
+    const webTokens = rawTokens.filter((t: string) =>
+      t.startsWith("web:") || t.startsWith("{")
+    );
 
-    // Send the notifications via Expo's push notification service
-    const response = await fetch(EXPO_PUSH_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate",
-      },
-      body: JSON.stringify(notificationPayload),
-    });
+    const title = "📦 Order Update";
+    const body = `Order #${orderNumber} status changed to '${newStatus}'.`;
+    const payloadData = { orderId, orderNumber, status: newStatus, type: "order_status_update" };
 
-    const responseData = await response.json();
+    const dispatchResults: { expo?: unknown; web?: unknown[] } = {};
 
-    console.log("Expo push notification response:", responseData);
+    // 2. Dispatch to Native Expo Push Gateway
+    if (expoTokens.length > 0) {
+      try {
+        const expoPayload = {
+          to: expoTokens,
+          title,
+          body,
+          sound: "default",
+          data: payloadData,
+        };
 
-    return new Response(JSON.stringify({ success: true, data: responseData }), {
+        const expoRes = await fetch(EXPO_PUSH_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
+          },
+          body: JSON.stringify(expoPayload),
+        });
+        dispatchResults.expo = await expoRes.json();
+      } catch (expoErr) {
+        console.warn("Expo push delivery notice:", expoErr);
+      }
+    }
+
+    // 3. Dispatch to Web Push Subscriptions
+    if (webTokens.length > 0) {
+      const webResults = [];
+      for (const token of webTokens) {
+        try {
+          let subscriptionStr = token;
+          if (subscriptionStr.startsWith("web:")) {
+            subscriptionStr = subscriptionStr.slice(4);
+          }
+          if (subscriptionStr.startsWith("{")) {
+            const subscription = JSON.parse(subscriptionStr);
+            if (subscription.endpoint) {
+              const webRes = await fetch(subscription.endpoint, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "TTL": "86400",
+                },
+                body: JSON.stringify({
+                  title,
+                  body,
+                  icon: "./icon-192.png",
+                  badge: "./icon-192.png",
+                  data: payloadData,
+                }),
+              }).catch((e) => ({ status: 500, error: String(e) }));
+              webResults.push({ endpoint: subscription.endpoint, status: (webRes as any).status });
+            }
+          }
+        } catch (subParseErr) {
+          console.warn("Web push dispatch notice:", subParseErr);
+        }
+      }
+      dispatchResults.web = webResults;
+    }
+
+    return new Response(JSON.stringify({ success: true, results: dispatchResults }), {
       headers: { "Content-Type": "application/json" },
       status: 200,
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in notify-order-update function:", error);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { "Content-Type": "application/json" },

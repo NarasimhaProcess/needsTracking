@@ -15,13 +15,17 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import { getOrderById, updateOrderStatus } from '../services/supabase';
 import { extractOrderNumbers } from '../services/printerService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import { useCart } from '../context/CartContext';
 
 const OrderEditScreen = ({ route, navigation }) => {
   const { orderId, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
+  const { role } = useCart();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  const canManage = role === 'seller' || role === 'admin' || role === 'superadmin' || role === 'delivery_manager';
 
   const resolvedSellerId =
     paramSellerId ||
@@ -30,6 +34,13 @@ const OrderEditScreen = ({ route, navigation }) => {
     null;
   const resolvedSellerName = paramSellerName || order?.seller_name || null;
   const resolvedCustomerId = paramCustomerId || order?.customer_id || null;
+
+  useEffect(() => {
+    if (role === 'buyer') {
+      Alert.alert('Access Denied', 'Buyers are not permitted to edit orders.');
+      navigation.goBack();
+    }
+  }, [role, navigation]);
 
   useEffect(() => {
     const fetchOrderDetails = async () => {
@@ -50,6 +61,10 @@ const OrderEditScreen = ({ route, navigation }) => {
   }, [orderId]);
 
   const handleSave = async () => {
+    if (!canManage) {
+      Alert.alert('Access Denied', 'Buyers are not permitted to edit orders.');
+      return;
+    }
     setIsSaving(true);
     const updatedOrder = await updateOrderStatus(orderId, status);
     if (updatedOrder) {

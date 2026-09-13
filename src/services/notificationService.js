@@ -137,6 +137,24 @@ function createDesktopNotification(title, options, data) {
  * Triggers a browser system notification popup on Web
  * Safe for both Desktop browsers and ServiceWorker/Android Chrome
  */
+function urlBase64ToUint8Array(base64String) {
+  if (!base64String) return new Uint8Array();
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+/**
+ * Triggers a browser system notification popup on Web
+ * Safe for both Desktop browsers and ServiceWorker/Android Chrome
+ */
 export function showWebNotification(title, body, data = {}) {
   if (!isWebNotificationSupported()) return null;
 
@@ -144,8 +162,8 @@ export function showWebNotification(title, body, data = {}) {
     if (window.Notification.permission === 'granted') {
       const options = {
         body: body || '',
-        icon: '/favicon.ico',
-        badge: '/favicon.ico',
+        icon: './icon-192.png',
+        badge: './icon-192.png',
         data,
       };
 
@@ -179,13 +197,74 @@ export function showWebNotification(title, body, data = {}) {
 export async function registerForPushNotificationsAsync() {
   let token = null;
 
-  // Web registration
+  // Web & PWA registration
   if (Platform.OS === 'web') {
     try {
-      const permission = getWebNotificationPermission();
+      if (typeof window === 'undefined') return null;
+
+      // 1. Register or wait for Service Worker
+      if ('serviceWorker' in navigator) {
+        try {
+          await navigator.serviceWorker.register('./sw.js').catch(() => {});
+          await navigator.serviceWorker.ready;
+        } catch (swErr) {
+          console.warn('[NotificationService] Service Worker setup notice:', swErr);
+        }
+
+        // Set up click message listener from Service Worker
+        if (!window.__sw_notification_listener_ready) {
+          window.__sw_notification_listener_ready = true;
+          navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data?.type === 'NOTIFICATION_CLICKED' && event.data?.data) {
+              console.log('[NotificationService] Service worker notification click message:', event.data.data);
+              handleNotificationClick(event.data.data);
+            }
+          });
+        }
+      }
+
+      // 2. Request / check notification permission
+      const permission = await requestWebNotificationPermission();
       console.log('[NotificationService] Web notification permission status:', permission);
-      if (permission === 'granted') {
-        token = 'web-notifications-active';
+      if (permission !== 'granted') {
+        return null;
+      }
+
+      // 3. Web Push Manager Subscription
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          let sub = await reg.pushManager.getSubscription();
+
+          const vapidKey =
+            process.env.EXPO_PUBLIC_VAPID_PUBLIC_KEY ||
+            Constants?.expoConfig?.extra?.VAPID_PUBLIC_KEY ||
+            null;
+
+          if (!sub && vapidKey) {
+            try {
+              const convertedKey = urlBase64ToUint8Array(vapidKey);
+              sub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: convertedKey,
+              });
+            } catch (subErr) {
+              console.warn('[NotificationService] pushManager.subscribe notice:', subErr);
+            }
+          }
+
+          if (sub) {
+            token = 'web:' + JSON.stringify(sub);
+          } else {
+            // Identifier indicating this web browser has enabled notifications
+            token = `web:device:${window.location.hostname}:${Date.now().toString(36)}`;
+          }
+        } catch (pushErr) {
+          console.warn('[NotificationService] Web push subscription notice:', pushErr);
+          token = `web:device:${window.location.hostname}:${Date.now().toString(36)}`;
+        }
+      } else {
+        token = `web:device:${Date.now().toString(36)}`;
       }
     } catch (err) {
       console.warn('[NotificationService] Web registration notice:', err);

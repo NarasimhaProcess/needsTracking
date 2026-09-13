@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS public.product_variant_combinations (
 CREATE TABLE IF NOT EXISTS public.orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    seller_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
     shipping_address JSONB NOT NULL,
     total_amount NUMERIC(10, 2) NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -138,8 +139,8 @@ RETURNS TRIGGER AS $$
 BEGIN
   perform net.http_post(
     url:='https://wtcxhhbigmqrmqdyhzcz.supabase.co/functions/v1/update-product-quantity',
-    headers:='{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0Y3hoaGJpZ21xcm1xZHloemN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjE3ODgsImV4cCI6MjA2NzczNzc4OH0.AIViaiRT2odHJM2wQXl3dDZ69YxEj7t_7UiRFqEgZjY"}',
-    body:=json_build_object('order_id', new.order_id)::text
+    headers:='{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0Y3hoaGJpZ21xcm1xZHloemN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjE3ODgsImV4cCI6MjA2NzczNzc4OH0.AIViaiRT2odHJM2wQXl3dDZ69YxEj7t_7UiRFqEgZjY"}'::jsonb,
+    body:=jsonb_build_object('order_id', new.order_id)
   );
   return new;
 END;
@@ -183,11 +184,42 @@ CREATE POLICY "Users can update own product variant combinations" ON public.prod
 CREATE POLICY "Users can delete own product variant combinations" ON public.product_variant_combinations FOR DELETE USING (EXISTS (SELECT 1 FROM public.products WHERE products.id = product_variant_combinations.product_id AND auth.uid() = (SELECT user_id FROM public.customers WHERE id = products.customer_id)));
 
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can view their own orders" ON public.orders FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert their own orders" ON public.orders FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "orders_select_policy" ON public.orders FOR SELECT USING (
+  auth.uid() = user_id OR auth.uid() = seller_id OR auth.uid() = delivery_manager_id
+  OR (delivery_manager_id IS NULL AND (order_type IS NULL OR order_type != 'shop-order') AND status NOT IN ('completed', 'cancelled') AND EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delivery_manager'))
+  OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))
+);
+CREATE POLICY "orders_insert_policy" ON public.orders FOR INSERT WITH CHECK (
+  auth.uid() = user_id OR auth.uid() = seller_id OR auth.uid() IS NULL OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))
+);
+CREATE POLICY "orders_update_policy" ON public.orders FOR UPDATE USING (
+  auth.uid() = seller_id OR auth.uid() = user_id OR auth.uid() = delivery_manager_id
+  OR (delivery_manager_id IS NULL AND EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delivery_manager'))
+  OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))
+) WITH CHECK (
+  auth.uid() = seller_id OR auth.uid() = user_id OR auth.uid() = delivery_manager_id
+  OR (delivery_manager_id IS NULL AND EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delivery_manager'))
+  OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))
+);
+CREATE POLICY "orders_delete_policy" ON public.orders FOR DELETE USING (
+  auth.uid() = seller_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))
+);
 
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can view their own order items" ON public.order_items FOR SELECT USING (EXISTS (SELECT 1 FROM public.orders WHERE orders.id = order_items.order_id AND auth.uid() = orders.user_id));
+CREATE POLICY "order_items_select_policy" ON public.order_items FOR SELECT USING (
+  EXISTS (SELECT 1 FROM public.orders WHERE orders.id = order_items.order_id AND (auth.uid() = orders.user_id OR auth.uid() = orders.seller_id OR auth.uid() = orders.delivery_manager_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin', 'delivery_manager'))))
+  OR EXISTS (SELECT 1 FROM public.product_variant_combinations pvc JOIN public.products p ON pvc.product_id = p.id WHERE pvc.id = order_items.product_variant_combination_id AND (p.user_id = auth.uid() OR p.customer_id IN (SELECT id FROM public.customers WHERE user_id = auth.uid())))
+);
+CREATE POLICY "order_items_insert_policy" ON public.order_items FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM public.orders WHERE orders.id = order_items.order_id AND (auth.uid() = orders.user_id OR auth.uid() = orders.seller_id OR auth.uid() IS NULL))
+  OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))
+);
+CREATE POLICY "order_items_update_policy" ON public.order_items FOR UPDATE USING (
+  EXISTS (SELECT 1 FROM public.orders WHERE orders.id = order_items.order_id AND (auth.uid() = orders.seller_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))))
+);
+CREATE POLICY "order_items_delete_policy" ON public.order_items FOR DELETE USING (
+  EXISTS (SELECT 1 FROM public.orders WHERE orders.id = order_items.order_id AND (auth.uid() = orders.seller_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'superadmin'))))
+);
 
 ALTER TABLE public.inventory_history ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can view their own inventory history" ON public.inventory_history FOR SELECT USING (EXISTS (SELECT 1 FROM public.products p JOIN public.product_variant_combinations pvc ON p.id = pvc.product_id WHERE pvc.id = inventory_history.product_variant_combination_id AND auth.uid() = (SELECT user_id FROM public.customers WHERE id = p.customer_id)));
