@@ -127,7 +127,7 @@ jobs:
       - name: Prepare GitHub Pages
         run: |
           touch dist/.nojekyll
-          echo "needstracking.com" > dist/CNAME
+          rm -f dist/CNAME
 
           echo "✅ GitHub Pages files prepared"
 
@@ -140,7 +140,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: ./dist
-          cname: needstracking.com
           force_orphan: true
           enable_jekyll: false
 
@@ -154,7 +153,6 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Status: ✅ Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "- Branch: gh-pages" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Custom domain: https://needstracking.com" >> "$GITHUB_STEP_SUMMARY"
           echo "- Build directory: dist" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate Failure Summary
