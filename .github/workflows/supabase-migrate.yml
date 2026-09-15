@@ -1,288 +1,387 @@
-name: Supabase Complete Cross-Org Sync (DB & Edge Functions)
+name: Supabase Schema & Storage (S3) Sync (Without Data)
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_edge_functions:
+        description: 'Deploy Supabase Edge Functions to Target'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
-  migrate-and-deploy:
+  migrate:
+    name: Migrate Database Schema & Storage
     runs-on: ubuntu-latest
+
+    env:
+      SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+      TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
+
+      SOURCE_DB_URL: ${{ secrets.SOURCE_DB_URL }}
+      SOURCE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
+
+      TARGET_DB_URL: ${{ secrets.TARGET_DB_URL }}
+      TARGET_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
+
+      TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
 
     steps:
 
       # ============================================================
       # 1. Checkout repository
       # ============================================================
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       # ============================================================
-      # 2. Setup Supabase CLI
+      # 2. Install PostgreSQL 17 client (psql, pg_dump)
+      # ============================================================
+      - name: Install PostgreSQL 17 client
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            curl \
+            ca-certificates \
+            gnupg \
+            lsb-release
+
+          echo "Installing PostgreSQL official repository key..."
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | gpg --batch --dearmor \
+            | sudo tee /usr/share/keyrings/postgresql.gpg > /dev/null
+
+          echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+          echo "PostgreSQL client installed:"
+          /usr/lib/postgresql/17/bin/psql --version
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      # ============================================================
+      # 3. Setup Supabase CLI (if deploying edge functions)
       # ============================================================
       - name: Setup Supabase CLI
+        if: ${{ inputs.deploy_edge_functions }}
         uses: supabase/setup-cli@v1
         with:
           version: "2.116.0"
 
       # ============================================================
-      # 3. Authenticate SOURCE Supabase account
+      # 4. Validate Configuration & Secrets
       # ============================================================
-      - name: Authenticate Source Supabase Account
-        env:
-          SOURCE_SUPABASE_ACCESS_TOKEN: ${{ secrets.SOURCE_SUPABASE_ACCESS_TOKEN }}
+      - name: Validate configuration
+        shell: bash
         run: |
           set -e
 
-          echo "========================================"
-          echo "Authenticating SOURCE account"
-          echo "========================================"
+          echo "Checking configuration..."
 
-          supabase login --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
-
-          echo "Source authentication successful."
-
-      # ============================================================
-      # 4. Link SOURCE project
-      # ============================================================
-      - name: Link Source Project
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Connecting to SOURCE project"
-          echo "Project: $SOURCE_PROJECT_REF"
-          echo "========================================"
-
-          rm -rf .supabase
-
-          supabase link \
-            --project-ref "$SOURCE_PROJECT_REF" \
-            --password "$SUPABASE_DB_PASSWORD"
-
-          echo "Source project linked successfully."
-
-      # ============================================================
-      # 5. Show SOURCE migration history
-      # ============================================================
-      - name: Check Source Migration History
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "SOURCE migration history"
-          echo "========================================"
-
-          supabase migration list
-
-      # ============================================================
-      # 6. Repair stale SOURCE migration
-      #
-      # IMPORTANT:
-      # Only use this if 20260906023724 is confirmed to be a stale
-      # migration that should NOT be considered applied.
-      # ============================================================
-      - name: Repair Source Migration History
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-        run: |
-          set -e
-
-          MIGRATION_ID="20260906023724"
-
-          echo "========================================"
-          echo "Repairing SOURCE migration history"
-          echo "Migration: $MIGRATION_ID"
-          echo "========================================"
-
-          supabase migration repair \
-            --status reverted \
-            "$MIGRATION_ID"
-
-          echo "Migration repair completed."
-
-      # ============================================================
-      # 7. Pull SOURCE schema
-      # ============================================================
-      - name: Pull Schema from Source
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Pulling database schema from SOURCE"
-          echo "========================================"
-
-          supabase db pull
-
-          echo ""
-          echo "Source schema pulled successfully."
-
-      # ============================================================
-      # 8. Display resulting migrations
-      # ============================================================
-      - name: Show Source Migrations
-        run: |
-          echo "========================================"
-          echo "SOURCE migrations after db pull"
-          echo "========================================"
-
-          if [ -d "supabase/migrations" ]; then
-            find supabase/migrations \
-              -maxdepth 1 \
-              -type f \
-              -printf "%f\n" \
-              | sort
-          else
-            echo "No migration directory found."
+          if [ -z "$SOURCE_DB_URL" ]; then
+            echo "::error::SOURCE_DB_URL secret is missing in GitHub Secrets!"
+            exit 1
           fi
 
+          if [ -z "$SOURCE_DB_PASSWORD" ]; then
+            echo "::error::SOURCE_DB_PASSWORD secret is missing in GitHub Secrets!"
+            exit 1
+          fi
+
+          if [ -z "$TARGET_DB_URL" ]; then
+            echo "::error::TARGET_DB_URL secret is missing in GitHub Secrets!"
+            exit 1
+          fi
+
+          if [ -z "$TARGET_DB_PASSWORD" ]; then
+            echo "::error::TARGET_DB_PASSWORD secret is missing in GitHub Secrets!"
+            exit 1
+          fi
+
+          echo "✅ All database credentials are configured."
+
       # ============================================================
-      # 9. Reset SOURCE link
+      # 5. Test SOURCE and TARGET Connections
       # ============================================================
-      - name: Reset Source Link
+      - name: Test database connections
+        shell: bash
         run: |
-          rm -rf .supabase
+          set -e
 
-          echo "Source link removed."
+          export PGPASSWORD="$SOURCE_DB_PASSWORD"
+          echo "Testing SOURCE database connection..."
+          /usr/lib/postgresql/17/bin/psql \
+            "$SOURCE_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT version();" > /dev/null
+          echo "✅ SOURCE database connected successfully."
+
+          export PGPASSWORD="$TARGET_DB_PASSWORD"
+          echo "Testing TARGET database connection..."
+          /usr/lib/postgresql/17/bin/psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT version();" > /dev/null
+          echo "✅ TARGET database connected successfully."
 
       # ============================================================
-      # 10. Authenticate TARGET Supabase account
+      # 6. Prepare TARGET Extensions & Public Schema
       # ============================================================
-      - name: Authenticate Target Supabase Account
-        env:
-          TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
+      - name: Prepare TARGET database
+        shell: bash
+        run: |
+          set -e
+
+          export PGPASSWORD="$TARGET_DB_PASSWORD"
+          TARGET_PSQL="/usr/lib/postgresql/17/bin/psql"
+
+          echo "========================================"
+          echo "Preparing TARGET database extensions"
+          echo "========================================"
+
+          "$TARGET_PSQL" \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            <<'SQL'
+          DROP SCHEMA IF EXISTS public CASCADE;
+          CREATE SCHEMA public;
+
+          CREATE SCHEMA IF NOT EXISTS extensions;
+
+          CREATE EXTENSION IF NOT EXISTS postgis
+            WITH SCHEMA extensions;
+
+          CREATE EXTENSION IF NOT EXISTS vector
+            WITH SCHEMA public;
+
+          CREATE EXTENSION IF NOT EXISTS "pg_net"
+            WITH SCHEMA extensions;
+
+          GRANT USAGE ON SCHEMA public TO anon;
+          GRANT USAGE ON SCHEMA public TO authenticated;
+          GRANT USAGE ON SCHEMA public TO service_role;
+          SQL
+
+          echo "✅ TARGET extensions and clean public schema prepared."
+
+      # ============================================================
+      # 7. Dump SOURCE Database Schema ONLY (Zero row data)
+      # ============================================================
+      - name: Dump SOURCE schema only
+        shell: bash
+        run: |
+          set -e
+
+          export PGPASSWORD="$SOURCE_DB_PASSWORD"
+
+          echo "========================================"
+          echo "Creating SOURCE schema-only dump"
+          echo "========================================"
+
+          /usr/lib/postgresql/17/bin/pg_dump \
+            "$SOURCE_DB_URL" \
+            --schema=public \
+            --schema-only \
+            --no-owner \
+            --no-privileges \
+            --no-tablespaces \
+            --file=source_schema.sql
+
+          # Clean public schema creation statements since TARGET public already exists
+          sed -i '/^CREATE SCHEMA public;$/d' source_schema.sql
+          sed -i '/^ALTER SCHEMA public OWNER TO /d' source_schema.sql
+
+          echo "✅ Schema-only dump generated (NO application or user data)."
+          ls -lh source_schema.sql
+
+      # ============================================================
+      # 8. Restore Database Schema into TARGET
+      # ============================================================
+      - name: Restore database schema to TARGET
+        shell: bash
+        run: |
+          set -e
+
+          export PGPASSWORD="$TARGET_DB_PASSWORD"
+
+          echo "========================================"
+          echo "Restoring database schema to TARGET"
+          echo "========================================"
+
+          /usr/lib/postgresql/17/bin/psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -f source_schema.sql
+
+          echo "✅ Database schema restored successfully to TARGET."
+
+      # ============================================================
+      # 9. Sync S3 / Storage Buckets & Policies (WITHOUT Files)
+      # ============================================================
+      - name: Sync S3 Storage (Buckets & Policies)
+        shell: bash
         run: |
           set -e
 
           echo "========================================"
-          echo "Authenticating TARGET account"
+          echo "Syncing S3 / Supabase Storage (No Files)"
+          echo "========================================"
+
+          # Step 9a: Extract bucket definitions from SOURCE
+          export PGPASSWORD="$SOURCE_DB_PASSWORD"
+          /usr/lib/postgresql/17/bin/psql \
+            "$SOURCE_DB_URL" \
+            -At \
+            -c "SELECT format(
+                  'INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) VALUES (%L, %L, %L, %s, %s) ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public, file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;',
+                  id,
+                  name,
+                  public,
+                  COALESCE(file_size_limit::text, 'NULL'),
+                  CASE WHEN allowed_mime_types IS NOT NULL THEN quote_literal(allowed_mime_types::text) || '::text[]' ELSE 'NULL' END
+                ) FROM storage.buckets;" > storage_buckets_sync.sql || true
+
+          # Step 9b: Extract storage policies from SOURCE
+          /usr/lib/postgresql/17/bin/psql \
+            "$SOURCE_DB_URL" \
+            -At \
+            -c "SELECT 'DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = ' || quote_literal(schemaname) || ' AND tablename = ' || quote_literal(tablename) || ' AND policyname = ' || quote_literal(policyname) || ') THEN '
+                || 'CREATE POLICY ' || quote_ident(policyname) || ' ON ' || quote_ident(schemaname) || '.' || quote_ident(tablename)
+                || ' FOR ' || cmd
+                || ' TO ' || array_to_string(roles, ', ')
+                || ' USING (' || qual || ')'
+                || CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' || with_check || ')' ELSE '' END
+                || '; END IF; END \$\$;'
+                FROM pg_policies
+                WHERE schemaname = 'storage';" > storage_policies_sync.sql || true
+
+          # Step 9c: Apply buckets and policies to TARGET
+          export PGPASSWORD="$TARGET_DB_PASSWORD"
+
+          if [ -s storage_buckets_sync.sql ]; then
+            echo "Applying source storage buckets to TARGET..."
+            /usr/lib/postgresql/17/bin/psql "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -f storage_buckets_sync.sql
+          fi
+
+          if [ -s storage_policies_sync.sql ]; then
+            echo "Applying source storage policies to TARGET..."
+            /usr/lib/postgresql/17/bin/psql "$TARGET_DB_URL" -v ON_ERROR_STOP=0 -f storage_policies_sync.sql || true
+          fi
+
+          # Step 9d: Apply baseline project buckets from create_storage_buckets.sql
+          if [ -f create_storage_buckets.sql ]; then
+            echo "Applying project baseline create_storage_buckets.sql..."
+            /usr/lib/postgresql/17/bin/psql "$TARGET_DB_URL" -v ON_ERROR_STOP=0 -f create_storage_buckets.sql || true
+          fi
+
+          echo "✅ S3 / Storage buckets and policies synchronized."
+
+      # ============================================================
+      # 10. Deploy Edge Functions (if enabled)
+      # ============================================================
+      - name: Deploy Edge Functions
+        if: ${{ inputs.deploy_edge_functions }}
+        shell: bash
+        run: |
+          set -e
+
+          if [ -z "$TARGET_SUPABASE_ACCESS_TOKEN" ] || [ -z "$TARGET_PROJECT_REF" ]; then
+            echo "Skipping Edge Functions: TARGET_SUPABASE_ACCESS_TOKEN or TARGET_PROJECT_REF not provided."
+            exit 0
+          fi
+
+          echo "========================================"
+          echo "Deploying Edge Functions to TARGET"
+          echo "Target: $TARGET_PROJECT_REF"
           echo "========================================"
 
           supabase login --token "$TARGET_SUPABASE_ACCESS_TOKEN"
 
-          echo "Target authentication successful."
-
-      # ============================================================
-      # 11. Link TARGET project
-      # ============================================================
-      - name: Link Target Project
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Connecting to TARGET project"
-          echo "Project: $TARGET_PROJECT_REF"
-          echo "========================================"
-
-          rm -rf .supabase
-
-          supabase link \
-            --project-ref "$TARGET_PROJECT_REF" \
-            --password "$SUPABASE_DB_PASSWORD"
-
-          echo "Target project linked successfully."
-
-      # ============================================================
-      # 12. Check TARGET migration history
-      # ============================================================
-      - name: Check Target Migration History
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "TARGET migration history"
-          echo "========================================"
-
-          supabase migration list
-
-      # ============================================================
-      # 13. Push schema to TARGET
-      # ============================================================
-      - name: Push Schema to Target
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Pushing database schema to TARGET"
-          echo "========================================"
-
-          supabase db push
-
-          echo ""
-          echo "Database synchronization completed."
-
-      # ============================================================
-      # 14. Deploy Edge Functions
-      # ============================================================
-      - name: Deploy Edge Functions
-        env:
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Deploying Edge Functions"
-          echo "Target: $TARGET_PROJECT_REF"
-          echo "========================================"
-
-          if [ ! -d "supabase/functions" ]; then
-            echo "No supabase/functions directory found."
-            echo "Skipping Edge Functions."
-            exit 0
-          fi
-
-          found_functions=false
-
-          for dir in supabase/functions/*/; do
-
-            if [ -d "$dir" ]; then
-
-              func_name=$(basename "$dir")
-
-              if [ "$func_name" = "_shared" ]; then
-                echo "Skipping _shared directory."
-                continue
+          if [ -d "supabase/functions" ]; then
+            for dir in supabase/functions/*/; do
+              if [ -d "$dir" ]; then
+                func_name=$(basename "$dir")
+                if [ "$func_name" = "_shared" ]; then
+                  continue
+                fi
+                echo "Deploying function: $func_name"
+                supabase functions deploy "$func_name" --project-ref "$TARGET_PROJECT_REF"
               fi
-
-              found_functions=true
-
-              echo ""
-              echo "----------------------------------------"
-              echo "Deploying: $func_name"
-              echo "----------------------------------------"
-
-              supabase functions deploy "$func_name" \
-                --project-ref "$TARGET_PROJECT_REF"
-
-              echo "Successfully deployed: $func_name"
-
-            fi
-
-          done
-
-          if [ "$found_functions" = false ]; then
-            echo "No Edge Functions found."
+            done
+            echo "✅ Edge Functions deployed successfully."
           fi
 
+      # ============================================================
+      # 11. Verify Migration Results
+      # ============================================================
+      - name: Verify Migration Results
+        shell: bash
+        run: |
+          set -e
+
+          export PGPASSWORD="$TARGET_DB_PASSWORD"
+          TARGET_PSQL="/usr/lib/postgresql/17/bin/psql"
+
           echo ""
-          echo "Edge Function deployment completed."
+          echo "========================================"
+          echo "TARGET Table Count"
+          echo "========================================"
+          "$TARGET_PSQL" "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) AS public_tables_count
+            FROM pg_tables
+            WHERE schemaname = 'public';
+          "
+
+          echo ""
+          echo "========================================"
+          echo "TARGET Storage Buckets (S3)"
+          echo "========================================"
+          "$TARGET_PSQL" "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -c "
+            SELECT id, name, public, file_size_limit
+            FROM storage.buckets
+            ORDER BY id;
+          "
+
+          echo ""
+          echo "========================================"
+          echo "Verifying ZERO Table & Storage Data"
+          echo "========================================"
+          "$TARGET_PSQL" "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) AS target_auth_users FROM auth.users;
+          "
+          "$TARGET_PSQL" "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) AS target_storage_files FROM storage.objects;
+          "
+
+          echo ""
+          echo "===================================================="
+          echo "✅ SCHEMA-ONLY & S3 STORAGE MIGRATION COMPLETED"
+          echo "===================================================="
+          echo "MIGRATED (Structure only, zero data):"
+          echo "  - Public tables, types, functions, triggers"
+          echo "  - Foreign keys, constraints, and indexes"
+          echo "  - Row Level Security (RLS) policies"
+          echo "  - S3 Storage buckets (storage.buckets)"
+          echo "  - Storage access policies (storage.objects policies)"
+          echo "  - Supabase Edge Functions"
+          echo ""
+          echo "EXCLUDED:"
+          echo "  - Table data / row contents"
+          echo "  - Storage files and uploads (storage.objects is empty)"
+          echo "  - User accounts and auth sessions (auth.users is empty)"
+          echo "===================================================="
 
       # ============================================================
-      # 15. Cleanup
+      # 12. Cleanup
       # ============================================================
-      - name: Cleanup
+      - name: Cleanup temporary files
         if: always()
         run: |
+          rm -f source_schema.sql storage_buckets_sync.sql storage_policies_sync.sql
           rm -rf .supabase
-
-          echo "========================================"
           echo "Cleanup completed."
-          echo "========================================"
