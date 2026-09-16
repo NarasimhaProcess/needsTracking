@@ -1,7 +1,7 @@
 {
   "name": "location-tracker-mobile",
   "version": "1.0.0",
-  "homepage": "https://NarasimhaProcess.github.io/needsTracking",
+  "homepage": "https://narasimhareddyaiapp2-localwala.github.io/needsTracking",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "npx expo start",
@@ -9,7 +9,7 @@
     "ios": "npx expo start --ios",
     "web": "npx expo start --web",
     "eject": "expo eject",
-    "predeploy": "npx expo export -p web && touch dist/.nojekyll",
+    "predeploy": "npx expo export -p web && touch dist/.nojekyll && cp dist/index.html dist/404.html",
     "deploy": "gh-pages -t -d dist -f"
   },
   "dependencies": {

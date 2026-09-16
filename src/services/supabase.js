@@ -1600,7 +1600,7 @@ export function getAuthRedirectUrl() {
       }
       return `${origin}${pathname}`;
     }
-    return 'https://narasimhaprocess.github.io/needsTracking/';
+    return 'https://narasimhareddyaiapp2-localwala.github.io/needsTracking/';
   }
 
   return AuthSession.makeRedirectUri({

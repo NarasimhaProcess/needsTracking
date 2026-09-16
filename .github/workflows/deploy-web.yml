@@ -1,19 +1,27 @@
-
 name: Deploy Web App to GitHub Pages
 
 on:
+  push:
+    branches:
+      - master
   workflow_dispatch:
 
-# Give GitHub Actions permission to write to the repository.
+# Permissions required for deploying to GitHub Pages & writing to repo
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       # ----------------------------------------
@@ -41,23 +49,12 @@ jobs:
         run: |
           set -e
 
-          RESOLVED_URL="${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL || vars.EXPO_PUBLIC_SUPABASE_URL || vars.SUPABASE_URL }}"
-          RESOLVED_KEY="${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.EXPO_PUBLIC_SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}"
+          RESOLVED_URL="${{ secrets.EXPO_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL || vars.EXPO_PUBLIC_SUPABASE_URL || vars.SUPABASE_URL || 'https://cikxysaxvbixrcwlgzds.supabase.co' }}"
+          RESOLVED_KEY="${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.EXPO_PUBLIC_SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpa3h5c2F4dmJpeHJjd2xnemRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MzA2MjgsImV4cCI6MjEwNDIwNjYyOH0.YIc4KXr055r1D3-mKW1bCn06GNWWK4TXettqhazgpg4' }}"
           RESOLVED_MAPS_KEY="${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || secrets.GOOGLE_MAPS_API_KEY || vars.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || vars.GOOGLE_MAPS_API_KEY }}"
           RESOLVED_ORG="${{ secrets.EXPO_PUBLIC_ORG_NAME || secrets.ORG_NAME || vars.EXPO_PUBLIC_ORG_NAME || vars.ORG_NAME || 'Store' }}"
 
-          if [ ! -f .env ]; then
-            if [ -z "$RESOLVED_URL" ]; then
-              echo "::error::SUPABASE_URL is missing! Please add SUPABASE_URL in GitHub Repository Secrets or Variables, or commit a .env file."
-              exit 1
-            fi
-
-            if [ -z "$RESOLVED_KEY" ]; then
-              echo "::error::SUPABASE_ANON_KEY is missing! Please add SUPABASE_ANON_KEY in GitHub Repository Secrets or Variables, or commit a .env file."
-              exit 1
-            fi
-
-            cat > .env << EOF
+          cat > .env << EOF
           EXPO_PUBLIC_SUPABASE_URL=$RESOLVED_URL
           EXPO_PUBLIC_SUPABASE_ANON_KEY=$RESOLVED_KEY
           EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=$RESOLVED_MAPS_KEY
@@ -66,10 +63,7 @@ jobs:
           SUPABASE_ANON_KEY=$RESOLVED_KEY
           EOF
 
-            echo "✅ .env created from GitHub Actions Secrets/Variables"
-          else
-            echo "✅ Using existing .env file found in repository"
-          fi
+          echo "✅ .env created successfully"
 
       # ----------------------------------------
       # 4. Install dependencies
@@ -108,14 +102,11 @@ jobs:
 
           if [ ! -f "dist/index.html" ]; then
             echo "::error::dist/index.html was not generated!"
-            echo ""
-            echo "Generated files:"
-            find dist -maxdepth 3 -type f | sort
             exit 1
           fi
 
           echo "========================================"
-          echo "✅ Web build generated"
+          echo "✅ Web build generated successfully"
           echo "========================================"
 
           find dist -maxdepth 3 -type f | sort
@@ -127,14 +118,30 @@ jobs:
       - name: Prepare GitHub Pages
         run: |
           touch dist/.nojekyll
+          cp dist/index.html dist/404.html
           rm -f dist/CNAME
 
-          echo "✅ GitHub Pages files prepared"
+          echo "✅ GitHub Pages files prepared (.nojekyll, 404.html, no CNAME)"
 
       # ----------------------------------------
-      # 9. Deploy to gh-pages
+      # 9. Deploy to GitHub Pages (Workflow Mode)
       # ----------------------------------------
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
       - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # ----------------------------------------
+      # 10. Also push to gh-pages branch (Legacy Mode Backup)
+      # ----------------------------------------
+      - name: Push to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -144,7 +151,7 @@ jobs:
           enable_jekyll: false
 
       # ----------------------------------------
-      # 10. Summary
+      # 11. Summary
       # ----------------------------------------
       - name: Generate Deploy Summary
         if: success()
@@ -152,7 +159,8 @@ jobs:
           echo "## 🌐 Web Deployment Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Status: ✅ Successful" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Branch: gh-pages" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Live URL: ${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch Backup: gh-pages" >> "$GITHUB_STEP_SUMMARY"
           echo "- Build directory: dist" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate Failure Summary
