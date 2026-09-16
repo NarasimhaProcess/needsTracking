@@ -4,8 +4,8 @@ set -e
 # ==========================================
 # ⚠️ INPUT YOUR PASSWORDS BELOW
 # ==========================================
-SRC_PASS='needstracker@12345'  
-TGT_PASS='needstracker@12345'  
+SRC_PASS=''  
+TGT_PASS=''  
 
 # Strict hardcoded endpoints from your URL strings
 SRC_HOST="aws-0-ap-south-1.pooler.supabase.com"
