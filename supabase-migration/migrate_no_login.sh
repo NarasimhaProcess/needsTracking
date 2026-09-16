@@ -3,8 +3,8 @@ cat << 'EOF' > codespace_migrate.sh
 set -e
 
 # ⚠️ PLACE YOUR CONNECTION STRINGS HERE (make sure passwords use %40 for @)
-SOURCE_DB_URL="postgresql://postgres.cikxysaxvbixrcwlgzds:needstracker%4012345@://supabase.com"
-TARGET_DB_URL="postgresql://postgres.hxmkwsjdgsvzparpfiao:needstracker%4012345@@://supabase.com"
+SOURCE_DB_URL="postgresql://postgres.cikxysaxvbixrcwlgzds:%4://supabase.com"
+TARGET_DB_URL="postgresql://postgres.hxmkwsjdgsvzparpfiao:@@://supabase.com"
 
 BACKUP_FILE="public_db.sql"
 
