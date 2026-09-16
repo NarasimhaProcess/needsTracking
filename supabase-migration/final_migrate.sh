@@ -1,24 +1,3 @@
-# Supabase Configuration  export EXPO_TOKEN="RvReV1bMxRLqTKX5P2t68laIKs5GlryO_f8A8in9" 
-# export EXPO_TOKEN="lgbLKC8N8jWlo6Xc-j8ebi5xV8HIYfnoxWdh-85m"
-# eas env:push  --environment preview --path .env.local
-# eas build --platform android --profile preview
-
-# for agy antigravity ai coding
-# curl -fsSL https://antigravity.google/cli/install.sh | bash
-# agy
-EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=your_anon_key_here
-
-# Google Maps API
-EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-
-# Organization Name
-EXPO_PUBLIC_ORG_NAME=localwala's
-
-
-
-# migration scriopts
-
 #!/bin/bash
 set -e
 
@@ -80,4 +59,3 @@ echo ""
 echo "=========================================================="
 echo "🎉 SUCCESS: All tables built cleanly without RLS!        "
 echo "=========================================================="
-
