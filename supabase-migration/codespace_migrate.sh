@@ -9,13 +9,13 @@ set -e
 SRC_HOST="://supabase.com"
 SRC_PORT="5432"
 SRC_USER="postgres.cikxysaxvbixrcwlgzds"
-SRC_PASS="needstracker%4012345"  # <-- Type your real source password here (keep the quotes)
+SRC_PASS=""  # <-- Type your real source password here (keep the quotes)
 
 # Target Project (hxmkwsjdgsvzparpfiao) - Region: ap-northeast-1
 TGT_HOST="://supabase.com"
 TGT_PORT="5432"
 TGT_USER="postgres.hxmkwsjdgsvzparpfiao"
-TGT_PASS="needstracker%4012345"  # <-- Type your real target password here (keep the quotes)
+TGT_PASS=""  # <-- Type your real target password here (keep the quotes)
 
 BACKUP_FILE="public_db.sql"
 
