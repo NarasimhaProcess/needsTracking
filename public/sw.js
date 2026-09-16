@@ -1,5 +1,5 @@
 /* Needs Tracker PWA Service Worker */
-const CACHE_NAME = 'needs-tracker-pwa-v3';
+const CACHE_NAME = 'needs-tracker-pwa-v4';
 
 const STATIC_ASSETS = [
   './',
@@ -14,7 +14,6 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // Use catch on individual resources so missing non-critical assets don't fail installation
       return Promise.allSettled(
         STATIC_ASSETS.map((url) =>
           fetch(url, { cache: 'no-cache' }).then((res) => {
@@ -44,7 +43,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: Network-first for dynamic navigation, Cache-first for images/icons
+// Fetch: Secure rewriting, font caching, Network-first for dynamic navigation, Cache-first for images/icons/fonts
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
@@ -54,33 +53,61 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for static images and icons
-  if (req.destination === 'image' || url.pathname.match(/\.(png|jpg|jpeg|svg|webp|ico)$/)) {
+  // 1. Intercept legacy domain (needstracking.com) or insecure HTTP requests and rewrite to HTTPS on current host
+  let targetUrl = url;
+  if (url.protocol === 'http:' || url.hostname.includes('needstracking.com')) {
+    const rawPath = url.pathname;
+    const cleanPath = rawPath.startsWith('/needsTracking')
+      ? rawPath
+      : ('/needsTracking' + (rawPath.startsWith('/') ? rawPath : '/' + rawPath));
+    targetUrl = new URL(cleanPath + url.search, self.location.origin);
+  }
+
+  const effectiveReq = (targetUrl.href !== req.url)
+    ? new Request(targetUrl.href, {
+        method: req.method,
+        headers: req.headers,
+        mode: req.mode === 'navigate' ? 'navigate' : 'cors',
+        credentials: req.credentials
+      })
+    : req;
+
+  // 2. Cache-first for static images, icons, and fonts (e.g., FontAwesome .ttf)
+  if (
+    req.destination === 'image' ||
+    req.destination === 'font' ||
+    targetUrl.pathname.match(/\.(png|jpg|jpeg|svg|webp|ico|ttf|woff|woff2|otf|eot)$/)
+  ) {
     event.respondWith(
-      caches.match(req).then((cached) => {
+      caches.match(effectiveReq).then((cached) => {
         if (cached) return cached;
-        return fetch(req).then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
+        return fetch(effectiveReq).then((response) => {
+          if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+            caches.open(CACHE_NAME).then((cache) => cache.put(effectiveReq, clone));
           }
           return response;
-        }).catch(() => caches.match('./icon-192.png'));
+        }).catch(() => {
+          if (req.destination === 'image') {
+            return caches.match('./icon-192.png');
+          }
+          return new Response(null, { status: 404, statusText: 'Not Found' });
+        });
       })
     );
     return;
   }
 
-  // Network-first with cache fallback for HTML, JS and styles
+  // 3. Network-first with cache fallback for HTML, JS and styles
   event.respondWith(
-    fetch(req).then((response) => {
-      if (response && response.status === 200 && response.type === 'basic') {
+    fetch(effectiveReq).then((response) => {
+      if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
         const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+        caches.open(CACHE_NAME).then((cache) => cache.put(effectiveReq, clone));
       }
       return response;
     }).catch(() => {
-      return caches.match(req).then((cached) => {
+      return caches.match(effectiveReq).then((cached) => {
         if (cached) return cached;
         if (req.mode === 'navigate' || req.destination === 'document') {
           return caches.match('./') || caches.match('./index.html');
