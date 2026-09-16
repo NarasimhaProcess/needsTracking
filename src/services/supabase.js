@@ -1669,16 +1669,49 @@ export async function ensureUserProfile(user, defaultRole = null) {
             .select()
             .maybeSingle();
 
+          try {
+            await supabase.from('users').upsert({
+              id: user.id,
+              email: user.email || existingProfile.email || '',
+              name: updatedProfile?.full_name || existingProfile.full_name || user.email?.split('@')[0] || 'User',
+              mobile: updatedProfile?.mobile || existingProfile.mobile || null,
+              user_type: roleToAssign,
+              updated_at: new Date().toISOString(),
+            });
+          } catch (_) {}
+
           if (!updateErr && updatedProfile) {
             console.log(`[ensureUserProfile] Upgraded user profile to role "${roleToAssign}":`, updatedProfile);
             return updatedProfile;
           }
         }
+
+        try {
+          await supabase.from('users').upsert({
+            id: user.id,
+            email: user.email || existingProfile.email || '',
+            name: existingProfile.full_name || user.email?.split('@')[0] || 'User',
+            mobile: existingProfile.mobile || null,
+            user_type: existingProfile.role || roleToAssign,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (_) {}
+
         return existingProfile;
       }
     }
 
     if (existingProfile) {
+      try {
+        await supabase.from('users').upsert({
+          id: user.id,
+          email: user.email || existingProfile.email || '',
+          name: existingProfile.full_name || user.email?.split('@')[0] || 'User',
+          mobile: existingProfile.mobile || null,
+          user_type: existingProfile.role || 'customer',
+          updated_at: new Date().toISOString(),
+        });
+      } catch (_) {}
       return existingProfile;
     }
 
@@ -1712,6 +1745,18 @@ export async function ensureUserProfile(user, defaultRole = null) {
     if (insertErr) {
       console.warn('[ensureUserProfile] Upsert notice:', insertErr.message);
     }
+
+    try {
+      await supabase.from('users').upsert({
+        id: user.id,
+        email: user.email || '',
+        name: fullName,
+        mobile: user.user_metadata?.mobile || null,
+        user_type: role,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (_) {}
+
     return data || newProfile;
   } catch (err) {
     console.error('[ensureUserProfile] Error:', err);

@@ -54,7 +54,30 @@ export default function SellerLoginScreen({ navigation, route }) {
           try {
             await supabase.auth.updateUser({ data: { role: 'seller' } });
           } catch (_) {}
+        } else if (!isExistingAdmin && existingProfile.role !== 'seller') {
+          await supabase
+            .from('profiles')
+            .update({
+              role: 'seller',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', res.user.id);
+
+          try {
+            await supabase.auth.updateUser({ data: { role: 'seller' } });
+          } catch (_) {}
         }
+
+        // Always ensure users table is kept in sync
+        try {
+          await supabase.from('users').upsert({
+            id: res.user.id,
+            email: res.user.email || '',
+            name: res.user.user_metadata?.full_name || res.user.user_metadata?.name || existingProfile?.full_name || 'Seller',
+            user_type: isExistingAdmin ? existingProfile.role : 'seller',
+            updated_at: new Date().toISOString(),
+          });
+        } catch (_) {}
 
         if (onAuthSuccess) {
           onAuthSuccess(res.user);
@@ -136,6 +159,17 @@ export default function SellerLoginScreen({ navigation, route }) {
             console.error("Error updating seller profile role:", updateErr);
           }
         }
+
+        // Always ensure users table is kept in sync
+        try {
+          await supabase.from('users').upsert({
+            id: data.user.id,
+            email: data.user.email || '',
+            name: profileData?.full_name || data.user.user_metadata?.full_name || 'Seller',
+            user_type: isExistingAdmin ? profileData.role : 'seller',
+            updated_at: new Date().toISOString(),
+          });
+        } catch (_) {}
 
         if (onAuthSuccess) {
           onAuthSuccess(data.user);
