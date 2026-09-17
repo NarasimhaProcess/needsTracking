@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { supabase, signInWithGoogle, addToCart, getAuthRedirectUrl } from '../services/supabase';
-import { getGuestCart, clearGuestCart } from '../services/localStorageService';
+import { getGuestCart, clearGuestCart, getPreferredStore } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Constants from 'expo-constants';
@@ -38,9 +38,23 @@ export default function BuyerLoginScreen({ navigation, route }) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [preferredStore, setPreferredStoreState] = useState(null);
   const onAuthSuccess = route.params?.onAuthSuccess;
   const redirectTo = route.params?.redirectTo || route.params?.redirectScreen;
   const redirectParams = route.params?.redirectParams || (route.params?.productId ? { productId: route.params.productId, customerId: route.params.customerId } : undefined);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const pref = await getPreferredStore();
+        if (isMounted && pref?.sellerId) {
+          setPreferredStoreState(pref);
+        }
+      } catch (_) {}
+    })();
+    return () => { isMounted = false; };
+  }, []);
 
   const navigateAfterAuth = (user) => {
     if (onAuthSuccess) {
@@ -52,6 +66,11 @@ export default function BuyerLoginScreen({ navigation, route }) {
     }
     if (redirectTo) {
       navigation.navigate(redirectTo, redirectParams || {});
+    } else if (preferredStore?.sellerId || route.params?.sellerId) {
+      navigation.navigate('Catalog', {
+        sellerId: preferredStore?.sellerId || route.params?.sellerId,
+        sellerName: preferredStore?.sellerName || route.params?.sellerName,
+      });
     } else {
       navigation.navigate('Catalog');
     }
@@ -150,6 +169,19 @@ export default function BuyerLoginScreen({ navigation, route }) {
           <Text style={styles.icon}>🛍️</Text>
           <Text style={styles.title}>Buyer Sign In</Text>
           <Text style={styles.subtitle}>Sign in to browse shops, order & track items</Text>
+          {preferredStore?.sellerId && (
+            <View style={styles.storeLoginBanner}>
+              <View style={styles.storeLoginIconBox}>
+                <FontAwesome name="shopping-bag" size={15} color="#007AFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.storeLoginSub}>Shopping At Store</Text>
+                <Text style={styles.storeLoginTitle} numberOfLines={1}>
+                  {preferredStore.sellerName || 'Individual Store'}
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
 
         <View style={styles.form}>
@@ -401,4 +433,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8E8E93',
   },
+  storeLoginBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 14,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    gap: 10,
+    width: '100%',
+  },
+  storeLoginIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeLoginSub: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0284C7',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  storeLoginTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 1,
+  },
 });
+

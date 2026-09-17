@@ -18,12 +18,14 @@ import {
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import * as Location from 'expo-location';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
 import { supabase, extractStoreSettings } from '../services/supabase';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import StoreQrModal from '../components/StoreQrModal';
+import { getPreferredStore, setPreferredStore, clearPreferredStore } from '../services/localStorageService';
 
 const { width } = Dimensions.get('window');
 
@@ -85,6 +87,45 @@ export default function WelcomeScreen() {
   const [viewerMediaList, setViewerMediaList] = useState([]);
   const [viewerActiveIndex, setViewerActiveIndex] = useState(0);
   const [viewerStoreName, setViewerStoreName] = useState('');
+
+  // Store QR Code Modal and Preferred Store state
+  const [storeQrModalVisible, setStoreQrModalVisible] = useState(false);
+  const [qrModalSeller, setQrModalSeller] = useState(null);
+  const [preferredStore, setPreferredStoreState] = useState(null);
+
+  // Sync preferred store on screen focus
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      (async () => {
+        try {
+          const stored = await getPreferredStore();
+          if (isMounted) {
+            setPreferredStoreState(stored);
+          }
+        } catch (err) {
+          console.warn('[WelcomeScreen] Error loading preferred store:', err);
+        }
+      })();
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
+
+  const handleOpenStoreQr = useCallback((seller) => {
+    setQrModalSeller(seller);
+    setStoreQrModalVisible(true);
+  }, []);
+
+  const handleBrowseStoreFromQr = useCallback((seller) => {
+    setPreferredStore(seller.id, seller.full_name);
+    setPreferredStoreState({ sellerId: seller.id, sellerName: seller.full_name });
+    navigation.navigate('Catalog', {
+      sellerId: seller.id,
+      sellerName: seller.full_name,
+    });
+  }, [navigation]);
 
   const handleOpenMediaViewer = useCallback((seller, initialIndex = 0) => {
     // Compile media from all sellers so user can continuously scroll left or right across all stores!
@@ -566,6 +607,57 @@ export default function WelcomeScreen() {
             <Icon name="chevron-right" size={14} color="#FFFFFF" />
           </TouchableOpacity>
 
+          {/* Active Store Lock Banner (when user scanned or selected an individual store) */}
+          {preferredStore?.sellerId && (
+            <View style={styles.activeStoreBanner}>
+              <View style={styles.activeStoreIconBox}>
+                <Icon name="shopping-bag" size={16} color="#007AFF" />
+              </View>
+              <View style={styles.activeStoreInfo}>
+                <Text style={styles.activeStoreLabel}>Currently Shopping At:</Text>
+                <Text style={styles.activeStoreName} numberOfLines={1}>
+                  {preferredStore.sellerName || 'Selected Store'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.activeStoreBrowseBtn}
+                onPress={() =>
+                  navigation.navigate('Catalog', {
+                    sellerId: preferredStore.sellerId,
+                    sellerName: preferredStore.sellerName,
+                  })
+                }
+                activeOpacity={0.8}
+              >
+                <Text style={styles.activeStoreBrowseText}>Shop Now</Text>
+                <Icon name="chevron-right" size={10} color="#FFFFFF" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.activeStoreQrBtn}
+                onPress={() =>
+                  handleOpenStoreQr({
+                    id: preferredStore.sellerId,
+                    full_name: preferredStore.sellerName,
+                  })
+                }
+                activeOpacity={0.8}
+              >
+                <Icon name="qrcode" size={13} color="#007AFF" style={{ marginRight: 4 }} />
+                <Text style={styles.activeStoreQrText}>QR</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.activeStoreClearBtn}
+                onPress={async () => {
+                  await clearPreferredStore();
+                  setPreferredStoreState(null);
+                }}
+                activeOpacity={0.7}
+              >
+                <Icon name="times" size={14} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Portal Separator */}
           <Text style={styles.sectionHeader}>Portals & Access</Text>
 
@@ -815,15 +907,26 @@ export default function WelcomeScreen() {
                       <TouchableOpacity
                         style={styles.shopCatalogBtn}
                         activeOpacity={0.8}
-                        onPress={() =>
+                        onPress={() => {
+                          setPreferredStore(seller.id, seller.full_name);
+                          setPreferredStoreState({ sellerId: seller.id, sellerName: seller.full_name });
                           navigation.navigate('Catalog', {
                             sellerId: seller.id,
                             sellerName: seller.full_name,
-                          })
-                        }
+                          });
+                        }}
                       >
                         <Icon name="shopping-bag" size={13} color="#FFFFFF" style={{ marginRight: 6 }} />
                         <Text style={styles.shopCatalogBtnText}>Browse Store</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.storeQrBtn}
+                        activeOpacity={0.8}
+                        onPress={() => handleOpenStoreQr(seller)}
+                      >
+                        <Icon name="qrcode" size={14} color="#007AFF" style={{ marginRight: 5 }} />
+                        <Text style={styles.storeQrBtnText}>Store QR</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -860,6 +963,14 @@ export default function WelcomeScreen() {
         initialIndex={viewerActiveIndex}
         onClose={handleCloseMediaViewer}
         title={viewerStoreName || 'Store Media'}
+      />
+
+      {/* Individual Store QR Code Modal */}
+      <StoreQrModal
+        visible={storeQrModalVisible}
+        seller={qrModalSeller}
+        onClose={() => setStoreQrModalVisible(false)}
+        onBrowseStore={handleBrowseStoreFromQr}
       />
 
       {/* Persistent Bottom Navigation Footer */}
@@ -946,6 +1057,77 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 6,
     marginBottom: 24,
+  },
+  activeStoreBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    marginBottom: 20,
+    gap: 10,
+  },
+  activeStoreIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeStoreInfo: {
+    flex: 1,
+  },
+  activeStoreLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0284C7',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  activeStoreName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 1,
+  },
+  activeStoreBrowseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  activeStoreBrowseText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  activeStoreQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+  },
+  activeStoreQrText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  activeStoreClearBtn: {
+    padding: 6,
+    borderRadius: 12,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   mainButtonContent: {
     flexDirection: 'row',
@@ -1278,6 +1460,22 @@ const styles = StyleSheet.create({
   },
   shopCatalogBtnText: {
     color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  storeQrBtn: {
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeQrBtnText: {
+    color: '#007AFF',
     fontSize: 13,
     fontWeight: '700',
   },

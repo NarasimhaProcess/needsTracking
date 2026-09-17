@@ -1319,3 +1319,199 @@ export const printTestReceipt = async () => {
   }
 };
 
+/**
+ * Prints a customer-facing Store QR Standee / Poster for physical shop counter display.
+ */
+export const printStoreStandee = async ({
+  sellerName = 'Store',
+  sellerAddress = '',
+  sellerPhone = '',
+  storeUrl = '',
+  qrImageUrl = '',
+}) => {
+  const finalQrUrl =
+    qrImageUrl ||
+    `https://api.qrserver.com/v1/create-qr-code/?size=450x450&data=${encodeURIComponent(storeUrl)}`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${sellerName} - Store QR Code Standee</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 1.5cm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      color: #1e293b;
+      background-color: #ffffff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 90vh;
+    }
+    .standee-card {
+      border: 3px solid #007AFF;
+      border-radius: 24px;
+      padding: 36px 28px;
+      max-width: 520px;
+      width: 100%;
+      text-align: center;
+      background: #ffffff;
+      box-shadow: 0 10px 25px rgba(0, 122, 255, 0.08);
+    }
+    .badge {
+      display: inline-block;
+      background: #EFF6FF;
+      color: #007AFF;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 6px 16px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .store-name {
+      font-size: 32px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 8px 0;
+      line-height: 1.2;
+    }
+    .store-address {
+      font-size: 15px;
+      color: #64748b;
+      margin: 0 0 24px 0;
+    }
+    .qr-frame {
+      display: inline-block;
+      padding: 16px;
+      background: #ffffff;
+      border: 2px dashed #cbd5e1;
+      border-radius: 16px;
+      margin: 0 auto 20px auto;
+    }
+    .qr-image {
+      width: 260px;
+      height: 260px;
+      display: block;
+    }
+    .scan-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #007AFF;
+      margin: 0 0 8px 0;
+    }
+    .scan-subtitle {
+      font-size: 14px;
+      color: #475569;
+      margin: 0 0 24px 0;
+    }
+    .steps-container {
+      display: flex;
+      justify-content: space-around;
+      background: #F8FAFC;
+      border-radius: 12px;
+      padding: 16px 8px;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .step-item {
+      flex: 1;
+      padding: 0 4px;
+    }
+    .step-num {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      background: #007AFF;
+      color: #ffffff;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .step-text {
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      margin: 0;
+    }
+    .store-url-box {
+      background: #f1f5f9;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #334155;
+      word-break: break-all;
+      margin-bottom: 16px;
+      font-family: monospace;
+    }
+    .footer {
+      font-size: 12px;
+      color: #94a3b8;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="standee-card">
+    <div class="badge">Digital Store & Menu</div>
+    <h1 class="store-name">${sellerName}</h1>
+    ${sellerAddress ? `<p class="store-address">📍 ${sellerAddress}</p>` : ''}
+    ${sellerPhone ? `<p class="store-address" style="margin-top:-18px;">📞 ${sellerPhone}</p>` : ''}
+
+    <div class="qr-frame">
+      <img src="${finalQrUrl}" alt="Store QR Code" class="qr-image" />
+    </div>
+
+    <div class="scan-title">📱 Scan with Phone Camera</div>
+    <div class="scan-subtitle">Browse products, view prices, and order online directly!</div>
+
+    <div class="steps-container">
+      <div class="step-item">
+        <div class="step-num">1</div>
+        <p class="step-text">Open Phone Camera</p>
+      </div>
+      <div class="step-item">
+        <div class="step-num">2</div>
+        <p class="step-text">Scan QR Code</p>
+      </div>
+      <div class="step-item">
+        <div class="step-num">3</div>
+        <p class="step-text">Order & Pay Fast</p>
+      </div>
+    </div>
+
+    <div class="store-url-box">${storeUrl}</div>
+
+    <div class="footer">
+      Powered by Needs Tracker • Hyperlocal Marketplace
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+  try {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      return await printHtmlOnWeb(html);
+    } else {
+      await Print.printAsync({ html });
+      return { success: true, mode: 'system' };
+    }
+  } catch (err) {
+    console.error('[PrinterService] Error printing store standee:', err);
+    throw err;
+  }
+};
+
+

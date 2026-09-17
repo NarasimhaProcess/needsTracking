@@ -33,9 +33,10 @@ import {
   getCategories,
   getSubcategories,
 } from '../services/supabase';
-import { getGuestCart } from '../services/localStorageService';
+import { getGuestCart, getPreferredStore, setPreferredStore, clearPreferredStore } from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import StoreQrModal from '../components/StoreQrModal';
 
 const { width } = Dimensions.get('window');
 
@@ -77,6 +78,7 @@ const CatalogScreen = ({ navigation, route }) => {
     paramSellerId || (initialSellerName ? (paramUserId || paramCustomerId) : null)
   );
   const [activeStoreName, setActiveStoreName] = useState(initialSellerName || null);
+  const [storeQrVisible, setStoreQrVisible] = useState(false);
 
   // Sync route params if they change (e.g. user selects a different seller from Map or Welcome)
   React.useEffect(() => {
@@ -84,8 +86,35 @@ const CatalogScreen = ({ navigation, route }) => {
     if (nextSellerId !== undefined) {
       setActiveSellerId(nextSellerId || null);
       setActiveStoreName(initialSellerName || null);
+      if (nextSellerId) {
+        setPreferredStore(nextSellerId, initialSellerName || '');
+      }
     }
   }, [paramSellerId, paramUserId, paramCustomerId, initialSellerName]);
+
+  // Restore preferred store from AsyncStorage if no sellerId was passed in route params
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      (async () => {
+        if (!paramSellerId && !activeSellerId) {
+          try {
+            const pref = await getPreferredStore();
+            if (isMounted && pref?.sellerId) {
+              setActiveSellerId(pref.sellerId);
+              setActiveStoreName(pref.sellerName || null);
+            }
+          } catch (e) {
+            console.warn('[CatalogScreen] Error restoring preferred store:', e);
+          }
+        }
+      })();
+      return () => {
+        isMounted = false;
+      };
+    }, [paramSellerId, activeSellerId])
+  );
+
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -1204,18 +1233,30 @@ const CatalogScreen = ({ navigation, route }) => {
               Store: <Text style={{ fontWeight: '700' }}>{activeStoreName || 'Selected Store'}</Text>
             </Text>
           </View>
-          <TouchableOpacity
-            style={styles.clearStoreFilterBtn}
-            onPress={() => {
-              setActiveSellerId(null);
-              setActiveStoreName(null);
-            }}
-          >
-            <Text style={styles.clearStoreFilterText}>View All Stores</Text>
-            <Icon name="times" size={11} color="#007AFF" style={{ marginLeft: 4 }} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              style={styles.storeQrBannerBtn}
+              onPress={() => setStoreQrVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Icon name="qrcode" size={12} color="#007AFF" style={{ marginRight: 4 }} />
+              <Text style={styles.storeQrBannerText}>Store QR</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.clearStoreFilterBtn}
+              onPress={async () => {
+                setActiveSellerId(null);
+                setActiveStoreName(null);
+                await clearPreferredStore();
+              }}
+            >
+              <Text style={styles.clearStoreFilterText}>View All</Text>
+              <Icon name="times" size={11} color="#007AFF" style={{ marginLeft: 4 }} />
+            </TouchableOpacity>
+          </View>
         </View>
       )}
+
 
       {/* Category Horizontal Filter Bar */}
       <View style={styles.categoryBarWrapper}>
@@ -1736,7 +1777,17 @@ const CatalogScreen = ({ navigation, route }) => {
           onClose={() => setIsImageViewerVisible(false)}
           title={viewerTitle || 'Product Images'}
         />
+
+        {/* Individual Store QR Code Modal */}
+        {activeSellerId && (
+          <StoreQrModal
+            visible={storeQrVisible}
+            seller={{ id: activeSellerId, full_name: activeStoreName }}
+            onClose={() => setStoreQrVisible(false)}
+          />
+        )}
       </KeyboardAvoidingView>
+
     </View>
   );
 };
@@ -2517,6 +2568,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1E40AF',
   },
+  storeQrBannerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  storeQrBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
   clearStoreFilterBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2527,6 +2593,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BFDBFE',
   },
+
   clearStoreFilterText: {
     fontSize: 12,
     fontWeight: '700',

@@ -56,6 +56,7 @@ import ProductTabNavigator from './src/navigation/ProductTabNavigator';
 
 // Import services & context
 import { supabase, ensureUserProfile } from './src/services/supabase';
+import { getPreferredStore, setPreferredStore } from './src/services/localStorageService';
 import { CartProvider } from './src/context/CartContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { announceNewOrder } from './src/services/speechService';
@@ -95,6 +96,17 @@ function AppInner() {
           } else if (role === 'seller' || role === 'admin' || role === 'superadmin') {
             navigationRef.current?.navigate('ProductTabs', { session: currentSession, role });
           } else {
+            // Customer / Buyer: If currently shopping at a preferred store (via QR scan), open that store's Catalog!
+            try {
+              const prefStore = await getPreferredStore();
+              if (prefStore?.sellerId) {
+                navigationRef.current?.navigate('Catalog', {
+                  sellerId: prefStore.sellerId,
+                  sellerName: prefStore.sellerName || '',
+                });
+                return;
+              }
+            } catch (_) {}
             navigationRef.current?.navigate('ProductTabs', { session: currentSession, role: 'customer' });
           }
         }
@@ -194,6 +206,24 @@ function AppInner() {
             if (data.session.user) {
               navigateToRoleScreen(data.session.user, data.session);
             }
+          }
+        }
+        // Check for store QR deep link (e.g. needstracking://store?sellerId=... or web link)
+        if (url && (url.includes('sellerId=') || url.includes('seller='))) {
+          try {
+            const qs = url.includes('?') ? url.split('?')[1] : (url.includes('#') ? url.split('#')[1] : '');
+            const qParams = new URLSearchParams(qs);
+            const qSellerId = qParams.get('sellerId') || qParams.get('seller');
+            const qSellerName = qParams.get('sellerName') || qParams.get('name');
+            if (qSellerId) {
+              await setPreferredStore(qSellerId, qSellerName || '');
+              navigationRef.current?.navigate('Catalog', {
+                sellerId: qSellerId,
+                sellerName: qSellerName || '',
+              });
+            }
+          } catch (qrErr) {
+            console.warn('[App] Error handling store QR deep link:', qrErr);
           }
         }
       } catch (sessionErr) {
@@ -463,6 +493,28 @@ function AppInner() {
     };
   }, [isDark, colors]);
 
+  const handleNavReady = async () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        const searchStr = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+        if (searchStr) {
+          const urlParams = new URLSearchParams(searchStr);
+          const qSellerId = urlParams.get('sellerId') || urlParams.get('seller');
+          const qSellerName = urlParams.get('sellerName') || urlParams.get('name');
+          if (qSellerId) {
+            await setPreferredStore(qSellerId, qSellerName || '');
+            navigationRef.current?.navigate('Catalog', {
+              sellerId: qSellerId,
+              sellerName: qSellerName || '',
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[App] Error parsing web store URL params on ready:', err);
+      }
+    }
+  };
+
   if (loading) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
@@ -475,7 +527,7 @@ function AppInner() {
   return (
     <CartProvider>
       <View style={[styles.rootContainer, { backgroundColor: colors.background }]}>
-        <NavigationContainer ref={navigationRef} theme={navTheme}>
+        <NavigationContainer ref={navigationRef} theme={navTheme} onReady={handleNavReady}>
           <StatusBar style={isDark ? 'light' : 'dark'} />
           <Stack.Navigator initialRouteName="SellersMap" screenOptions={{ headerShown: false }}>
             <Stack.Screen name="SellersMap" component={SellersMapScreen} />

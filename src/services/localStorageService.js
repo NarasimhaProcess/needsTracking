@@ -75,3 +75,47 @@ export const clearGuestCart = async () => {
     return false;
   }
 };
+
+const PREFERRED_STORE_KEY = 'preferred_store';
+
+export const getPreferredStore = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PREFERRED_STORE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.warn('Error getting preferred store:', e);
+    return null;
+  }
+};
+
+export const setPreferredStore = async (sellerId, sellerName = '') => {
+  try {
+    if (!sellerId) {
+      await AsyncStorage.removeItem(PREFERRED_STORE_KEY);
+      return true;
+    }
+    await AsyncStorage.setItem(
+      PREFERRED_STORE_KEY,
+      JSON.stringify({
+        sellerId,
+        sellerName: sellerName || '',
+        updatedAt: new Date().toISOString(),
+      })
+    );
+    return true;
+  } catch (e) {
+    console.warn('Error setting preferred store:', e);
+    return false;
+  }
+};
+
+export const clearPreferredStore = async () => {
+  try {
+    await AsyncStorage.removeItem(PREFERRED_STORE_KEY);
+    return true;
+  } catch (e) {
+    console.warn('Error clearing preferred store:', e);
+    return false;
+  }
+};
+
