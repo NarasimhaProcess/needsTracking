@@ -82,13 +82,15 @@ const ProductScreen = ({ route, navigation }) => {
     const listToSearch = filteredProducts && filteredProducts.length > 0 ? filteredProducts : products;
     const mediaList = [];
     let targetIdx = 0;
+    let foundTarget = false;
 
     (listToSearch || []).forEach((prod) => {
       const pMedia = (prod?.product_media || []).filter(m => m && (m.media_url || m.uri));
       if (pMedia.length > 0) {
         pMedia.forEach((m, idx) => {
-          if (String(prod.id) === String(selectedProduct?.id) && idx === mediaIndex) {
+          if (!foundTarget && String(prod.id) === String(selectedProduct?.id) && idx === mediaIndex) {
             targetIdx = mediaList.length;
+            foundTarget = true;
           }
           mediaList.push({
             id: `prod-${prod.id}-m-${m.id || idx}`,
@@ -99,8 +101,9 @@ const ProductScreen = ({ route, navigation }) => {
           });
         });
       } else if (prod?.image_url) {
-        if (String(prod.id) === String(selectedProduct?.id)) {
+        if (!foundTarget && String(prod.id) === String(selectedProduct?.id)) {
           targetIdx = mediaList.length;
+          foundTarget = true;
         }
         mediaList.push({
           id: `prod-${prod.id}-img`,

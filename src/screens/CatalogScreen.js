@@ -850,13 +850,15 @@ const CatalogScreen = ({ navigation, route }) => {
     const catalogList = (filteredProducts && filteredProducts.length > 0) ? filteredProducts : (products || []);
     let allMedia = [];
     let targetIdx = 0;
+    let foundTarget = false;
 
     catalogList.forEach((p) => {
       const pMedia = (p?.product_media || []).filter(m => isImageMedia(m) && (m.media_url || m.uri));
       if (pMedia.length > 0) {
         pMedia.forEach((m, mIdx) => {
-          if (String(p.id) === String(product?.id) && mIdx === initialIndex) {
+          if (!foundTarget && String(p.id) === String(product?.id) && mIdx === initialIndex) {
             targetIdx = allMedia.length;
+            foundTarget = true;
           }
           allMedia.push({
             id: `p-${p.id}-m-${mIdx}`,
@@ -867,8 +869,9 @@ const CatalogScreen = ({ navigation, route }) => {
           });
         });
       } else if (p.image_url) {
-        if (String(p.id) === String(product?.id)) {
+        if (!foundTarget && String(p.id) === String(product?.id)) {
           targetIdx = allMedia.length;
+          foundTarget = true;
         }
         allMedia.push({
           id: `p-${p.id}-img`,

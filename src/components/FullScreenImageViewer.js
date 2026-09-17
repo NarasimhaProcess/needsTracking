@@ -14,6 +14,7 @@ import {
   ScrollView,
   Dimensions,
   PanResponder,
+  Animated,
 } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { FontAwesome as Icon } from '@expo/vector-icons';
@@ -22,17 +23,18 @@ import { FontAwesome as Icon } from '@expo/vector-icons';
  * Universal Full-Screen Media & Image Viewer
  * Features:
  * - Full image view in all scenarios (resizeMode="contain", no clipping)
- * - Responsive left/right scrolling via:
- *   1. Smooth Touch/Swipe Gestures (PanResponder & native horizontal ScrollView)
- *   2. Large, prominent floating Left (<) & Right (>) navigation buttons
- *   3. Interactive bottom thumbnail carousel with active indicator & auto-centering
+ * - Responsive left/right navigation:
+ *   1. Smooth Touch/Swipe Gestures (real-time interactive drag & slide with PanResponder)
+ *   2. Prominent floating Left (<) & Right (>) navigation buttons
+ *   3. Interactive bottom thumbnail strip with active highlight & auto-centering
  *   4. Web keyboard arrow navigation (ArrowLeft, ArrowRight, Escape)
  *   5. Mouse wheel & trackpad horizontal scroll support
  * - Cyclic navigation (wrap around first <-> last seamlessly)
  * - 1x / 2x / 3x zoom toggle with pan protection
  * - Video playback support with native controls
- * - Per-item dynamic title and subtitle badge
- * - Image loading indicator & graceful error fallback
+ * - Per-item dynamic title, subtitle badge, and item counter (e.g. 1 / 8)
+ * - Instant rendering with background preloading of adjacent images
+ * - Reliable image loading indicator with auto-timeout and graceful retry fallback
  */
 const FullScreenImageViewer = ({
   visible = false,
@@ -45,20 +47,20 @@ const FullScreenImageViewer = ({
   const screenWidth = windowDims.width || Dimensions.get('window').width || 360;
   const screenHeight = windowDims.height || Dimensions.get('window').height || 640;
 
-  // Viewport dimensions for carousel area (between header and thumbnail bar)
-  const [viewportWidth, setViewportWidth] = useState(screenWidth);
-  const [viewportHeight, setViewportHeight] = useState(screenHeight - 140);
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const [imageLoadingMap, setImageLoadingMap] = useState({});
   const [imageErrorMap, setImageErrorMap] = useState({});
   const [zoomScale, setZoomScale] = useState(1);
 
-  const mainScrollRef = useRef(null);
-  const thumbnailScrollRef = useRef(null);
   const currentIndexRef = useRef(initialIndex || 0);
-  const isProgrammaticScroll = useRef(false);
-  const programmaticScrollTimer = useRef(null);
+  const thumbnailScrollRef = useRef(null);
+  const loadedMapRef = useRef({});
+  const loadingTimerRef = useRef(null);
   const lastWheelTime = useRef(0);
+
+  // Animated values for slide drag & transitions
+  const panX = useRef(new Animated.Value(0)).current;
+  const slideOpacity = useRef(new Animated.Value(1)).current;
 
   // Normalize media items into { id, uri, type: 'image' | 'video', title, subtitle }
   const normalizedMedia = useMemo(() => {
@@ -67,22 +69,25 @@ const FullScreenImageViewer = ({
       .map((item, idx) => {
         if (!item) return null;
         if (typeof item === 'string') {
-          const isVid = !!item.match(/\.(mp4|mov|webm|m4v|avi)($|\?)/i);
+          const trimmed = item.trim();
+          if (!trimmed) return null;
+          const isVid = !!trimmed.match(/\.(mp4|mov|webm|m4v|avi)($|\?)/i);
           return {
-            id: `media-str-${idx}-${item}`,
-            uri: item,
+            id: `media-str-${idx}-${trimmed}`,
+            uri: trimmed,
             type: isVid ? 'video' : 'image',
             title: null,
             subtitle: null,
           };
         }
         const uri = item.uri || item.url || item.media_url || item.file_url || item.image_url;
-        if (!uri) return null;
+        if (!uri || typeof uri !== 'string' || !uri.trim()) return null;
+        const cleanUri = uri.trim();
         const type = (item.type || item.media_type || item.file_type || '').toLowerCase();
-        const isVid = type.includes('video') || !!uri.match(/\.(mp4|mov|webm|m4v|avi)($|\?)/i);
+        const isVid = type.includes('video') || !!cleanUri.match(/\.(mp4|mov|webm|m4v|avi)($|\?)/i);
         return {
-          id: item.id ? String(item.id) : `media-obj-${idx}-${uri}`,
-          uri,
+          id: item.id ? `${String(item.id)}-${idx}` : `media-obj-${idx}-${cleanUri}`,
+          uri: cleanUri,
           type: isVid ? 'video' : 'image',
           title: item.title || item.name || item.product_name || item.label || null,
           subtitle: item.subtitle || (item.price || item.amount ? `₹${item.amount || item.price}` : null),
@@ -98,79 +103,91 @@ const FullScreenImageViewer = ({
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
 
-  // Helper to reliably scroll the main ScrollView across platforms
-  const scrollCarouselTo = useCallback((x, animated = true) => {
-    if (!mainScrollRef.current) return;
-    try {
-      if (typeof mainScrollRef.current.scrollTo === 'function') {
-        mainScrollRef.current.scrollTo({ x, animated });
-      }
-      if (Platform.OS === 'web') {
-        const node = mainScrollRef.current.getScrollableNode
-          ? mainScrollRef.current.getScrollableNode()
-          : mainScrollRef.current;
-        if (node) {
-          if (animated && typeof node.scrollTo === 'function') {
-            node.scrollTo({ left: x, behavior: 'smooth' });
-          } else {
-            node.scrollLeft = x;
+  // Center active thumbnail in bottom carousel
+  const centerThumbnail = useCallback(
+    (index) => {
+      if (thumbnailScrollRef.current && totalCount > 1) {
+        const thumbWidth = 64; // 54 thumb width + 10 gap
+        const scrollOffset = Math.max(0, index * thumbWidth - screenWidth / 2 + thumbWidth / 2);
+        setTimeout(() => {
+          if (thumbnailScrollRef.current && typeof thumbnailScrollRef.current.scrollTo === 'function') {
+            thumbnailScrollRef.current.scrollTo({ x: scrollOffset, animated: true });
           }
-        }
+        }, 50);
       }
-    } catch (err) {
-      console.warn('scrollCarouselTo error:', err);
-    }
-  }, []);
+    },
+    [totalCount, screenWidth]
+  );
 
-  // Center thumbnail item in thumbnail bar
-  const centerThumbnail = useCallback((index) => {
-    if (thumbnailScrollRef.current && totalCount > 1) {
-      const thumbWidth = 66; // 56 width + 10 gap
-      const scrollOffset = Math.max(0, index * thumbWidth - viewportWidth / 2 + thumbWidth / 2);
-      if (typeof thumbnailScrollRef.current.scrollTo === 'function') {
-        thumbnailScrollRef.current.scrollTo({ x: scrollOffset, animated: true });
-      }
-    }
-  }, [totalCount, viewportWidth]);
-
-  // Navigate to specific index
+  // Jump to specific index with smooth directional transition
   const goToIndex = useCallback(
-    (index, animated = true) => {
+    (index, direction = 'none') => {
       if (totalCount === 0) return;
       let safeIdx = index;
-      // Cyclic wrap-around
       if (safeIdx < 0) safeIdx = totalCount - 1;
       if (safeIdx >= totalCount) safeIdx = 0;
 
+      if (safeIdx === currentIndexRef.current && zoomScale === 1) return;
+
+      setZoomScale(1);
       setCurrentIndex(safeIdx);
       currentIndexRef.current = safeIdx;
-      setZoomScale(1);
-
-      // Flag programmatic scroll so intermediate onScroll events don't overwrite index
-      isProgrammaticScroll.current = true;
-      if (programmaticScrollTimer.current) {
-        clearTimeout(programmaticScrollTimer.current);
-      }
-      programmaticScrollTimer.current = setTimeout(() => {
-        isProgrammaticScroll.current = false;
-      }, 400);
-
-      scrollCarouselTo(safeIdx * viewportWidth, animated);
       centerThumbnail(safeIdx);
-    },
-    [totalCount, viewportWidth, scrollCarouselTo, centerThumbnail]
-  );
 
-  const handlePrev = useCallback(() => {
-    if (totalCount <= 1) return;
-    const prevIdx = currentIndexRef.current > 0 ? currentIndexRef.current - 1 : totalCount - 1;
-    goToIndex(prevIdx);
-  }, [totalCount, goToIndex]);
+      // Transition animations
+      if (direction === 'next') {
+        panX.setValue(36);
+        slideOpacity.setValue(0.5);
+        Animated.parallel([
+          Animated.timing(panX, {
+            toValue: 0,
+            duration: 160,
+            useNativeDriver: Platform.OS !== 'web',
+          }),
+          Animated.timing(slideOpacity, {
+            toValue: 1,
+            duration: 160,
+            useNativeDriver: Platform.OS !== 'web',
+          }),
+        ]).start();
+      } else if (direction === 'prev') {
+        panX.setValue(-36);
+        slideOpacity.setValue(0.5);
+        Animated.parallel([
+          Animated.timing(panX, {
+            toValue: 0,
+            duration: 160,
+            useNativeDriver: Platform.OS !== 'web',
+          }),
+          Animated.timing(slideOpacity, {
+            toValue: 1,
+            duration: 160,
+            useNativeDriver: Platform.OS !== 'web',
+          }),
+        ]).start();
+      } else {
+        panX.setValue(0);
+        slideOpacity.setValue(0.65);
+        Animated.timing(slideOpacity, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: Platform.OS !== 'web',
+        }).start();
+      }
+    },
+    [totalCount, zoomScale, centerThumbnail, panX, slideOpacity]
+  );
 
   const handleNext = useCallback(() => {
     if (totalCount <= 1) return;
     const nextIdx = currentIndexRef.current < totalCount - 1 ? currentIndexRef.current + 1 : 0;
-    goToIndex(nextIdx);
+    goToIndex(nextIdx, 'next');
+  }, [totalCount, goToIndex]);
+
+  const handlePrev = useCallback(() => {
+    if (totalCount <= 1) return;
+    const prevIdx = currentIndexRef.current > 0 ? currentIndexRef.current - 1 : totalCount - 1;
+    goToIndex(prevIdx, 'prev');
   }, [totalCount, goToIndex]);
 
   // Cycle zoom: 1x -> 2x -> 3x -> 1x
@@ -182,88 +199,131 @@ const FullScreenImageViewer = ({
     });
   }, []);
 
+  // Stable Image loading callbacks to prevent React Native Web abort-and-reload loop
+  const handleImageLoadStart = useCallback((id) => {
+    if (!loadedMapRef.current[id]) {
+      setImageLoadingMap((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
+    }
+  }, []);
+
+  const handleImageLoad = useCallback((id) => {
+    loadedMapRef.current[id] = true;
+    setImageLoadingMap((prev) => ({ ...prev, [id]: false }));
+    setImageErrorMap((prev) => ({ ...prev, [id]: false }));
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+  }, []);
+
+  const handleImageLoadEnd = useCallback((id) => {
+    setImageLoadingMap((prev) => ({ ...prev, [id]: false }));
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+  }, []);
+
+  const handleImageError = useCallback((id) => {
+    setImageLoadingMap((prev) => ({ ...prev, [id]: false }));
+    setImageErrorMap((prev) => ({ ...prev, [id]: true }));
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+  }, []);
+
   // PanResponder to enable smooth swipe gestures across Web, iOS, and Android
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gestureState) => {
-          // If zoomed, allow panning around the image rather than changing slides
-          if (zoomScale > 1) return false;
-          if (totalCount <= 1) return false;
-          // Capture predominant horizontal swipe gestures
-          const isHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2;
-          return isHorizontal && Math.abs(gestureState.dx) > 12;
+          if (zoomScale > 1 || totalCount <= 1) return false;
+          const isHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4;
+          return isHorizontal && Math.abs(gestureState.dx) > 10;
+        },
+        onPanResponderMove: (_, gestureState) => {
+          if (zoomScale > 1 || totalCount <= 1) return;
+          panX.setValue(gestureState.dx);
         },
         onPanResponderRelease: (_, gestureState) => {
           if (zoomScale > 1 || totalCount <= 1) return;
           const { dx, vx } = gestureState;
-          if (dx < -35 || vx < -0.25) {
-            handleNext();
-          } else if (dx > 35 || vx > 0.25) {
-            handlePrev();
+          const swipeThreshold = Math.min(65, screenWidth * 0.16);
+
+          if (dx < -swipeThreshold || vx < -0.3) {
+            // Dragged left -> advance to Next
+            Animated.timing(panX, {
+              toValue: -screenWidth * 0.7,
+              duration: 130,
+              useNativeDriver: Platform.OS !== 'web',
+            }).start(() => {
+              handleNext();
+              panX.setValue(0);
+            });
+          } else if (dx > swipeThreshold || vx > 0.3) {
+            // Dragged right -> go to Prev
+            Animated.timing(panX, {
+              toValue: screenWidth * 0.7,
+              duration: 130,
+              useNativeDriver: Platform.OS !== 'web',
+            }).start(() => {
+              handlePrev();
+              panX.setValue(0);
+            });
+          } else {
+            // Snap back to center
+            Animated.spring(panX, {
+              toValue: 0,
+              bounciness: 0,
+              useNativeDriver: Platform.OS !== 'web',
+            }).start();
           }
         },
       }),
-    [zoomScale, totalCount, handleNext, handlePrev]
-  );
-
-  // Handle native scroll completion (momentum scroll end)
-  const handleMomentumScrollEnd = useCallback(
-    (e) => {
-      if (isProgrammaticScroll.current) return;
-      const offsetX = e.nativeEvent?.contentOffset?.x ?? 0;
-      if (viewportWidth <= 0) return;
-      const newIdx = Math.round(offsetX / viewportWidth);
-      const safeIdx = Math.min(Math.max(0, newIdx), totalCount - 1);
-      if (safeIdx !== currentIndexRef.current) {
-        setCurrentIndex(safeIdx);
-        currentIndexRef.current = safeIdx;
-        setZoomScale(1);
-        centerThumbnail(safeIdx);
-      }
-    },
-    [viewportWidth, totalCount, centerThumbnail]
+    [zoomScale, totalCount, screenWidth, handleNext, handlePrev, panX]
   );
 
   // Synchronize when modal opens or initialIndex changes
-  const prevVisibleRef = useRef(false);
   useEffect(() => {
-    if (visible && !prevVisibleRef.current && totalCount > 0) {
+    if (visible && totalCount > 0) {
       const safeIdx = Math.min(Math.max(0, initialIndex || 0), totalCount - 1);
       setCurrentIndex(safeIdx);
       currentIndexRef.current = safeIdx;
       setZoomScale(1);
-
-      const timer = setTimeout(() => {
-        scrollCarouselTo(safeIdx * viewportWidth, false);
-        centerThumbnail(safeIdx);
-      }, 50);
-
-      prevVisibleRef.current = visible;
-      return () => clearTimeout(timer);
+      panX.setValue(0);
+      slideOpacity.setValue(1);
+      centerThumbnail(safeIdx);
     }
-    prevVisibleRef.current = visible;
-  }, [visible, initialIndex, totalCount, viewportWidth, scrollCarouselTo, centerThumbnail]);
+  }, [visible, initialIndex, totalCount, centerThumbnail, panX, slideOpacity]);
 
-  // Handle initialIndex update while already visible
-  const prevInitialIndexRef = useRef(initialIndex);
+  // Safety fallback: dismiss loading indicator after 2s so spinner NEVER spins forever
+  const currentMedia = normalizedMedia[currentIndex] || normalizedMedia[0];
   useEffect(() => {
-    if (visible && prevInitialIndexRef.current !== initialIndex) {
-      prevInitialIndexRef.current = initialIndex;
-      goToIndex(initialIndex, false);
-    }
-  }, [visible, initialIndex, goToIndex]);
+    if (!visible || !currentMedia || currentMedia.type === 'video') return;
+    const mediaId = currentMedia.id || `media-${currentIndex}`;
 
-  // Keep scroll aligned when viewport dimensions change (rotation, resize)
-  useEffect(() => {
-    if (windowDims.width && windowDims.height) {
-      const timer = setTimeout(() => {
-        scrollCarouselTo(currentIndexRef.current * viewportWidth, false);
-      }, 40);
-      return () => clearTimeout(timer);
+    // If already recorded as loaded, immediately mark loading as false
+    if (loadedMapRef.current[mediaId]) {
+      setImageLoadingMap((prev) => (prev[mediaId] === false ? prev : { ...prev, [mediaId]: false }));
+      return;
     }
-  }, [windowDims.width, windowDims.height, viewportWidth, scrollCarouselTo]);
+
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+    }
+    loadingTimerRef.current = setTimeout(() => {
+      setImageLoadingMap((prev) => ({ ...prev, [mediaId]: false }));
+    }, 2000);
+
+    return () => {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+  }, [visible, currentIndex, currentMedia]);
 
   // Web Keyboard & Mouse Wheel navigation
   useEffect(() => {
@@ -283,7 +343,7 @@ const FullScreenImageViewer = ({
 
       const handleWheel = (e) => {
         const now = Date.now();
-        if (now - lastWheelTime.current < 250) return;
+        if (now - lastWheelTime.current < 280) return;
         const delta = Math.abs(e.deltaX) > 10 ? e.deltaX : (Math.abs(e.deltaY) > 10 ? e.deltaY : 0);
         if (delta > 20) {
           lastWheelTime.current = now;
@@ -306,9 +366,24 @@ const FullScreenImageViewer = ({
 
   if (!visible) return null;
 
-  const currentMedia = normalizedMedia[currentIndex] || normalizedMedia[0];
+  const isVideo = currentMedia?.type === 'video';
+  const mediaId = currentMedia?.id || `media-${currentIndex}`;
+  const isLoaded = !!loadedMapRef.current[mediaId];
+  const isLoading = !isVideo && !isLoaded && (imageLoadingMap[mediaId] ?? true);
+  const hasError = !!imageErrorMap[mediaId];
   const activeTitle = currentMedia?.title || title || 'Full Screen View';
   const activeSubtitle = currentMedia?.subtitle || null;
+
+  // Adjacent items for instant background preloading
+  const nextMedia = totalCount > 1 ? normalizedMedia[(currentIndex + 1) % totalCount] : null;
+  const prevMedia = totalCount > 1 ? normalizedMedia[(currentIndex - 1 + totalCount) % totalCount] : null;
+
+  const handleRetry = () => {
+    if (!currentMedia) return;
+    delete loadedMapRef.current[mediaId];
+    setImageErrorMap((prev) => ({ ...prev, [mediaId]: false }));
+    setImageLoadingMap((prev) => ({ ...prev, [mediaId]: true }));
+  };
 
   return (
     <Modal
@@ -347,7 +422,7 @@ const FullScreenImageViewer = ({
 
             <View style={styles.headerActions}>
               {/* Zoom Button (for images) */}
-              {currentMedia?.type !== 'video' && (
+              {!isVideo && (
                 <TouchableOpacity
                   style={[styles.actionButton, zoomScale > 1 && styles.actionButtonActive]}
                   onPress={toggleZoom}
@@ -368,6 +443,7 @@ const FullScreenImageViewer = ({
                 style={styles.closeButton}
                 onPress={onClose}
                 activeOpacity={0.8}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 accessibilityLabel="Close full screen view"
               >
                 <Icon name="times" size={20} color="#FFFFFF" />
@@ -382,117 +458,89 @@ const FullScreenImageViewer = ({
               <Text style={styles.emptyText}>No image available to display</Text>
             </View>
           ) : (
-            <View
-              style={styles.carouselWrapper}
-              onLayout={(e) => {
-                const { width, height } = e.nativeEvent.layout;
-                if (width > 0 && height > 0) {
-                  setViewportWidth(width);
-                  setViewportHeight(height);
-                }
-              }}
-              {...panResponder.panHandlers}
-            >
-              {/* Horizontal Paging ScrollView */}
-              <ScrollView
-                ref={mainScrollRef}
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={handleMomentumScrollEnd}
-                scrollEventThrottle={16}
-                scrollEnabled={zoomScale === 1}
-                contentContainerStyle={styles.scrollContentContainer}
-                style={styles.mainScrollView}
+            <View style={styles.carouselWrapper} {...panResponder.panHandlers}>
+              {/* Active Animated Slide */}
+              <Animated.View
+                style={[
+                  styles.activeSlide,
+                  {
+                    transform: [{ translateX: panX }],
+                    opacity: slideOpacity,
+                  },
+                ]}
               >
-                {normalizedMedia.map((item, index) => {
-                  const isCurrent = index === currentIndex;
-                  const isVideo = item.type === 'video';
-                  const hasError = imageErrorMap[item.id];
+                {isVideo ? (
+                  <View style={styles.mediaFrame}>
+                    <Video
+                      source={{ uri: currentMedia.uri }}
+                      style={styles.fullMedia}
+                      useNativeControls
+                      resizeMode={ResizeMode.CONTAIN}
+                      shouldPlay={true}
+                      isLooping
+                    />
+                  </View>
+                ) : (
+                  <View style={styles.mediaFrame}>
+                    {isLoading && !hasError && (
+                      <View style={styles.mediaLoader}>
+                        <ActivityIndicator size="large" color="#38BDF8" />
+                      </View>
+                    )}
 
-                  return (
-                    <View
-                      key={item.id || `slide-${index}`}
-                      style={[
-                        styles.slide,
-                        {
-                          width: viewportWidth,
-                          height: viewportHeight,
-                        },
-                      ]}
-                    >
-                      {isVideo ? (
-                        <View style={styles.mediaFrame}>
-                          <Video
-                            source={{ uri: item.uri }}
-                            style={styles.fullMedia}
-                            useNativeControls
-                            resizeMode={ResizeMode.CONTAIN}
-                            shouldPlay={isCurrent}
-                            isLooping
-                          />
-                        </View>
-                      ) : (
-                        <View style={styles.mediaFrame}>
-                          {imageLoadingMap[item.id] && !hasError && (
-                            <View style={styles.mediaLoader}>
-                              <ActivityIndicator size="large" color="#38BDF8" />
-                            </View>
-                          )}
-                          {hasError ? (
-                            <View style={styles.errorFrame}>
-                              <Icon name="exclamation-triangle" size={42} color="#F59E0B" />
-                              <Text style={styles.errorText}>Unable to load image</Text>
-                            </View>
-                          ) : (
-                            <Image
-                              source={{ uri: item.uri }}
-                              style={[
-                                styles.fullMedia,
-                                isCurrent && zoomScale > 1
-                                  ? { transform: [{ scale: zoomScale }] }
-                                  : null,
-                              ]}
-                              resizeMode="contain"
-                              onLoadStart={() =>
-                                setImageLoadingMap((prev) => ({ ...prev, [item.id]: true }))
-                              }
-                              onLoadEnd={() =>
-                                setImageLoadingMap((prev) => ({ ...prev, [item.id]: false }))
-                              }
-                              onError={() => {
-                                setImageLoadingMap((prev) => ({ ...prev, [item.id]: false }));
-                                setImageErrorMap((prev) => ({ ...prev, [item.id]: true }));
-                              }}
-                            />
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })}
-              </ScrollView>
+                    {hasError ? (
+                      <View style={styles.errorFrame}>
+                        <Icon name="exclamation-triangle" size={44} color="#F59E0B" />
+                        <Text style={styles.errorTitle}>Unable to load image</Text>
+                        <Text style={styles.errorSubtitle}>Check connection or try again</Text>
+                        <TouchableOpacity
+                          style={styles.retryButton}
+                          onPress={handleRetry}
+                          activeOpacity={0.8}
+                        >
+                          <Icon name="refresh" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.retryButtonText}>Retry</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Image
+                        key={mediaId}
+                        source={{ uri: currentMedia.uri }}
+                        style={[
+                          styles.fullMedia,
+                          zoomScale > 1 ? { transform: [{ scale: zoomScale }] } : null,
+                        ]}
+                        resizeMode="contain"
+                        onLoadStart={() => handleImageLoadStart(mediaId)}
+                        onLoad={() => handleImageLoad(mediaId)}
+                        onLoadEnd={() => handleImageLoadEnd(mediaId)}
+                        onError={() => handleImageError(mediaId)}
+                      />
+                    )}
+                  </View>
+                )}
+              </Animated.View>
 
-              {/* Left Arrow Button (<) */}
+              {/* Prominent Left Arrow Button (<) */}
               {totalCount > 1 && (
                 <TouchableOpacity
                   style={[styles.navArrow, styles.navArrowLeft]}
                   onPress={handlePrev}
                   activeOpacity={0.85}
-                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                  hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }}
                   accessibilityLabel="Previous image"
                 >
                   <Icon name="chevron-left" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
               )}
 
-              {/* Right Arrow Button (>) */}
+              {/* Prominent Right Arrow Button (>) */}
               {totalCount > 1 && (
                 <TouchableOpacity
                   style={[styles.navArrow, styles.navArrowRight]}
                   onPress={handleNext}
                   activeOpacity={0.85}
-                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                  hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }}
                   accessibilityLabel="Next image"
                 >
                   <Icon name="chevron-right" size={24} color="#FFFFFF" />
@@ -512,17 +560,17 @@ const FullScreenImageViewer = ({
               >
                 {normalizedMedia.map((m, idx) => {
                   const isActive = idx === currentIndex;
-                  const isVid = m.type === 'video';
+                  const isThumbVid = m.type === 'video';
 
                   return (
                     <TouchableOpacity
                       key={`thumb-${m.id || idx}`}
                       style={[styles.thumbnailWrap, isActive && styles.thumbnailWrapActive]}
-                      onPress={() => goToIndex(idx)}
+                      onPress={() => goToIndex(idx, idx > currentIndex ? 'next' : 'prev')}
                       activeOpacity={0.8}
                       accessibilityLabel={`View media ${idx + 1}`}
                     >
-                      {isVid ? (
+                      {isThumbVid ? (
                         <View style={styles.thumbnailVideoPlaceholder}>
                           <Icon name="play" size={12} color="#FFFFFF" />
                         </View>
@@ -540,6 +588,26 @@ const FullScreenImageViewer = ({
               </ScrollView>
             </View>
           )}
+
+          {/* Invisible Background Preloaders for Adjacent Images */}
+          {nextMedia && nextMedia.type === 'image' && nextMedia.uri !== currentMedia?.uri && (
+            <Image
+              source={{ uri: nextMedia.uri }}
+              style={styles.hiddenPreload}
+              onLoad={() => {
+                loadedMapRef.current[nextMedia.id] = true;
+              }}
+            />
+          )}
+          {prevMedia && prevMedia.type === 'image' && prevMedia.uri !== currentMedia?.uri && prevMedia.uri !== nextMedia?.uri && (
+            <Image
+              source={{ uri: prevMedia.uri }}
+              style={styles.hiddenPreload}
+              onLoad={() => {
+                loadedMapRef.current[prevMedia.id] = true;
+              }}
+            />
+          )}
         </View>
       </SafeAreaView>
     </Modal>
@@ -556,6 +624,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     position: 'relative',
     overflow: 'hidden',
+    ...(Platform.OS === 'web'
+      ? {
+          height: '100vh',
+          width: '100vw',
+        }
+      : {}),
   },
   headerBar: {
     flexDirection: 'row',
@@ -564,7 +638,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: 'rgba(0, 0, 0, 0.94)',
-    zIndex: 40,
+    zIndex: 50,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.12)',
   },
@@ -639,6 +713,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
+    width: '100%',
+    height: '100%',
     ...(Platform.OS === 'web'
       ? {
           cursor: 'grab',
@@ -647,15 +723,9 @@ const styles = StyleSheet.create({
         }
       : {}),
   },
-  mainScrollView: {
-    flex: 1,
+  activeSlide: {
     width: '100%',
     height: '100%',
-  },
-  scrollContentContainer: {
-    alignItems: 'center',
-  },
-  slide: {
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -665,11 +735,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    padding: 4,
+    padding: 6,
   },
   fullMedia: {
     width: '100%',
     height: '100%',
+    maxWidth: '100%',
+    maxHeight: '100%',
     ...(Platform.OS === 'web'
       ? {
           userSelect: 'none',
@@ -681,22 +753,46 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
   },
   errorFrame: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    paddingHorizontal: 24,
   },
-  errorText: {
+  errorTitle: {
+    color: '#F87171',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  errorSubtitle: {
     color: '#94A3B8',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: 10,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   navArrow: {
     position: 'absolute',
     top: '50%',
-    marginTop: -28,
+    transform: [{ translateY: -28 }],
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -705,7 +801,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 50,
+    zIndex: 60,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
@@ -730,7 +826,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.14)',
     justifyContent: 'center',
-    zIndex: 40,
+    zIndex: 50,
   },
   thumbnailScrollContent: {
     paddingHorizontal: 16,
@@ -783,6 +879,14 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 16,
     fontWeight: '500',
+  },
+  hiddenPreload: {
+    width: 1,
+    height: 1,
+    opacity: 0,
+    position: 'absolute',
+    left: -9999,
+    top: -9999,
   },
 });
 
