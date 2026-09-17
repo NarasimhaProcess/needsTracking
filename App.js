@@ -103,6 +103,7 @@ function AppInner() {
                 navigationRef.current?.navigate('Catalog', {
                   sellerId: prefStore.sellerId,
                   sellerName: prefStore.sellerName || '',
+                  isDirectQr: Boolean(prefStore?.isDirectQr),
                 });
                 return;
               }
@@ -215,11 +216,13 @@ function AppInner() {
             const qParams = new URLSearchParams(qs);
             const qSellerId = qParams.get('sellerId') || qParams.get('seller');
             const qSellerName = qParams.get('sellerName') || qParams.get('name');
+            const isDirectQr = qParams.get('fromMap') !== 'true';
             if (qSellerId) {
-              await setPreferredStore(qSellerId, qSellerName || '');
+              await setPreferredStore(qSellerId, qSellerName || '', isDirectQr);
               navigationRef.current?.navigate('Catalog', {
                 sellerId: qSellerId,
                 sellerName: qSellerName || '',
+                isDirectQr,
               });
             }
           } catch (qrErr) {
@@ -501,11 +504,14 @@ function AppInner() {
           const urlParams = new URLSearchParams(searchStr);
           const qSellerId = urlParams.get('sellerId') || urlParams.get('seller');
           const qSellerName = urlParams.get('sellerName') || urlParams.get('name');
+          const fromMap = urlParams.get('fromMap') === 'true';
+          const isDirectQr = !fromMap && (urlParams.get('directQr') === 'true' || urlParams.get('qr') === '1' || !!qSellerId);
           if (qSellerId) {
-            await setPreferredStore(qSellerId, qSellerName || '');
+            await setPreferredStore(qSellerId, qSellerName || '', isDirectQr);
             navigationRef.current?.navigate('Catalog', {
               sellerId: qSellerId,
               sellerName: qSellerName || '',
+              isDirectQr: isDirectQr,
             });
           }
         }

@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useCart } from '../context/CartContext';
-import { getGuestCart } from '../services/localStorageService';
+import { getGuestCart, getPreferredStore } from '../services/localStorageService';
 
 const StoreNavigationFooter = ({
   activeTab = 'store',
@@ -16,9 +16,12 @@ const StoreNavigationFooter = ({
   onOrdersPress,
   onProfilePress,
   forceShow = false,
+  isDirectQr: propIsDirectQr,
+  hideStoresTab: propHideStoresTab,
 }) => {
   const { cart, cartItemCount: contextCartItemCount, user } = useCart();
   const [guestCount, setGuestCount] = React.useState(0);
+  const [prefIsDirectQr, setPrefIsDirectQr] = React.useState(false);
 
   // Compute effective store / customer params
   const sellerId = propSellerId || route?.params?.sellerId || null;
@@ -42,6 +45,39 @@ const StoreNavigationFooter = ({
       isMounted = false;
     };
   }, [user, cart]);
+
+  // Check if shopping in preferred store set via QR scan
+  React.useEffect(() => {
+    let isMounted = true;
+    getPreferredStore()
+      .then((pref) => {
+        if (isMounted && pref?.isDirectQr) {
+          setPrefIsDirectQr(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const isDirectQr = useMemo(() => {
+    if (propHideStoresTab) return true;
+    if (propIsDirectQr !== undefined) return Boolean(propIsDirectQr);
+    if (route?.params?.isDirectQr !== undefined) return Boolean(route?.params?.isDirectQr);
+    if (prefIsDirectQr) return true;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const search = window.location?.search || '';
+      const hash = window.location?.hash || '';
+      return (
+        search.includes('directQr=true') ||
+        search.includes('qr=1') ||
+        (search.includes('sellerId=') && !search.includes('fromMap=true')) ||
+        (hash.includes('sellerId=') && !hash.includes('fromMap=true'))
+      );
+    }
+    return false;
+  }, [propHideStoresTab, propIsDirectQr, route?.params?.isDirectQr, prefIsDirectQr]);
 
   const totalCartCount = useMemo(() => {
     if (user) {
@@ -88,6 +124,7 @@ const StoreNavigationFooter = ({
       sellerId,
       sellerName,
       customerId,
+      isDirectQr,
     };
 
     if (tab === 'stores') {
@@ -109,18 +146,20 @@ const StoreNavigationFooter = ({
 
   return (
     <View style={styles.footerContainer}>
-      {/* Stores Tab */}
-      <TouchableOpacity
-        style={[styles.tabButton, activeTab === 'stores' && styles.tabButtonActive]}
-        onPress={() => handleTabPress('stores')}
-        activeOpacity={0.75}
-        accessibilityRole="button"
-        accessibilityLabel="Stores Tab"
-      >
-        <Text style={[styles.tabLabel, activeTab === 'stores' && styles.tabLabelActive]} numberOfLines={1}>
-          Stores
-        </Text>
-      </TouchableOpacity>
+      {/* Stores Tab (Hidden when accessed directly via QR code) */}
+      {!isDirectQr && (
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'stores' && styles.tabButtonActive]}
+          onPress={() => handleTabPress('stores')}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Stores Tab"
+        >
+          <Text style={[styles.tabLabel, activeTab === 'stores' && styles.tabLabelActive]} numberOfLines={1}>
+            Stores
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* Store Tab */}
       <TouchableOpacity

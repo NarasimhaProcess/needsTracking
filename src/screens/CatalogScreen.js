@@ -13,6 +13,7 @@ import {
   Alert,
   ScrollView,
   Dimensions,
+  useWindowDimensions,
   TextInput,
   KeyboardAvoidingView,
   Platform,
@@ -33,7 +34,14 @@ import {
   getCategories,
   getSubcategories,
 } from '../services/supabase';
-import { getGuestCart, getPreferredStore, setPreferredStore, clearPreferredStore } from '../services/localStorageService';
+import {
+  getGuestCart,
+  getPreferredStore,
+  setPreferredStore,
+  clearPreferredStore,
+  getFavoriteProductIds,
+  toggleFavoriteProductId,
+} from '../services/localStorageService';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import StoreQrModal from '../components/StoreQrModal';
@@ -71,6 +79,7 @@ const CatalogScreen = ({ navigation, route }) => {
     sellerId: paramSellerId,
     customerId: paramCustomerId,
     sellerName: initialSellerName,
+    isDirectQr: paramIsDirectQr,
   } = route?.params || {};
 
   // Active store / seller filter state
@@ -80,17 +89,36 @@ const CatalogScreen = ({ navigation, route }) => {
   const [activeStoreName, setActiveStoreName] = useState(initialSellerName || null);
   const [storeQrVisible, setStoreQrVisible] = useState(false);
 
+  // Direct QR store mode: When customer accesses directly via QR code
+  const [isDirectQr, setIsDirectQr] = useState(() => {
+    if (paramIsDirectQr !== undefined) return Boolean(paramIsDirectQr);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const search = window.location?.search || '';
+      const hash = window.location?.hash || '';
+      return (
+        search.includes('directQr=true') ||
+        search.includes('qr=1') ||
+        (search.includes('sellerId=') && !search.includes('fromMap=true')) ||
+        (hash.includes('sellerId=') && !hash.includes('fromMap=true'))
+      );
+    }
+    return false;
+  });
+
   // Sync route params if they change (e.g. user selects a different seller from Map or Welcome)
   React.useEffect(() => {
     const nextSellerId = paramSellerId || (initialSellerName ? (paramUserId || paramCustomerId) : null);
     if (nextSellerId !== undefined) {
       setActiveSellerId(nextSellerId || null);
       setActiveStoreName(initialSellerName || null);
+      if (paramIsDirectQr !== undefined) {
+        setIsDirectQr(Boolean(paramIsDirectQr));
+      }
       if (nextSellerId) {
-        setPreferredStore(nextSellerId, initialSellerName || '');
+        setPreferredStore(nextSellerId, initialSellerName || '', paramIsDirectQr);
       }
     }
-  }, [paramSellerId, paramUserId, paramCustomerId, initialSellerName]);
+  }, [paramSellerId, paramUserId, paramCustomerId, initialSellerName, paramIsDirectQr]);
 
   // Restore preferred store from AsyncStorage if no sellerId was passed in route params
   useFocusEffect(
@@ -103,6 +131,9 @@ const CatalogScreen = ({ navigation, route }) => {
             if (isMounted && pref?.sellerId) {
               setActiveSellerId(pref.sellerId);
               setActiveStoreName(pref.sellerName || null);
+              if (pref?.isDirectQr) {
+                setIsDirectQr(true);
+              }
             }
           } catch (e) {
             console.warn('[CatalogScreen] Error restoring preferred store:', e);
@@ -121,6 +152,54 @@ const CatalogScreen = ({ navigation, route }) => {
   const [catalogCategories, setCatalogCategories] = useState(CATALOG_CATEGORIES);
   const [catalogSubcategories, setCatalogSubcategories] = useState([]);
   const [selectedSubcategory, setSelectedSubcategory] = useState('all');
+
+  // Favorites state
+  const [favoriteProductIds, setFavoriteProductIds] = useState([]);
+
+  // Load favorites from local storage
+  React.useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const favs = await getFavoriteProductIds();
+        if (isMounted && Array.isArray(favs)) {
+          setFavoriteProductIds(favs);
+        }
+      } catch (err) {
+        console.warn('[CatalogScreen] Error loading favorites:', err);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleToggleFavorite = useCallback(async (productId) => {
+    if (!productId) return;
+    try {
+      const updated = await toggleFavoriteProductId(productId);
+      setFavoriteProductIds(updated || []);
+    } catch (err) {
+      console.warn('[CatalogScreen] Error toggling favorite:', err);
+    }
+  }, []);
+
+  // Screen orientation & dimensions
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isHorizontalScreen = windowWidth > windowHeight && windowWidth >= 640;
+
+  // Subcategory visibility, view mode, and sidebar state
+  const [isSubcatVisible, setIsSubcatVisible] = useState(true);
+  const [subcatViewMode, setSubcatViewMode] = useState('horizontal'); // 'horizontal' | 'vertical'
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+
+  // Responsive column count for product grid
+  const numColumns = useMemo(() => {
+    if (!isHorizontalScreen) return 2;
+    if (windowWidth >= 1200) return 4;
+    if (windowWidth >= 860) return 3;
+    return 2;
+  }, [isHorizontalScreen, windowWidth]);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
   const [guestCart, setGuestCart] = useState([]);
@@ -169,7 +248,7 @@ const CatalogScreen = ({ navigation, route }) => {
   React.useEffect(() => {
     let isMounted = true;
     const fetchSubcategoriesData = async () => {
-      if (!selectedCategory || selectedCategory === 'all') {
+      if (!selectedCategory || selectedCategory === 'all' || selectedCategory === 'favorites') {
         setCatalogSubcategories([]);
         setSelectedSubcategory('all');
         return;
@@ -319,6 +398,7 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const getCategoryLabel = useCallback((productType) => {
     if (!productType) return 'General';
+    if (productType === 'favorites') return 'Favorites';
     const cat = catalogCategories.find(
       c => (c.id || '').toLowerCase() === productType.toLowerCase() ||
            (c.code || '').toLowerCase() === productType.toLowerCase()
@@ -326,8 +406,14 @@ const CatalogScreen = ({ navigation, route }) => {
     return cat ? cat.label : productType.charAt(0).toUpperCase() + productType.slice(1);
   }, [catalogCategories]);
 
+  const favoritesCount = useMemo(() => {
+    return products.filter((p) =>
+      favoriteProductIds.some((id) => String(id) === String(p?.id))
+    ).length;
+  }, [products, favoriteProductIds]);
+
   const categoryCounts = useMemo(() => {
-    const counts = { all: products.length };
+    const counts = { all: products.length, favorites: favoritesCount };
     products.forEach((p) => {
       const pType = String(p?.product_type || '').toLowerCase().trim();
       const pCatId = String(p?.category_id || '').toLowerCase().trim();
@@ -349,9 +435,14 @@ const CatalogScreen = ({ navigation, route }) => {
       }
     });
     return counts;
-  }, [products, catalogCategories]);
+  }, [products, catalogCategories, favoritesCount]);
 
   const currentCategoryProducts = useMemo(() => {
+    if (selectedCategory === 'favorites') {
+      return products.filter((product) =>
+        favoriteProductIds.some((id) => String(id) === String(product?.id))
+      );
+    }
     if (!selectedCategory || selectedCategory === 'all') return products;
     const targetCat = String(selectedCategory).toLowerCase().trim();
     const catObj = catalogCategories.find(
@@ -962,6 +1053,7 @@ const CatalogScreen = ({ navigation, route }) => {
 
   const renderProduct = ({ item }) => {
     if (!item) return null;
+    const isFav = favoriteProductIds.some((id) => String(id) === String(item.id));
     const combos = getProductCombinations(item);
     const isMultiVariant = combos.length > 1;
     const singleCombo = combos[0];
@@ -973,7 +1065,7 @@ const CatalogScreen = ({ navigation, route }) => {
     const imageUrl = firstMedia ? (firstMedia.media_url || firstMedia.uri) : (item.image_url || null);
 
     return (
-      <View style={styles.productContainer}>
+      <View style={[styles.productContainer, isHorizontalScreen && { maxWidth: `${100 / numColumns}%` }]}>
         <View style={{ position: 'relative' }}>
           <TouchableOpacity
             onPress={() => (imageUrl ? openImageViewer(item, 0) : openProductModal(item))}
@@ -992,6 +1084,22 @@ const CatalogScreen = ({ navigation, route }) => {
               </View>
             )}
           </TouchableOpacity>
+
+          {/* Favorite Heart Button */}
+          <TouchableOpacity
+            style={[styles.cardFavoriteBtn, isFav && styles.cardFavoriteBtnActive]}
+            onPress={() => handleToggleFavorite(item.id)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={isFav ? "Remove from favorites" : "Add to favorites"}
+          >
+            <Icon
+              name={isFav ? "heart" : "heart-o"}
+              size={15}
+              color={isFav ? "#EF4444" : "#64748B"}
+            />
+          </TouchableOpacity>
+
           {imageUrl && (
             <TouchableOpacity
               style={styles.cardZoomBtn}
@@ -1123,6 +1231,65 @@ const CatalogScreen = ({ navigation, route }) => {
     return <View style={styles.center}><ActivityIndicator size="large" color="#007AFF" /></View>;
   }
 
+  const renderEmptySearchComponent = () => {
+    if (loading) return null;
+
+    if (selectedCategory === 'favorites') {
+      return (
+        <View style={styles.emptySearchContainer}>
+          <Icon name="heart-o" size={44} color="#FDA4AF" style={{ marginBottom: 12 }} />
+          <Text style={styles.emptySearchTitle}>
+            {searchQuery.trim() ? `No favorites matching "${searchQuery}"` : 'No favorite products yet'}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 4, marginBottom: 16, paddingHorizontal: 20 }}>
+            {searchQuery.trim()
+              ? 'Try a different search term or reset filters.'
+              : 'Tap the heart icon on any product to save it here for quick access!'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.clearSearchBtn, { backgroundColor: '#EF4444', borderColor: '#EF4444' }]}
+            onPress={() => {
+              setSearchQuery('');
+              setSelectedCategory('all');
+            }}
+          >
+            <Text style={[styles.clearSearchBtnText, { color: '#FFFFFF' }]}>Browse All Products</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.emptySearchContainer}>
+        <Icon name="search" size={40} color="#ccc" style={{ marginBottom: 12 }} />
+        <Text style={styles.emptySearchTitle}>
+          {searchQuery.trim() || selectedCategory !== 'all'
+            ? `No products found matching ${searchQuery.trim() ? `"${searchQuery}"` : ''} ${selectedCategory !== 'all' ? `in category "${getCategoryLabel(selectedCategory)}"` : ''}`
+            : activeStoreName
+            ? `No products currently listed for "${activeStoreName}".`
+            : 'No products available in catalog'}
+        </Text>
+        {(searchQuery.trim().length > 0 || selectedCategory !== 'all' || (activeSellerId && !isDirectQr)) && (
+          <TouchableOpacity
+            style={styles.clearSearchBtn}
+            onPress={() => {
+              setSearchQuery('');
+              setSelectedCategory('all');
+              if (!isDirectQr) {
+                setActiveSellerId(null);
+                setActiveStoreName(null);
+              }
+            }}
+          >
+            <Text style={styles.clearSearchBtnText}>
+              {activeSellerId && !isDirectQr ? 'Browse All Products' : 'Reset Filters'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
   const cartItems = user ? cart?.cart_items : guestCart;
 
   return (
@@ -1155,6 +1322,31 @@ const CatalogScreen = ({ navigation, route }) => {
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {/* Quick Favorites Header Button */}
+          <TouchableOpacity
+            style={{ marginRight: 15, padding: 4 }}
+            onPress={() => {
+              setSelectedCategory((prev) => (prev === 'favorites' ? 'all' : 'favorites'));
+              setSelectedSubcategory('all');
+            }}
+            accessibilityLabel="Favorites Filter"
+          >
+            <View style={{ position: 'relative' }}>
+              <Icon
+                name={selectedCategory === 'favorites' ? 'heart' : 'heart-o'}
+                size={20}
+                color={selectedCategory === 'favorites' ? '#EF4444' : '#475569'}
+              />
+              {favoritesCount > 0 && selectedCategory !== 'favorites' && (
+                <View style={styles.headerFavBadge}>
+                  <Text style={styles.headerFavBadgeText}>
+                    {favoritesCount > 99 ? '99+' : favoritesCount}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+
           {user && (userRole === 'seller' || userRole === 'admin' || userRole === 'superadmin') && (
             <TouchableOpacity
               style={{ marginRight: 15, padding: 4 }}
@@ -1205,212 +1397,675 @@ const CatalogScreen = ({ navigation, route }) => {
               <Icon name="sign-out" size={20} color="#EF4444" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            style={{ padding: 4 }}
-            onPress={() => {
-              if (navigation.canGoBack()) {
-                navigation.goBack();
-              } else {
-                try {
-                  navigation.navigate('SellersMap');
-                } catch (_) {
-                  navigation.navigate('Welcome');
+          {(!isDirectQr || navigation.canGoBack()) && (
+            <TouchableOpacity
+              style={{ padding: 4 }}
+              onPress={() => {
+                if (navigation.canGoBack()) {
+                  navigation.goBack();
+                } else if (!isDirectQr) {
+                  try {
+                    navigation.navigate('SellersMap');
+                  } catch (_) {
+                    navigation.navigate('Welcome');
+                  }
                 }
-              }
-            }}
-          >
-            <Icon name="close" size={22} color="#333" />
-          </TouchableOpacity>
+              }}
+              accessibilityLabel={navigation.canGoBack() ? 'Go Back' : 'Close'}
+            >
+              <Icon name={navigation.canGoBack() ? 'arrow-left' : 'close'} size={22} color="#333" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
       {/* Store Filter Active Banner */}
       {(activeStoreName || activeSellerId) && (
-        <View style={styles.storeFilterBanner}>
+        <View style={[styles.storeFilterBanner, isDirectQr && styles.directStoreBanner]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-            <Icon name="shopping-bag" size={13} color="#007AFF" style={{ marginRight: 6 }} />
-            <Text style={styles.storeFilterText} numberOfLines={1}>
+            <Icon
+              name="shopping-bag"
+              size={13}
+              color={isDirectQr ? '#059669' : '#007AFF'}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.storeFilterText, isDirectQr && styles.directStoreFilterText]}
+              numberOfLines={1}
+            >
               Store: <Text style={{ fontWeight: '700' }}>{activeStoreName || 'Selected Store'}</Text>
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <TouchableOpacity
-              style={styles.storeQrBannerBtn}
-              onPress={() => setStoreQrVisible(true)}
-              activeOpacity={0.7}
-            >
-              <Icon name="qrcode" size={12} color="#007AFF" style={{ marginRight: 4 }} />
-              <Text style={styles.storeQrBannerText}>Store QR</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.clearStoreFilterBtn}
-              onPress={async () => {
-                setActiveSellerId(null);
-                setActiveStoreName(null);
-                await clearPreferredStore();
-              }}
-            >
-              <Text style={styles.clearStoreFilterText}>View All</Text>
-              <Icon name="times" size={11} color="#007AFF" style={{ marginLeft: 4 }} />
-            </TouchableOpacity>
+            {/* When accessed directly via QR code: Hide Store QR & Hide View All */}
+            {isDirectQr ? (
+              <View style={styles.directStoreBadge}>
+                <Icon name="check-circle" size={11} color="#059669" style={{ marginRight: 4 }} />
+                <Text style={styles.directStoreBadgeText}>Direct Store</Text>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.storeQrBannerBtn}
+                  onPress={() => setStoreQrVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="qrcode" size={12} color="#007AFF" style={{ marginRight: 4 }} />
+                  <Text style={styles.storeQrBannerText}>Store QR</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.clearStoreFilterBtn}
+                  onPress={async () => {
+                    setActiveSellerId(null);
+                    setActiveStoreName(null);
+                    await clearPreferredStore();
+                  }}
+                >
+                  <Text style={styles.clearStoreFilterText}>View All</Text>
+                  <Icon name="times" size={11} color="#007AFF" style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       )}
 
 
-      {/* Category Horizontal Filter Bar */}
-      <View style={styles.categoryBarWrapper}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryScrollContainer}
-        >
-          {catalogCategories.map((cat) => {
-            const isSelected = selectedCategory === cat.id;
-            const count = categoryCounts[cat.id] || 0;
-            if (cat.id !== 'all' && count === 0 && !isSelected) return null;
+      {isHorizontalScreen ? (
+        /* Horizontal / Wide Screen Layout: Left Vertical Sidebar + Right Product Grid */
+        <View style={styles.bodyContentRow}>
+          {/* Left Vertical Sidebar */}
+          {isSidebarVisible ? (
+            <View style={styles.sidebarContainer}>
+              <View style={styles.sidebarHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Icon name="bars" size={13} color="#1E293B" style={{ marginRight: 8 }} />
+                  <Text style={styles.sidebarTitle}>Categories</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setIsSidebarVisible(false)}
+                  style={styles.sidebarCollapseBtn}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Collapse Categories Sidebar"
+                >
+                  <Icon name="chevron-left" size={12} color="#64748B" />
+                </TouchableOpacity>
+              </View>
 
-            return (
+              <ScrollView
+                style={styles.sidebarScroll}
+                contentContainerStyle={styles.sidebarScrollContent}
+                showsVerticalScrollIndicator={true}
+              >
+                {/* Favorites Sidebar Item */}
+                <View style={styles.sidebarCategoryGroup}>
+                  <TouchableOpacity
+                    style={[
+                      styles.sidebarCategoryRow,
+                      selectedCategory === 'favorites' && { backgroundColor: '#EF4444' },
+                    ]}
+                    onPress={() => {
+                      setSelectedCategory(selectedCategory === 'favorites' ? 'all' : 'favorites');
+                      setSelectedSubcategory('all');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 6 }}>
+                      <Icon
+                        name="heart"
+                        size={12}
+                        color={selectedCategory === 'favorites' ? '#FFFFFF' : '#EF4444'}
+                        style={{ marginRight: 8, width: 16, textAlign: 'center' }}
+                      />
+                      <Text
+                        style={[
+                          styles.sidebarCategoryLabel,
+                          selectedCategory === 'favorites' && styles.sidebarCategoryLabelSelected,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        Favorites
+                      </Text>
+                    </View>
+                    {favoritesCount > 0 && (
+                      <View
+                        style={[
+                          styles.sidebarBadge,
+                          {
+                            backgroundColor:
+                              selectedCategory === 'favorites' ? 'rgba(255, 255, 255, 0.3)' : '#FEE2E2',
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.sidebarBadgeText,
+                            { color: selectedCategory === 'favorites' ? '#FFFFFF' : '#EF4444' },
+                          ]}
+                        >
+                          {favoritesCount}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {catalogCategories.map((cat) => {
+                  const isSelected = selectedCategory === cat.id;
+                  const count = categoryCounts[cat.id] || 0;
+                  if (cat.id !== 'all' && count === 0 && !isSelected) return null;
+
+                  return (
+                    <View key={cat.id} style={styles.sidebarCategoryGroup}>
+                      <TouchableOpacity
+                        style={[
+                          styles.sidebarCategoryRow,
+                          isSelected && styles.sidebarCategoryRowSelected,
+                        ]}
+                        onPress={() => {
+                          setSelectedCategory(cat.id === selectedCategory ? 'all' : cat.id);
+                          setSelectedSubcategory('all');
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 6 }}>
+                          <Icon
+                            name={cat.icon || 'tag'}
+                            size={12}
+                            color={isSelected ? '#FFFFFF' : '#475569'}
+                            style={{ marginRight: 8, width: 16, textAlign: 'center' }}
+                          />
+                          <Text
+                            style={[
+                              styles.sidebarCategoryLabel,
+                              isSelected && styles.sidebarCategoryLabelSelected,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {cat.label}
+                          </Text>
+                        </View>
+                        {count > 0 && (
+                          <View style={[styles.sidebarBadge, isSelected && styles.sidebarBadgeSelected]}>
+                            <Text style={[styles.sidebarBadgeText, isSelected && styles.sidebarBadgeTextSelected]}>
+                              {count}
+                            </Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+
+                      {/* Subcategories nested vertically under active category */}
+                      {isSelected && catalogSubcategories && catalogSubcategories.length > 0 && (
+                        <View style={styles.sidebarSubcatContainer}>
+                          <View style={styles.sidebarSubcatControlRow}>
+                            <Text style={styles.sidebarSubcatHeaderTitle}>
+                              Subcategories ({catalogSubcategories.length})
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => setIsSubcatVisible((prev) => !prev)}
+                              style={styles.sidebarSubcatToggleBtn}
+                              activeOpacity={0.7}
+                            >
+                              <Icon
+                                name={isSubcatVisible ? 'chevron-up' : 'chevron-down'}
+                                size={10}
+                                color="#64748B"
+                              />
+                            </TouchableOpacity>
+                          </View>
+
+                          {isSubcatVisible && (
+                            <View style={styles.sidebarSubcatList}>
+                              {/* All Subcategories */}
+                              <TouchableOpacity
+                                style={[
+                                  styles.sidebarSubcatRow,
+                                  selectedSubcategory === 'all' && styles.sidebarSubcatRowSelected,
+                                ]}
+                                onPress={() => setSelectedSubcategory('all')}
+                                activeOpacity={0.7}
+                              >
+                                <Text
+                                  style={[
+                                    styles.sidebarSubcatLabel,
+                                    selectedSubcategory === 'all' && styles.sidebarSubcatLabelSelected,
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  All Subcategories
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.sidebarSubcatCount,
+                                    selectedSubcategory === 'all' && styles.sidebarSubcatCountSelected,
+                                  ]}
+                                >
+                                  {currentCategoryProducts.length}
+                                </Text>
+                              </TouchableOpacity>
+
+                              {/* Individual Subcategories */}
+                              {catalogSubcategories.map((sub) => {
+                                const subIdVal = sub.code || sub.id;
+                                const isSubSelected =
+                                  selectedSubcategory !== 'all' &&
+                                  (selectedSubcategory === subIdVal ||
+                                    (sub.code && selectedSubcategory.toLowerCase() === String(sub.code).toLowerCase()) ||
+                                    (sub.id && selectedSubcategory.toLowerCase() === String(sub.id).toLowerCase()) ||
+                                    (sub.name && selectedSubcategory.toLowerCase() === String(sub.name).toLowerCase()));
+                                const subCount = subcategoryCounts[subIdVal];
+                                return (
+                                  <TouchableOpacity
+                                    key={sub.id || sub.code || sub.name}
+                                    style={[
+                                      styles.sidebarSubcatRow,
+                                      isSubSelected && styles.sidebarSubcatRowSelected,
+                                    ]}
+                                    onPress={() => setSelectedSubcategory(isSubSelected ? 'all' : subIdVal)}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.sidebarSubcatLabel,
+                                        isSubSelected && styles.sidebarSubcatLabelSelected,
+                                      ]}
+                                      numberOfLines={1}
+                                    >
+                                      {sub.name}
+                                    </Text>
+                                    {subCount !== undefined && (
+                                      <Text
+                                        style={[
+                                          styles.sidebarSubcatCount,
+                                          isSubSelected && styles.sidebarSubcatCountSelected,
+                                        ]}
+                                      >
+                                        {subCount}
+                                      </Text>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.sidebarExpandBtn}
+              onPress={() => setIsSidebarVisible(true)}
+              activeOpacity={0.8}
+              accessibilityLabel="Expand Categories Sidebar"
+            >
+              <Icon name="chevron-right" size={13} color="#007AFF" />
+              <Text style={styles.sidebarExpandBtnText}>Categories</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Right Product Grid Area */}
+          <View style={styles.horizontalProductArea}>
+            {selectedCategory === 'favorites' && (
+              <View style={styles.favoritesActiveBanner}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                  <Icon name="heart" size={13} color="#EF4444" style={{ marginRight: 6 }} />
+                  <Text style={styles.favoritesActiveBannerText}>
+                    Showing Favorites ({filteredProducts.length} {filteredProducts.length === 1 ? 'item' : 'items'})
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.favoritesClearBtn}
+                  onPress={() => {
+                    setSelectedCategory('all');
+                    setSelectedSubcategory('all');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.favoritesClearBtnText}>View All</Text>
+                  <Icon name="times" size={11} color="#EF4444" style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <FlatList
+              key={`h-grid-${numColumns}`}
+              data={filteredProducts}
+              renderItem={renderProduct}
+              keyExtractor={(item) => item.id.toString()}
+              numColumns={numColumns}
+              style={[
+                styles.list,
+                Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch', minHeight: 0 } : null,
+              ]}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled={true}
+              contentContainerStyle={[
+                styles.container,
+                { flexGrow: 1, paddingBottom: 30 }
+              ]}
+              extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory, selectedSubcategory, favoriteProductIds }}
+              ListEmptyComponent={renderEmptySearchComponent()}
+            />
+          </View>
+        </View>
+      ) : (
+        /* Vertical Screen (Mobile Portrait) Layout */
+        <>
+          {/* Category Horizontal Filter Bar */}
+          <View style={styles.categoryBarWrapper}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoryScrollContainer}
+            >
+              {/* Favorites Chip in Mobile Category Strip */}
               <TouchableOpacity
-                key={cat.id}
                 style={[
                   styles.categoryChip,
-                  isSelected && styles.categoryChipSelected
+                  selectedCategory === 'favorites' && { backgroundColor: '#EF4444', borderColor: '#EF4444' },
+                  selectedCategory !== 'favorites' && favoritesCount > 0 && { borderColor: '#FECDD3', backgroundColor: '#FFF1F2' }
                 ]}
                 onPress={() => {
-                  setSelectedCategory(cat.id === selectedCategory ? 'all' : cat.id);
+                  setSelectedCategory(selectedCategory === 'favorites' ? 'all' : 'favorites');
                   setSelectedSubcategory('all');
                 }}
                 activeOpacity={0.7}
               >
                 <Icon
-                  name={cat.icon || 'tag'}
+                  name="heart"
                   size={12}
-                  color={isSelected ? '#FFFFFF' : '#475569'}
+                  color={selectedCategory === 'favorites' ? '#FFFFFF' : '#EF4444'}
                   style={{ marginRight: 6 }}
                 />
                 <Text
                   style={[
                     styles.categoryChipText,
-                    isSelected && styles.categoryChipTextSelected
+                    selectedCategory === 'favorites' && styles.categoryChipTextSelected,
+                    selectedCategory !== 'favorites' && favoritesCount > 0 && { color: '#EF4444', fontWeight: '600' }
                   ]}
                 >
-                  {cat.label} {count > 0 ? `(${count})` : ''}
+                  Favorites {favoritesCount > 0 ? `(${favoritesCount})` : ''}
                 </Text>
               </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
 
-      {/* Subcategory Horizontal Filter Bar (Visible when category is selected & subcategories exist) */}
-      {selectedCategory !== 'all' && catalogSubcategories && catalogSubcategories.length > 0 && (
-        <View style={styles.subcategoryBarWrapper}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.subcategoryScrollContainer}
-          >
-            <TouchableOpacity
-              style={[
-                styles.subcategoryChip,
-                selectedSubcategory === 'all' && styles.subcategoryChipSelected,
-              ]}
-              onPress={() => setSelectedSubcategory('all')}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[
-                  styles.subcategoryChipText,
-                  selectedSubcategory === 'all' && styles.subcategoryChipTextSelected,
-                ]}
-              >
-                All Subcategories ({currentCategoryProducts.length})
-              </Text>
-            </TouchableOpacity>
-            {catalogSubcategories.map((sub) => {
-              const subIdVal = sub.code || sub.id;
-              const isSubSelected =
-                selectedSubcategory !== 'all' &&
-                (selectedSubcategory === subIdVal ||
-                 (sub.code && selectedSubcategory.toLowerCase() === String(sub.code).toLowerCase()) ||
-                 (sub.id && selectedSubcategory.toLowerCase() === String(sub.id).toLowerCase()) ||
-                 (sub.name && selectedSubcategory.toLowerCase() === String(sub.name).toLowerCase()));
-              const subCount = subcategoryCounts[subIdVal];
-              return (
-                <TouchableOpacity
-                  key={sub.id || sub.code || sub.name}
-                  style={[
-                    styles.subcategoryChip,
-                    isSubSelected && styles.subcategoryChipSelected,
-                  ]}
-                  onPress={() => {
-                    setSelectedSubcategory(isSubSelected ? 'all' : subIdVal);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text
+              {catalogCategories.map((cat) => {
+                const isSelected = selectedCategory === cat.id;
+                const count = categoryCounts[cat.id] || 0;
+                if (cat.id !== 'all' && count === 0 && !isSelected) return null;
+
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
                     style={[
-                      styles.subcategoryChipText,
-                      isSubSelected && styles.subcategoryChipTextSelected,
+                      styles.categoryChip,
+                      isSelected && styles.categoryChipSelected
                     ]}
+                    onPress={() => {
+                      setSelectedCategory(cat.id === selectedCategory ? 'all' : cat.id);
+                      setSelectedSubcategory('all');
+                    }}
+                    activeOpacity={0.7}
                   >
-                    {sub.name} {subCount !== undefined && subCount > 0 ? `(${subCount})` : ''}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
+                    <Icon
+                      name={cat.icon || 'tag'}
+                      size={12}
+                      color={isSelected ? '#FFFFFF' : '#475569'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        isSelected && styles.categoryChipTextSelected
+                      ]}
+                    >
+                      {cat.label} {count > 0 ? `(${count})` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
 
-      <FlatList
-        data={filteredProducts}
-        renderItem={renderProduct}
-        keyExtractor={(item) => item.id.toString()}
-        numColumns={2}
-        style={[
-          styles.list,
-          Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch', minHeight: 0 } : null,
-        ]}
-        showsVerticalScrollIndicator={true}
-        keyboardShouldPersistTaps="handled"
-        nestedScrollEnabled={true}
-        contentContainerStyle={[
-          styles.container,
-          { flexGrow: 1, paddingBottom: 30 }
-        ]}
-        extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory }}
-        ListEmptyComponent={
-          !loading && (
-            <View style={styles.emptySearchContainer}>
-              <Icon name="search" size={40} color="#ccc" style={{ marginBottom: 12 }} />
-              <Text style={styles.emptySearchTitle}>
-                {searchQuery.trim() || selectedCategory !== 'all'
-                  ? `No products found matching ${searchQuery.trim() ? `"${searchQuery}"` : ''} ${selectedCategory !== 'all' ? `in category "${getCategoryLabel(selectedCategory)}"` : ''}`
-                  : activeStoreName
-                  ? `No products currently listed for "${activeStoreName}".`
-                  : 'No products available in catalog'}
-              </Text>
-              {(searchQuery.trim().length > 0 || selectedCategory !== 'all' || activeSellerId) && (
-                <TouchableOpacity
-                  style={styles.clearSearchBtn}
-                  onPress={() => {
-                    setSearchQuery('');
-                    setSelectedCategory('all');
-                    setActiveSellerId(null);
-                    setActiveStoreName(null);
-                  }}
-                >
-                  <Text style={styles.clearSearchBtnText}>
-                    {activeSellerId ? 'Browse All Products' : 'Reset Filters'}
+          {/* Subcategory Bar with Hide/Show & Horizontal/Vertical View Modes */}
+          {selectedCategory !== 'all' && catalogSubcategories && catalogSubcategories.length > 0 && (
+            <View style={styles.subcategoryBarWrapper}>
+              <View style={styles.subcategoryControlHeader}>
+                <View style={styles.subcategoryControlTitleBox}>
+                  <Icon name="tags" size={11} color="#475569" style={{ marginRight: 5 }} />
+                  <Text style={styles.subcategoryControlTitle}>
+                    Subcategories ({catalogSubcategories.length})
+                    {selectedSubcategory !== 'all' ? (
+                      <Text style={{ color: '#007AFF', fontWeight: '700' }}> • Filtered</Text>
+                    ) : null}
                   </Text>
-                </TouchableOpacity>
+                </View>
+                <View style={styles.subcategoryControlActionBtns}>
+                  {/* View Mode Toggle: Strip (horizontal) vs Grid (vertical wrap) */}
+                  <TouchableOpacity
+                    style={[styles.subcatActionBtn, subcatViewMode === 'vertical' && styles.subcatActionBtnActive]}
+                    onPress={() => setSubcatViewMode((prev) => (prev === 'horizontal' ? 'vertical' : 'horizontal'))}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Toggle Subcategories View"
+                  >
+                    <Icon
+                      name={subcatViewMode === 'vertical' ? 'ellipsis-h' : 'th-large'}
+                      size={11}
+                      color={subcatViewMode === 'vertical' ? '#007AFF' : '#64748B'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.subcatActionBtnText,
+                        subcatViewMode === 'vertical' && styles.subcatActionBtnTextActive,
+                      ]}
+                    >
+                      {subcatViewMode === 'vertical' ? 'Strip' : 'Grid'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Hide / Show Toggle */}
+                  <TouchableOpacity
+                    style={styles.subcatActionBtn}
+                    onPress={() => setIsSubcatVisible((prev) => !prev)}
+                    activeOpacity={0.7}
+                    accessibilityLabel={isSubcatVisible ? 'Hide Subcategories' : 'Show Subcategories'}
+                  >
+                    <Icon
+                      name={isSubcatVisible ? 'chevron-up' : 'chevron-down'}
+                      size={10}
+                      color="#64748B"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.subcatActionBtnText}>
+                      {isSubcatVisible ? 'Hide' : 'Show'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* When subcategory is hidden and a subcategory is active, show quick pill */}
+              {!isSubcatVisible && selectedSubcategory !== 'all' && (
+                <View style={styles.subcatCollapsedFilterRow}>
+                  <Text style={styles.subcatCollapsedFilterLabel}>Active:</Text>
+                  <TouchableOpacity
+                    style={styles.subcatActivePill}
+                    onPress={() => setIsSubcatVisible(true)}
+                  >
+                    <Text style={styles.subcatActivePillText}>
+                      {catalogSubcategories.find((s) => s.code === selectedSubcategory || s.id === selectedSubcategory || s.name === selectedSubcategory)?.name || selectedSubcategory}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setSelectedSubcategory('all')}
+                      style={{ marginLeft: 6 }}
+                    >
+                      <Icon name="times" size={10} color="#007AFF" />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Subcategories: Horizontal Strip vs Vertical Multi-Row Grid */}
+              {isSubcatVisible && (
+                subcatViewMode === 'horizontal' ? (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.subcategoryScrollContainer}
+                  >
+                    <TouchableOpacity
+                      style={[
+                        styles.subcategoryChip,
+                        selectedSubcategory === 'all' && styles.subcategoryChipSelected,
+                      ]}
+                      onPress={() => setSelectedSubcategory('all')}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.subcategoryChipText,
+                          selectedSubcategory === 'all' && styles.subcategoryChipTextSelected,
+                        ]}
+                      >
+                        All Subcategories ({currentCategoryProducts.length})
+                      </Text>
+                    </TouchableOpacity>
+                    {catalogSubcategories.map((sub) => {
+                      const subIdVal = sub.code || sub.id;
+                      const isSubSelected =
+                        selectedSubcategory !== 'all' &&
+                        (selectedSubcategory === subIdVal ||
+                          (sub.code && selectedSubcategory.toLowerCase() === String(sub.code).toLowerCase()) ||
+                          (sub.id && selectedSubcategory.toLowerCase() === String(sub.id).toLowerCase()) ||
+                          (sub.name && selectedSubcategory.toLowerCase() === String(sub.name).toLowerCase()));
+                      const subCount = subcategoryCounts[subIdVal];
+                      return (
+                        <TouchableOpacity
+                          key={sub.id || sub.code || sub.name}
+                          style={[
+                            styles.subcategoryChip,
+                            isSubSelected && styles.subcategoryChipSelected,
+                          ]}
+                          onPress={() => setSelectedSubcategory(isSubSelected ? 'all' : subIdVal)}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.subcategoryChipText,
+                              isSubSelected && styles.subcategoryChipTextSelected,
+                            ]}
+                          >
+                            {sub.name} {subCount !== undefined && subCount > 0 ? `(${subCount})` : ''}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                ) : (
+                  /* Vertical Wrap Grid */
+                  <View style={styles.subcategoryGridContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.subcategoryChip,
+                        styles.subcategoryChipGrid,
+                        selectedSubcategory === 'all' && styles.subcategoryChipSelected,
+                      ]}
+                      onPress={() => setSelectedSubcategory('all')}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.subcategoryChipText,
+                          selectedSubcategory === 'all' && styles.subcategoryChipTextSelected,
+                        ]}
+                      >
+                        All ({currentCategoryProducts.length})
+                      </Text>
+                    </TouchableOpacity>
+                    {catalogSubcategories.map((sub) => {
+                      const subIdVal = sub.code || sub.id;
+                      const isSubSelected =
+                        selectedSubcategory !== 'all' &&
+                        (selectedSubcategory === subIdVal ||
+                          (sub.code && selectedSubcategory.toLowerCase() === String(sub.code).toLowerCase()) ||
+                          (sub.id && selectedSubcategory.toLowerCase() === String(sub.id).toLowerCase()) ||
+                          (sub.name && selectedSubcategory.toLowerCase() === String(sub.name).toLowerCase()));
+                      const subCount = subcategoryCounts[subIdVal];
+                      return (
+                        <TouchableOpacity
+                          key={sub.id || sub.code || sub.name}
+                          style={[
+                            styles.subcategoryChip,
+                            styles.subcategoryChipGrid,
+                            isSubSelected && styles.subcategoryChipSelected,
+                          ]}
+                          onPress={() => setSelectedSubcategory(isSubSelected ? 'all' : subIdVal)}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.subcategoryChipText,
+                              isSubSelected && styles.subcategoryChipTextSelected,
+                            ]}
+                          >
+                            {sub.name} {subCount !== undefined && subCount > 0 ? `(${subCount})` : ''}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )
               )}
             </View>
-          )
-        }
-      />
+          )}
+
+          {/* Product Grid in Portrait */}
+          {selectedCategory === 'favorites' && (
+            <View style={styles.favoritesActiveBanner}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <Icon name="heart" size={13} color="#EF4444" style={{ marginRight: 6 }} />
+                <Text style={styles.favoritesActiveBannerText}>
+                  Showing Favorites ({filteredProducts.length} {filteredProducts.length === 1 ? 'item' : 'items'})
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.favoritesClearBtn}
+                onPress={() => {
+                  setSelectedCategory('all');
+                  setSelectedSubcategory('all');
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.favoritesClearBtnText}>View All</Text>
+                <Icon name="times" size={11} color="#EF4444" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+            </View>
+          )}
+          <FlatList
+            key="v-grid-2"
+            data={filteredProducts}
+            renderItem={renderProduct}
+            keyExtractor={(item) => item.id.toString()}
+            numColumns={2}
+            style={[
+              styles.list,
+              Platform.OS === 'web' ? { overflowY: 'auto', WebkitOverflowScrolling: 'touch', minHeight: 0 } : null,
+            ]}
+            showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={true}
+            contentContainerStyle={[
+              styles.container,
+              { flexGrow: 1, paddingBottom: 30 }
+            ]}
+            extraData={{ cart, guestCart, updatingCart, searchQuery, selectedCategory, selectedSubcategory, favoriteProductIds }}
+            ListEmptyComponent={renderEmptySearchComponent()}
+          />
+        </>
+      )}
 
       {selectedProduct && (
         <Modal
@@ -1421,6 +2076,18 @@ const CatalogScreen = ({ navigation, route }) => {
         >
           <View style={styles.modalContainer}>
             <View style={styles.swiggyModalContent}>
+              <TouchableOpacity
+                style={styles.modalFavoriteBtn}
+                onPress={() => selectedProduct?.id && handleToggleFavorite(selectedProduct.id)}
+                activeOpacity={0.8}
+                accessibilityLabel="Toggle favorite"
+              >
+                <Icon
+                  name={favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) ? 'heart' : 'heart-o'}
+                  size={18}
+                  color={favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) ? '#EF4444' : '#64748B'}
+                />
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={closeProductModal}
@@ -1762,6 +2429,7 @@ const CatalogScreen = ({ navigation, route }) => {
           sellerId={activeSellerId}
           sellerName={activeStoreName}
           customerId={paramCustomerId}
+          isDirectQr={isDirectQr}
           forceShow={true}
           onStorePress={() => {
             setSelectedCategory('all');
@@ -2599,6 +3267,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#007AFF',
   },
+  directStoreBanner: {
+    backgroundColor: '#F0FDF4',
+    borderBottomColor: '#DCFCE7',
+  },
+  directStoreFilterText: {
+    color: '#065F46',
+  },
+  directStoreBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  directStoreBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
   subcategoryBarWrapper: {
     backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
@@ -2632,6 +3322,354 @@ const styles = StyleSheet.create({
   subcategoryChipTextSelected: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+
+  // Responsive Horizontal Screen (Wide/Landscape) Layout
+  bodyContentRow: {
+    flex: 1,
+    flexDirection: 'row',
+    minHeight: 0,
+    backgroundColor: '#FFFFFF',
+  },
+  horizontalProductArea: {
+    flex: 1,
+    minHeight: 0,
+  },
+  verticalSidebar: {
+    width: 240,
+    backgroundColor: '#F8FAFC',
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+    flexDirection: 'column',
+  },
+  sidebarContainer: {
+    width: 240,
+    backgroundColor: '#F8FAFC',
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+    flexDirection: 'column',
+  },
+  sidebarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
+  },
+  sidebarTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    letterSpacing: 0.2,
+  },
+  sidebarCollapseBtn: {
+    padding: 6,
+    borderRadius: 6,
+  },
+  sidebarExpandBtn: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 8,
+    backgroundColor: '#F1F5F9',
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+    gap: 8,
+  },
+  sidebarExpandBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  sidebarScroll: {
+    flex: 1,
+  },
+  sidebarScrollContent: {
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    gap: 4,
+  },
+  sidebarCategoryGroup: {
+    marginBottom: 4,
+  },
+  sidebarCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+  },
+  sidebarCategoryRowSelected: {
+    backgroundColor: '#007AFF',
+  },
+  sidebarCategoryLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  sidebarCategoryLabelSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  sidebarBadge: {
+    backgroundColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sidebarBadgeSelected: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  sidebarBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  sidebarBadgeTextSelected: {
+    color: '#FFFFFF',
+  },
+  sidebarSubcatContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    marginTop: 4,
+    marginLeft: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderLeftWidth: 2,
+    borderLeftColor: '#007AFF',
+  },
+  sidebarSubcatControlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 2,
+  },
+  sidebarSubcatHeaderTitle: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sidebarSubcatToggleBtn: {
+    padding: 3,
+  },
+  sidebarSubcatList: {
+    gap: 2,
+  },
+  sidebarSubcatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  sidebarSubcatRowSelected: {
+    backgroundColor: '#EFF6FF',
+  },
+  sidebarSubcatLabel: {
+    fontSize: 12,
+    color: '#475569',
+    flex: 1,
+  },
+  sidebarSubcatLabelSelected: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  sidebarSubcatCount: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginLeft: 6,
+  },
+  sidebarSubcatCountSelected: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+
+  // Portrait Mobile Subcategory Header & Grid View
+  subcategoryControlHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingBottom: 6,
+  },
+  subcategoryControlTitleBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  subcategoryControlTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  subcategoryControlActionBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  subcatActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  subcatActionBtnActive: {
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+  },
+  subcatActionBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  subcatActionBtnTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  subcatCollapsedFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 3,
+    gap: 6,
+  },
+  subcatCollapsedFilterLabel: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  subcatActivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  subcatActivePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  subcategoryGridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    gap: 6,
+    maxHeight: 140,
+    overflow: Platform.OS === 'web' ? 'auto' : 'scroll',
+  },
+  subcategoryChipGrid: {
+    marginRight: 0,
+    marginBottom: 4,
+  },
+  cardFavoriteBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  cardFavoriteBtnActive: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  headerFavBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -8,
+    backgroundColor: '#EF4444',
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 3,
+  },
+  headerFavBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  modalFavoriteBtn: {
+    position: 'absolute',
+    top: 15,
+    right: 55,
+    zIndex: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  favoritesActiveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 10,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  favoritesActiveBannerText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#991B1B',
+  },
+  favoritesClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  favoritesClearBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
   },
 });
 

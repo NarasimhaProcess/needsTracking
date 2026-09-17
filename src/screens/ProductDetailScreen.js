@@ -16,6 +16,7 @@ import { Video } from 'expo-av';
 import Swiper from 'react-native-swiper';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { addToCart, supabase } from '../services/supabase';
+import { getFavoriteProductIds, toggleFavoriteProductId } from '../services/localStorageService';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -38,6 +39,36 @@ const ProductDetailScreen = ({ navigation, route }) => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [initialMediaIndex, setInitialMediaIndex] = useState(0);
   const [otherProducts, setOtherProducts] = useState(route?.params?.allProducts || []);
+  const [isFav, setIsFav] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      if (product?.id) {
+        try {
+          const favs = await getFavoriteProductIds();
+          if (isMounted) {
+            setIsFav(favs.some((id) => String(id) === String(product.id)));
+          }
+        } catch (e) {
+          console.warn('Error checking favorite:', e);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [product?.id]);
+
+  const handleToggleFav = async () => {
+    if (!product?.id) return;
+    try {
+      const updated = await toggleFavoriteProductId(product.id);
+      setIsFav(updated.some((id) => String(id) === String(product.id)));
+    } catch (e) {
+      console.warn('Error toggling favorite:', e);
+    }
+  };
 
   useEffect(() => {
     if (product?.seller_id && otherProducts.length === 0) {
@@ -233,7 +264,26 @@ const ProductDetailScreen = ({ navigation, route }) => {
   }, [product, mediaList, otherProducts]);
 
   return (
-    <ScrollView style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      {/* Top Floating Action Bar with Back and Favorite */}
+      <View style={styles.topFloatingBar}>
+        <TouchableOpacity
+          style={styles.floatingCircleBtn}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Go back"
+        >
+          <Icon name="arrow-left" size={17} color="#1E293B" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.floatingCircleBtn, isFav && styles.floatingCircleBtnFavActive]}
+          onPress={handleToggleFav}
+          accessibilityLabel={isFav ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <Icon name={isFav ? 'heart' : 'heart-o'} size={17} color={isFav ? '#EF4444' : '#1E293B'} />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={styles.container}>
       {mediaList.length > 0 ? (
         <Swiper style={styles.swiper} showsButtons={mediaList.length > 1} loop={mediaList.length > 1}>
           {mediaList.map((media, index) => {
@@ -368,6 +418,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
         title={product?.product_name || 'Product Media'}
       />
     </ScrollView>
+  </View>
   );
 };
 
@@ -542,6 +593,34 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  topFloatingBar: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  floatingCircleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  floatingCircleBtnFavActive: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
   },
 });
 

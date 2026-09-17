@@ -25,7 +25,7 @@ export function getStoreDirectUrl(seller) {
     baseUrl = `${origin}${pathname}`;
   }
   const nameParam = seller.full_name ? `&sellerName=${encodeURIComponent(seller.full_name)}` : '';
-  return `${baseUrl}/?sellerId=${encodeURIComponent(seller.id)}${nameParam}`;
+  return `${baseUrl}/?sellerId=${encodeURIComponent(seller.id)}${nameParam}&directQr=true`;
 }
 
 export default function StoreQrModal({ visible, onClose, seller, onBrowseStore }) {

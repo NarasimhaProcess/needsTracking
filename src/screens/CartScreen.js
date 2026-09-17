@@ -16,7 +16,7 @@ import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const CartScreen = ({ navigation, route }) => {
-  const { sellerId, sellerName, customerId } = route?.params || {};
+  const { sellerId, sellerName, customerId, isDirectQr } = route?.params || {};
   const [cart, setCart] = useState(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
@@ -256,7 +256,7 @@ const CartScreen = ({ navigation, route }) => {
           </Text>
           <TouchableOpacity
             style={styles.browseButton}
-            onPress={() => navigation.navigate('Catalog', { sellerId, sellerName, customerId })}
+            onPress={() => navigation.navigate('Catalog', { sellerId, sellerName, customerId, isDirectQr })}
           >
             <Text style={styles.browseButtonText}>Browse Catalog</Text>
           </TouchableOpacity>
@@ -270,6 +270,7 @@ const CartScreen = ({ navigation, route }) => {
           sellerId={sellerId}
           sellerName={sellerName}
           customerId={customerId}
+          isDirectQr={isDirectQr}
           forceShow={true}
         />
       </View>
@@ -286,7 +287,7 @@ const CartScreen = ({ navigation, route }) => {
             if (navigation.canGoBack()) {
               navigation.goBack();
             } else {
-              navigation.navigate('Catalog', { sellerId, sellerName, customerId });
+              navigation.navigate('Catalog', { sellerId, sellerName, customerId, isDirectQr });
             }
           }}
           accessibilityLabel="Back"
@@ -299,7 +300,7 @@ const CartScreen = ({ navigation, route }) => {
             if (navigation.canGoBack()) {
               navigation.goBack();
             } else {
-              navigation.navigate('Catalog', { sellerId, sellerName, customerId });
+              navigation.navigate('Catalog', { sellerId, sellerName, customerId, isDirectQr });
             }
           }}
           accessibilityLabel="Close"
@@ -349,6 +350,7 @@ const CartScreen = ({ navigation, route }) => {
         sellerId={sellerId}
         sellerName={sellerName}
         customerId={customerId}
+        isDirectQr={isDirectQr}
         forceShow={true}
       />
 
