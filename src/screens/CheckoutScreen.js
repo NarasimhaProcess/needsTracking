@@ -33,11 +33,15 @@ import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
 import { getPrinterConfig } from '../services/printerService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const CheckoutScreen = ({ navigation, route }) => {
   const { cart: initialCart, customerId } = route?.params || {};
   const [cart, setCart] = useState(initialCart || null);
   const [currentUser, setCurrentUser] = useState(null);
+  const [isQrViewerVisible, setIsQrViewerVisible] = useState(false);
+  const [qrViewerMedia, setQrViewerMedia] = useState([]);
+  const [qrViewerIndex, setQrViewerIndex] = useState(0);
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
   const [address, setAddress] = useState('');
@@ -1059,6 +1063,60 @@ const CheckoutScreen = ({ navigation, route }) => {
   const resolvedSellerName = route?.params?.sellerName || sellerProfile?.full_name || null;
   const resolvedCustomerId = customerId || currentUser?.id || null;
 
+  const openQrImageViewer = () => {
+    const list = [];
+    if (dynamicQrImageUrl) {
+      list.push({
+        id: 'checkout-dynamic-qr',
+        uri: dynamicQrImageUrl,
+        type: 'image',
+        title: `Dynamic UPI QR Code (₹${totalAmount.toFixed(2)})`,
+        subtitle: `Scan to pay ₹${totalAmount.toFixed(2)} to ${resolvedSellerName || 'Store'}`,
+      });
+    }
+    if (profileQrImageUrl) {
+      list.push({
+        id: 'checkout-profile-qr',
+        uri: profileQrImageUrl,
+        type: 'image',
+        title: `Profile QR Code - ${resolvedSellerName || 'Store'}`,
+        subtitle: `Payee: ${resolvedSellerName || 'Store'}`,
+      });
+    }
+    (cartItems || []).forEach((ci) => {
+      const prod = ci?.product_variant_combinations?.products;
+      const pMedia = (prod?.product_media || []).filter((m) => m && (m.media_url || m.uri));
+      const prodName = prod?.product_name || 'Cart Item';
+      const prodPrice = ci?.product_variant_combinations?.price || prod?.amount;
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          list.push({
+            id: `ci-${ci.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: prodName,
+            subtitle: prodPrice ? `₹${prodPrice}` : null,
+          });
+        });
+      } else if (prod?.image_url || ci?.image_url) {
+        list.push({
+          id: `ci-${ci.id}-img`,
+          uri: prod?.image_url || ci?.image_url,
+          type: 'image',
+          title: prodName,
+          subtitle: prodPrice ? `₹${prodPrice}` : null,
+        });
+      }
+    });
+
+    if (list.length > 0) {
+      const targetIdx = qrTab === 'profile' && profileQrImageUrl ? Math.max(0, list.findIndex((i) => i.id === 'checkout-profile-qr')) : 0;
+      setQrViewerMedia(list);
+      setQrViewerIndex(targetIdx);
+      setIsQrViewerVisible(true);
+    }
+  };
+
   if (!cartItems || cartItems.length === 0) {
     return (
       <View
@@ -1541,7 +1599,12 @@ const CheckoutScreen = ({ navigation, route }) => {
                   <Text style={styles.qrLoadingText}>Loading QR Code...</Text>
                 </View>
               ) : (
-                <>
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={openQrImageViewer}
+                  style={styles.qrImageTouchable}
+                  accessibilityLabel="Tap to view full screen QR code"
+                >
                   <Image
                     source={{
                       uri:
@@ -1557,7 +1620,7 @@ const CheckoutScreen = ({ navigation, route }) => {
                       Exact Bill: ₹{totalAmount.toFixed(2)}
                     </Text>
                   </View>
-                </>
+                </TouchableOpacity>
               )}
             </View>
 
@@ -1939,6 +2002,15 @@ const CheckoutScreen = ({ navigation, route }) => {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Full-Screen QR & Item Media Viewer */}
+      <FullScreenImageViewer
+        visible={isQrViewerVisible}
+        mediaList={qrViewerMedia}
+        initialIndex={qrViewerIndex}
+        onClose={() => setIsQrViewerVisible(false)}
+        title="UPI Payment QR Code"
+      />
     </View>
   );
 };
@@ -2243,6 +2315,10 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
     marginBottom: 12,
+  },
+  qrImageTouchable: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   qrImage: {
     width: 220,

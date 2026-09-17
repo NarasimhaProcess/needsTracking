@@ -18,6 +18,7 @@ import { showAlert } from '../utils/alertUtils';
 // import { Video } from 'expo-av'; // Temporarily commented out
 
 import ProductFormModal from '../components/ProductFormModal';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -72,9 +73,65 @@ const ProductScreen = ({ route, navigation }) => {
   const [showMediaViewer, setShowMediaViewer] = useState(false);
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
   const [allMediaForViewer, setAllMediaForViewer] = useState([]);
+  const [viewerProductTitle, setViewerProductTitle] = useState('');
   const [categoriesList, setCategoriesList] = useState([]);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const openProductMediaViewer = (selectedProduct, mediaIndex = 0) => {
+    const listToSearch = filteredProducts && filteredProducts.length > 0 ? filteredProducts : products;
+    const mediaList = [];
+    let targetIdx = 0;
+
+    (listToSearch || []).forEach((prod) => {
+      const pMedia = (prod?.product_media || []).filter(m => m && (m.media_url || m.uri));
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, idx) => {
+          if (String(prod.id) === String(selectedProduct?.id) && idx === mediaIndex) {
+            targetIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `prod-${prod.id}-m-${m.id || idx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || (isImageMedia(m) ? 'image' : 'video'),
+            title: pMedia.length > 1 ? `${prod.product_name} (${idx + 1}/${pMedia.length})` : prod.product_name,
+            subtitle: prod.amount ? `₹${prod.amount}` : null,
+          });
+        });
+      } else if (prod?.image_url) {
+        if (String(prod.id) === String(selectedProduct?.id)) {
+          targetIdx = mediaList.length;
+        }
+        mediaList.push({
+          id: `prod-${prod.id}-img`,
+          uri: prod.image_url,
+          type: 'image',
+          title: prod.product_name,
+          subtitle: prod.amount ? `₹${prod.amount}` : null,
+        });
+      }
+    });
+
+    if (mediaList.length === 0 && selectedProduct?.product_media) {
+      selectedProduct.product_media.forEach((m, idx) => {
+        mediaList.push({
+          id: `fallback-${m.id || idx}`,
+          uri: m.media_url || m.uri,
+          type: m.media_type || (isImageMedia(m) ? 'image' : 'video'),
+          title: selectedProduct.product_name,
+          subtitle: selectedProduct.amount ? `₹${selectedProduct.amount}` : null,
+        });
+      });
+      targetIdx = Math.min(Math.max(0, mediaIndex), mediaList.length - 1);
+    }
+
+    if (mediaList.length > 0) {
+      setAllMediaForViewer(mediaList);
+      setCurrentMediaIndex(targetIdx);
+      setViewerProductTitle(selectedProduct?.product_name || 'Product Media');
+      setShowMediaViewer(true);
+    }
+  };
 
   // Load categories from database
   useEffect(() => {
@@ -381,12 +438,10 @@ const ProductScreen = ({ route, navigation }) => {
                         keyExtractor={(media, idx) => (media?.id ? media.id.toString() : `media-${idx}`)}
                         renderItem={({ item: media, index: mediaIndex }) => (
                           <TouchableOpacity
-                            onPress={() => {
-                              setAllMediaForViewer(item.product_media);
-                              setCurrentMediaIndex(mediaIndex);
-                              setShowMediaViewer(true);
-                            }}
+                            onPress={() => openProductMediaViewer(item, mediaIndex)}
                             style={styles.mediaContainer}
+                            activeOpacity={0.85}
+                            accessibilityLabel={`View full media for ${item.product_name || 'Product'}`}
                           >
                             {isImageMedia(media) && media.media_url ? (
                               <Image source={{ uri: media.media_url }} style={styles.productImage} />
@@ -441,51 +496,14 @@ const ProductScreen = ({ route, navigation }) => {
         session={session}
       />
 
-      {/* Media Viewer Modal */}
-      <Modal
-        animationType="fade"
-        transparent={true}
+      {/* Fullscreen Media Viewer with Horizontal Swipe/Scroll & Thumbnails */}
+      <FullScreenImageViewer
         visible={showMediaViewer}
-        onRequestClose={() => setShowMediaViewer(false)}
-      >
-        <View style={styles.mediaViewerContainer}>
-          <TouchableOpacity style={styles.mediaViewerCloseButton} onPress={() => setShowMediaViewer(false)}>
-            <Icon name="times-circle" size={30} color="white" />
-          </TouchableOpacity>
-
-          {allMediaForViewer.length > 0 && (
-            <>
-              <TouchableOpacity
-                style={[styles.mediaNavButton, styles.mediaNavButtonLeft]}
-                onPress={() => setCurrentMediaIndex(prevIndex => Math.max(0, prevIndex - 1))}
-                disabled={currentMediaIndex === 0}
-              >
-                <Icon name="chevron-left" size={30} color="white" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.mediaNavButton, styles.mediaNavButtonRight]}
-                onPress={() => setCurrentMediaIndex(prevIndex => Math.min(allMediaForViewer.length - 1, prevIndex + 1))}
-                disabled={currentMediaIndex === allMediaForViewer.length - 1}
-              >
-                <Icon name="chevron-right" size={30} color="white" />
-              </TouchableOpacity>
-
-              {isImageMedia(allMediaForViewer[currentMediaIndex]) && allMediaForViewer[currentMediaIndex]?.media_url ? (
-                <Image
-                  source={{ uri: allMediaForViewer[currentMediaIndex].media_url }}
-                  style={styles.fullScreenMedia}
-                  resizeMode="contain"
-                />
-              ) : allMediaForViewer[currentMediaIndex]?.media_type === 'video' ? (
-                <Text style={styles.noMediaText}>Video playback temporarily disabled</Text> // Placeholder
-              ) : (
-                <Text style={styles.noMediaText}>No media to display</Text>
-              )}
-            </>
-          )}
-        </View>
-      </Modal>
+        mediaList={allMediaForViewer}
+        initialIndex={currentMediaIndex}
+        onClose={() => setShowMediaViewer(false)}
+        title={viewerProductTitle || 'Product Media'}
+      />
 
       <TouchableOpacity
         style={styles.fab}

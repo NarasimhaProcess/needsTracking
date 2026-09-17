@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
-import ImageViewer from 'react-native-image-zoom-viewer';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getActiveProductsWithDetails,
@@ -100,6 +100,8 @@ const CatalogScreen = ({ navigation, route }) => {
   const [userRole, setUserRole] = useState('');
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState('');
   const [updatingCart, setUpdatingCart] = useState(false);
   const [variantSearch, setVariantSearch] = useState({});
   const [isProductModalVisible, setIsProductModalVisible] = useState(false);
@@ -844,13 +846,66 @@ const CatalogScreen = ({ navigation, route }) => {
     );
   };
 
-  const openImageViewer = (product) => {
-    const imageUrls = (product?.product_media || [])
-      .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-      .map(m => ({ url: m.media_url || m.uri }));
-    
-    if (imageUrls.length > 0) {
-      setViewerImages(imageUrls);
+  const openImageViewer = (product, initialIndex = 0) => {
+    const catalogList = (filteredProducts && filteredProducts.length > 0) ? filteredProducts : (products || []);
+    let allMedia = [];
+    let targetIdx = 0;
+
+    catalogList.forEach((p) => {
+      const pMedia = (p?.product_media || []).filter(m => isImageMedia(m) && (m.media_url || m.uri));
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          if (String(p.id) === String(product?.id) && mIdx === initialIndex) {
+            targetIdx = allMedia.length;
+          }
+          allMedia.push({
+            id: `p-${p.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: 'image',
+            title: pMedia.length > 1 ? `${p.product_name} (${mIdx + 1}/${pMedia.length})` : p.product_name,
+            subtitle: p.amount ? `₹${p.amount}` : null,
+          });
+        });
+      } else if (p.image_url) {
+        if (String(p.id) === String(product?.id)) {
+          targetIdx = allMedia.length;
+        }
+        allMedia.push({
+          id: `p-${p.id}-img`,
+          uri: p.image_url,
+          type: 'image',
+          title: p.product_name,
+          subtitle: p.amount ? `₹${p.amount}` : null,
+        });
+      }
+    });
+
+    if (allMedia.length === 0 && product) {
+      const pMedia = (product?.product_media || []).filter(m => isImageMedia(m) && (m.media_url || m.uri));
+      if (pMedia.length > 0) {
+        allMedia = pMedia.map((m, mIdx) => ({
+          id: `p-${product.id}-m-${mIdx}`,
+          uri: m.media_url || m.uri,
+          type: 'image',
+          title: pMedia.length > 1 ? `${product.product_name} (${mIdx + 1}/${pMedia.length})` : product.product_name,
+          subtitle: product.amount ? `₹${product.amount}` : null,
+        }));
+      } else if (product.image_url) {
+        allMedia = [{
+          id: `p-${product.id}-img`,
+          uri: product.image_url,
+          type: 'image',
+          title: product.product_name,
+          subtitle: product.amount ? `₹${product.amount}` : null,
+        }];
+      }
+      targetIdx = Math.min(Math.max(0, initialIndex), Math.max(0, allMedia.length - 1));
+    }
+
+    if (allMedia.length > 0) {
+      setViewerImages(allMedia);
+      setViewerInitialIndex(targetIdx);
+      setViewerTitle(product?.product_name || 'Product Images');
       setIsImageViewerVisible(true);
     }
   };
@@ -887,19 +942,35 @@ const CatalogScreen = ({ navigation, route }) => {
 
     return (
       <View style={styles.productContainer}>
-        <TouchableOpacity onPress={() => openProductModal(item)} activeOpacity={0.8}>
-          {imageUrl ? (
-            <Image 
-              style={styles.productImage} 
-              source={{ uri: imageUrl }} 
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={styles.productImagePlaceholder}>
-              <Icon name="shopping-bag" size={32} color="#94a3b8" />
-            </View>
+        <View style={{ position: 'relative' }}>
+          <TouchableOpacity
+            onPress={() => (imageUrl ? openImageViewer(item, 0) : openProductModal(item))}
+            activeOpacity={0.8}
+            accessibilityLabel={`View full image for ${item.product_name || 'Product'}`}
+          >
+            {imageUrl ? (
+              <Image 
+                style={styles.productImage} 
+                source={{ uri: imageUrl }} 
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.productImagePlaceholder}>
+                <Icon name="shopping-bag" size={32} color="#94a3b8" />
+              </View>
+            )}
+          </TouchableOpacity>
+          {imageUrl && (
+            <TouchableOpacity
+              style={styles.cardZoomBtn}
+              onPress={() => openImageViewer(item, 0)}
+              activeOpacity={0.8}
+              accessibilityLabel="View full image"
+            >
+              <Icon name="search-plus" size={13} color="#FFFFFF" />
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+        </View>
         <View style={styles.productDetails}>
           {item.product_type || item.subcategory ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
@@ -975,16 +1046,21 @@ const CatalogScreen = ({ navigation, route }) => {
     const prodMedia = prod?.product_media;
     const mediaUrl = (Array.isArray(prodMedia) && prodMedia.length > 0)
       ? (prodMedia.find(m => m?.media_url)?.media_url || prodMedia[0]?.media_url)
-      : (item.image_url || null);
+      : (prod?.image_url || item.image_url || null);
 
     return (
         <View style={styles.itemContainer}>
         {mediaUrl ? (
-          <Image
-              style={styles.itemImage}
-              source={{ uri: mediaUrl }}
-              resizeMode="cover"
-          />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => openImageViewer(prod || { id: item.id, product_name: item.name || 'Product', image_url: mediaUrl }, 0)}
+          >
+            <Image
+                style={styles.itemImage}
+                source={{ uri: mediaUrl }}
+                resizeMode="cover"
+            />
+          </TouchableOpacity>
         ) : (
           <View style={[styles.itemImage, { backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' }]}>
             <Icon name="shopping-bag" size={20} color="#94a3b8" />
@@ -1321,7 +1397,7 @@ const CatalogScreen = ({ navigation, route }) => {
                         {selectedProduct.product_media
                           .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
                           .map((media, index) => (
-                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9} style={{ width: 340, height: 250, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
+                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct, index)} activeOpacity={0.9} style={{ width: 340, height: 250, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
                               <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
                             </TouchableOpacity>
                           ))}
@@ -1331,7 +1407,7 @@ const CatalogScreen = ({ navigation, route }) => {
                         {selectedProduct.product_media
                           .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
                           .map((media, index) => (
-                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct)} activeOpacity={0.9}>
+                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct, index)} activeOpacity={0.9}>
                               <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
                             </TouchableOpacity>
                           ))}
@@ -1648,6 +1724,15 @@ const CatalogScreen = ({ navigation, route }) => {
             setSearchQuery('');
           }}
         />
+
+        {/* Full-Screen Image Viewer with Horizontal Scrolling & Navigation */}
+        <FullScreenImageViewer
+          visible={isImageViewerVisible}
+          mediaList={viewerImages}
+          initialIndex={viewerInitialIndex}
+          onClose={() => setIsImageViewerVisible(false)}
+          title={viewerTitle || 'Product Images'}
+        />
       </KeyboardAvoidingView>
     </View>
   );
@@ -1700,6 +1785,18 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 150,
     backgroundColor: '#f8fafc',
+  },
+  cardZoomBtn: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
   },
   productImagePlaceholder: {
     width: '100%',

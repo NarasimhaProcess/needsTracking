@@ -33,6 +33,7 @@ import {
 import { Video } from 'expo-av';
 import VariantManager from './VariantManager';
 import { showAlert } from '../utils/alertUtils';
+import FullScreenImageViewer from './FullScreenImageViewer';
 
 const MAX_VIDEO_SIZE_MB = 50; // Define max video size
 
@@ -882,56 +883,14 @@ const ProductFormModal = ({ isVisible, onClose, onSubmit, productToEdit, custome
           </View>
         </View>
 
-        <Modal
-          animationType="fade"
-          transparent={true}
+        {/* Full-Screen Media Viewer with Horizontal Scrolling & Thumbnails */}
+        <FullScreenImageViewer
           visible={showModalMediaViewer}
-          onRequestClose={() => setShowModalMediaViewer(false)}
-        >
-          <View style={styles.modalMediaViewerContainer}>
-            <TouchableOpacity style={styles.modalMediaViewerCloseButton} onPress={() => setShowModalMediaViewer(false)}>
-              <Icon name="times-circle" size={30} color="white" />
-            </TouchableOpacity>
-
-            {allModalMediaForViewer.length > 0 && (
-              <>
-                <TouchableOpacity
-                  style={[styles.modalMediaNavButton, styles.modalMediaNavButtonLeft]}
-                  onPress={() => setCurrentModalMediaIndex(prevIndex => Math.max(0, prevIndex - 1))}
-                  disabled={currentModalMediaIndex === 0}
-                >
-                  <Icon name="chevron-left" size={30} color="white" />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalMediaNavButton, styles.modalMediaNavButtonRight]}
-                  onPress={() => setCurrentModalMediaIndex(prevIndex => Math.min(allModalMediaForViewer.length - 1, prevIndex + 1))}
-                  disabled={currentModalMediaIndex === allModalMediaForViewer.length - 1}
-                >
-                  <Icon name="chevron-right" size={30} color="white" />
-                </TouchableOpacity>
-
-                {isImageMedia(allModalMediaForViewer[currentModalMediaIndex]) ? (
-                  <Image
-                    source={{ uri: allModalMediaForViewer[currentModalMediaIndex].uri }}
-                    style={styles.modalFullScreenMedia}
-                    resizeMode="contain"
-                  />
-                ) : allModalMediaForViewer[currentModalMediaIndex].type === 'video' ? (
-                  <Video
-                    source={{ uri: allModalMediaForViewer[currentModalMediaIndex].uri }}
-                    style={styles.modalFullScreenMedia}
-                    useNativeControls
-                    resizeMode="contain"
-                    isLooping
-                  />
-                ) : (
-                  <Text style={styles.modalNoMediaText}>No media to display</Text>
-                )}
-              </>
-            )}
-          </View>
-        </Modal>
+          mediaList={allModalMediaForViewer}
+          initialIndex={currentModalMediaIndex}
+          onClose={() => setShowModalMediaViewer(false)}
+          title={productName || 'Product Media'}
+        />
       </View>
     </Modal>
   );

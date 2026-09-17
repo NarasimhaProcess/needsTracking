@@ -54,12 +54,15 @@ import {
   testVoiceAnnouncement,
 } from '../services/speechService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import { useTheme } from '../context/ThemeContext';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
 const MAX_VIDEO_SIZE_MB = 50;
 
 const ProfileScreen = ({ navigation, route }) => {
+  const { themeMode, setThemeMode, colors, isDark } = useTheme();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
@@ -94,7 +97,9 @@ const ProfileScreen = ({ navigation, route }) => {
 
   // Profile media state: array of { uri: string, type: 'image' | 'video', isNew?: boolean }
   const [mediaList, setMediaList] = useState([]);
-  const [selectedPreviewMedia, setSelectedPreviewMedia] = useState(null);
+  const [showMediaViewer, setShowMediaViewer] = useState(false);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+  const [viewerCustomMedia, setViewerCustomMedia] = useState(null);
 
   const imageCount = mediaList.filter((m) => m.type === 'image').length;
   const videoCount = mediaList.filter((m) => m.type === 'video').length;
@@ -352,6 +357,16 @@ const ProfileScreen = ({ navigation, route }) => {
       console.warn('Test voice error:', err);
     } finally {
       setTimeout(() => setTestingVoice(false), 1400);
+    }
+  };
+
+  const handleSelectTheme = async (mode) => {
+    try {
+      await setThemeMode(mode);
+      const modeLabel = mode === 'dark' ? 'Dark' : mode === 'light' ? 'Light' : 'System Default';
+      showAlert('Theme Updated', `Theme set to ${modeLabel}.`);
+    } catch (err) {
+      console.warn('Error updating theme mode:', err);
     }
   };
 
@@ -1003,6 +1018,7 @@ const ProfileScreen = ({ navigation, route }) => {
         enable_service_cost: printerConfig?.enableServiceCost === true,
         service_cost_rate: printerConfig?.serviceCostRate !== undefined ? Number(printerConfig.serviceCostRate) : 0,
         print_tax_breakdown: printerConfig?.printTaxBreakdown !== false,
+        theme_preference: themeMode || 'system',
         updated_at: new Date().toISOString(),
       };
 
@@ -1022,7 +1038,7 @@ const ProfileScreen = ({ navigation, route }) => {
         .maybeSingle();
 
       if (profileError && (profileError.code === 'PGRST204' || profileError.message?.includes('column'))) {
-        console.warn('Retrying profile upsert without tax columns:', profileError.message);
+        console.warn('Retrying profile upsert without tax or theme columns:', profileError.message);
         const fallbackUpdates = { ...updates };
         delete fallbackUpdates.enable_tax;
         delete fallbackUpdates.cgst_rate;
@@ -1030,6 +1046,7 @@ const ProfileScreen = ({ navigation, route }) => {
         delete fallbackUpdates.enable_service_cost;
         delete fallbackUpdates.service_cost_rate;
         delete fallbackUpdates.print_tax_breakdown;
+        delete fallbackUpdates.theme_preference;
         const retryResult = await supabase.from('profiles').upsert(fallbackUpdates, { onConflict: 'id' }).select().maybeSingle();
         updatedData = retryResult.data;
         profileError = retryResult.error;
@@ -1486,8 +1503,8 @@ const ProfileScreen = ({ navigation, route }) => {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#007AFF" />
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -1507,8 +1524,8 @@ const ProfileScreen = ({ navigation, route }) => {
   const isBuyer = !isAdmin && !isSeller && !isDelivery;
 
   return (
-    <View style={styles.rootWrapper}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <View style={[styles.rootWrapper, { backgroundColor: colors.background }]}>
+      <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.scrollContent}>
       <View style={styles.profileHeaderBox}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {navigation?.canGoBack?.() && (
@@ -1517,10 +1534,10 @@ const ProfileScreen = ({ navigation, route }) => {
               onPress={() => navigation.goBack()}
               accessibilityLabel="Back"
             >
-              <Icon name="arrow-left" size={20} color="#007AFF" />
+              <Icon name="arrow-left" size={20} color={colors.primary} />
             </TouchableOpacity>
           )}
-          <Text style={styles.title}>Profile</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
         </View>
         {(profile?.role || profile?.user_type || isAdmin || isDelivery || isSeller) && (
           <View style={[
@@ -2040,7 +2057,10 @@ const ProfileScreen = ({ navigation, route }) => {
                 <View key={`media-${index}-${media.uri}`} style={styles.mediaItemWrapper}>
                   <TouchableOpacity
                     activeOpacity={0.9}
-                    onPress={() => setSelectedPreviewMedia(media)}
+                    onPress={() => {
+                      setSelectedMediaIndex(index);
+                      setShowMediaViewer(true);
+                    }}
                     style={styles.mediaThumbnailContainer}
                   >
                     {isVideo ? (
@@ -2138,7 +2158,23 @@ const ProfileScreen = ({ navigation, route }) => {
               <Text style={styles.previewHint}>Generates QR with buyer's bill amount</Text>
             </View>
 
-            <View style={styles.previewCard}>
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={() => {
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+                  `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                )}`;
+                const combined = [
+                  { id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` },
+                  ...(upiQrCodeUrl ? [{ id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Code` }] : []),
+                  ...mediaList.filter((m) => m && m.type !== 'store_settings'),
+                ];
+                setViewerCustomMedia(combined);
+                setSelectedMediaIndex(0);
+                setShowMediaViewer(true);
+              }}
+              style={styles.previewCard}
+            >
               <Image
                 source={{
                   uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
@@ -2151,10 +2187,10 @@ const ProfileScreen = ({ navigation, route }) => {
                 <Text style={styles.previewPayee}>{name.trim() || 'Your Store'}</Text>
                 <Text style={styles.previewUpiId}>{upiId.trim()}</Text>
                 <Text style={styles.previewDesc}>
-                  At checkout, QR code automatically fills customer's exact bill total.
+                  At checkout, QR code automatically fills customer's exact bill total. (Tap to view full screen)
                 </Text>
               </View>
-            </View>
+            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -2162,9 +2198,25 @@ const ProfileScreen = ({ navigation, route }) => {
         <View style={styles.customQrSection}>
           <Text style={styles.customQrTitle}>Custom Uploaded QR Code (Optional)</Text>
           {upiQrCodeUrl && (
-            <View style={styles.qrCodeContainer}>
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={() => {
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+                  `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                )}`;
+                const combined = [
+                  { id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Code` },
+                  ...(upiId.trim() ? [{ id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` }] : []),
+                  ...mediaList.filter((m) => m && m.type !== 'store_settings'),
+                ];
+                setViewerCustomMedia(combined);
+                setSelectedMediaIndex(0);
+                setShowMediaViewer(true);
+              }}
+              style={styles.qrCodeContainer}
+            >
               <Image source={{ uri: upiQrCodeUrl }} style={styles.upiQrImage} />
-            </View>
+            </TouchableOpacity>
           )}
 
           <TouchableOpacity
@@ -2281,6 +2333,115 @@ const ProfileScreen = ({ navigation, route }) => {
           <Text style={styles.buttonText}>Update Profile</Text>
         )}
       </TouchableOpacity>
+
+      {/* App Theme & Appearance Settings Card */}
+      <View
+        style={[
+          styles.themeSectionCard,
+          { backgroundColor: colors.surface, borderColor: colors.cardBorder },
+        ]}
+      >
+        <View style={styles.themeHeaderRow}>
+          <Icon name="adjust" size={18} color={colors.primary} style={{ marginRight: 8 }} />
+          <Text style={[styles.themeSectionTitle, { color: colors.text }]}>
+            App Theme & Appearance
+          </Text>
+        </View>
+        <Text style={[styles.themeSectionSub, { color: colors.textSecondary }]}>
+          Choose your interface theme. System Default automatically matches your device dark/light settings.
+        </Text>
+
+        <View style={styles.themeOptionsRow}>
+          {/* Light Mode */}
+          <TouchableOpacity
+            style={[
+              styles.themeOption,
+              { backgroundColor: colors.inputBg, borderColor: colors.border },
+              themeMode === 'light' && [styles.themeOptionActive, { borderColor: colors.primary, backgroundColor: colors.primaryLight }],
+            ]}
+            onPress={() => handleSelectTheme('light')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select Light Theme"
+          >
+            <View style={styles.themeOptionHeader}>
+              <Text style={styles.themeOptionEmoji}>☀️</Text>
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  { color: colors.text },
+                  themeMode === 'light' && [styles.themeOptionTextActive, { color: colors.primary }],
+                ]}
+              >
+                Light
+              </Text>
+              {themeMode === 'light' && (
+                <Icon name="check-circle" size={15} color={colors.primary} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            <Text style={[styles.themeOptionSub, { color: colors.textMuted }]}>Bright & crisp</Text>
+          </TouchableOpacity>
+
+          {/* Dark Mode */}
+          <TouchableOpacity
+            style={[
+              styles.themeOption,
+              { backgroundColor: colors.inputBg, borderColor: colors.border },
+              themeMode === 'dark' && [styles.themeOptionActive, { borderColor: colors.primary, backgroundColor: colors.primaryLight }],
+            ]}
+            onPress={() => handleSelectTheme('dark')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select Dark Theme"
+          >
+            <View style={styles.themeOptionHeader}>
+              <Text style={styles.themeOptionEmoji}>🌙</Text>
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  { color: colors.text },
+                  themeMode === 'dark' && [styles.themeOptionTextActive, { color: colors.primary }],
+                ]}
+              >
+                Dark
+              </Text>
+              {themeMode === 'dark' && (
+                <Icon name="check-circle" size={15} color={colors.primary} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            <Text style={[styles.themeOptionSub, { color: colors.textMuted }]}>Easy on eyes</Text>
+          </TouchableOpacity>
+
+          {/* System Mode */}
+          <TouchableOpacity
+            style={[
+              styles.themeOption,
+              { backgroundColor: colors.inputBg, borderColor: colors.border },
+              themeMode === 'system' && [styles.themeOptionActive, { borderColor: colors.primary, backgroundColor: colors.primaryLight }],
+            ]}
+            onPress={() => handleSelectTheme('system')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select System Default Theme"
+          >
+            <View style={styles.themeOptionHeader}>
+              <Text style={styles.themeOptionEmoji}>⚙️</Text>
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  { color: colors.text },
+                  themeMode === 'system' && [styles.themeOptionTextActive, { color: colors.primary }],
+                ]}
+              >
+                System
+              </Text>
+              {themeMode === 'system' && (
+                <Icon name="check-circle" size={15} color={colors.primary} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            <Text style={[styles.themeOptionSub, { color: colors.textMuted }]}>
+              Auto ({isDark ? 'Dark' : 'Light'})
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Voice Announcement Settings Card (Male / Female) */}
       <View style={styles.voiceSectionCard}>
@@ -2561,41 +2722,17 @@ const ProfileScreen = ({ navigation, route }) => {
         <Text style={styles.buttonText}>Logout</Text>
       </TouchableOpacity>
 
-      {/* Media Fullscreen Preview Modal */}
-      <Modal
-        visible={!!selectedPreviewMedia}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setSelectedPreviewMedia(null)}
-      >
-        <View style={styles.previewModalContainer}>
-          <TouchableOpacity
-            style={styles.previewCloseBtn}
-            onPress={() => setSelectedPreviewMedia(null)}
-          >
-            <Text style={styles.previewCloseBtnText}>✕ Close</Text>
-          </TouchableOpacity>
-          {selectedPreviewMedia && (
-            <View style={styles.previewMediaBox}>
-              {selectedPreviewMedia.type === 'video' ? (
-                <Video
-                  source={{ uri: selectedPreviewMedia.uri }}
-                  style={styles.fullVideo}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  shouldPlay={true}
-                />
-              ) : (
-                <Image
-                  source={{ uri: selectedPreviewMedia.uri }}
-                  style={styles.fullImage}
-                  resizeMode="contain"
-                />
-              )}
-            </View>
-          )}
-        </View>
-      </Modal>
+      {/* Media Fullscreen Preview Modal with Swipe/Scroll Left-Right */}
+      <FullScreenImageViewer
+        visible={showMediaViewer}
+        mediaList={viewerCustomMedia || mediaList.filter((m) => m && m.type !== 'store_settings')}
+        initialIndex={selectedMediaIndex}
+        onClose={() => {
+          setShowMediaViewer(false);
+          setViewerCustomMedia(null);
+        }}
+        title={name ? `${name}'s Media` : 'Profile Photos & Video'}
+      />
 
       {/* Printer Settings Modal */}
       <PrinterSettingsModal
@@ -3814,6 +3951,78 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748B',
     marginRight: 2,
+  },
+  themeSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  themeHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  themeSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  themeSectionSub: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  themeOptionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  themeOption: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  themeOptionActive: {
+    borderColor: '#007AFF',
+    backgroundColor: '#EFF6FF',
+  },
+  themeOptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  themeOptionEmoji: {
+    fontSize: 18,
+    marginRight: 4,
+  },
+  themeOptionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  themeOptionTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  themeOptionSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '500',
+    textAlign: 'center',
   },
   voiceSectionCard: {
     backgroundColor: '#FFFFFF',

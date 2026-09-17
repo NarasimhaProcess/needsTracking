@@ -16,7 +16,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Swiper from 'react-native-swiper';
 import { Video } from 'expo-av';
-import ImageViewer from 'react-native-image-zoom-viewer';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { getTopProductsWithDetails, addToCart, getCart, updateCartItem, removeCartItem, supabase } from '../services/supabase';
 import { useCart } from '../context/CartContext';
 
@@ -43,8 +43,74 @@ const TopProductsScreen = ({ navigation, route }) => {
   const [selectedVariants, setSelectedVariants] = useState({});
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
-  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false); // New state for full screen image viewer
-  const [viewerImages, setViewerImages] = useState([]); // New state for images in viewer
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
+  const [viewerImages, setViewerImages] = useState([]);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState('');
+
+  const openImageViewer = (product, initialIndex = 0) => {
+    const allMedia = [];
+    let targetIdx = 0;
+    (products || []).forEach((p) => {
+      const pMedia = (p?.product_media || []).filter(m => isImageMedia(m) && (m.media_url || m.uri));
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          if (String(p.id) === String(product?.id) && mIdx === initialIndex) {
+            targetIdx = allMedia.length;
+          }
+          allMedia.push({
+            id: `tp-${p.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: 'image',
+            title: pMedia.length > 1 ? `${p.product_name} (${mIdx + 1}/${pMedia.length})` : p.product_name,
+            subtitle: p.amount ? `₹${p.amount}` : null,
+          });
+        });
+      } else if (p.image_url) {
+        if (String(p.id) === String(product?.id)) {
+          targetIdx = allMedia.length;
+        }
+        allMedia.push({
+          id: `tp-${p.id}-img`,
+          uri: p.image_url,
+          type: 'image',
+          title: p.product_name,
+          subtitle: p.amount ? `₹${p.amount}` : null,
+        });
+      }
+    });
+
+    if (allMedia.length === 0 && product) {
+      const rawMedia = (product?.product_media || []).filter(m => isImageMedia(m) && (m.media_url || m.uri));
+      if (rawMedia.length > 0) {
+        rawMedia.forEach((m, idx) => {
+          allMedia.push({
+            id: `tp-${product.id}-m-${idx}`,
+            uri: m.media_url || m.uri,
+            type: 'image',
+            title: rawMedia.length > 1 ? `${product.product_name} (${idx + 1}/${rawMedia.length})` : product.product_name,
+            subtitle: product.amount ? `₹${product.amount}` : null,
+          });
+        });
+      } else if (product.image_url) {
+        allMedia.push({
+          id: `tp-${product.id}-img`,
+          uri: product.image_url,
+          type: 'image',
+          title: product.product_name,
+          subtitle: product.amount ? `₹${product.amount}` : null,
+        });
+      }
+      targetIdx = Math.min(Math.max(0, initialIndex), Math.max(0, allMedia.length - 1));
+    }
+
+    if (allMedia.length > 0) {
+      setViewerImages(allMedia);
+      setViewerInitialIndex(targetIdx);
+      setViewerTitle(product?.product_name || 'Top Products');
+      setIsImageViewerVisible(true);
+    }
+  };
 
   useEffect(() => {
     const fetchUserAndCustomerId = async () => {
@@ -183,21 +249,39 @@ const TopProductsScreen = ({ navigation, route }) => {
     const imgUrl = item.product_media && item.product_media.length > 0 ? item.product_media[0]?.media_url : null;
     return (
       <View style={styles.productContainer}>
-        <TouchableOpacity onPress={() => openProductDetailModal(item)} activeOpacity={0.8}>
-          {imgUrl ? (
-            <Image
-              style={styles.productImage}
-              source={{ uri: imgUrl }}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={[styles.productImage, styles.placeholderImage]}>
-              <Icon name="shopping-bag" size={32} color="#94a3b8" />
-            </View>
+        <View style={{ position: 'relative' }}>
+          <TouchableOpacity
+            onPress={() => (imgUrl ? openImageViewer(item, 0) : openProductDetailModal(item))}
+            activeOpacity={0.8}
+            accessibilityLabel={`View full image for ${item.product_name || 'Product'}`}
+          >
+            {imgUrl ? (
+              <Image
+                style={styles.productImage}
+                source={{ uri: imgUrl }}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={[styles.productImage, styles.placeholderImage]}>
+                <Icon name="shopping-bag" size={32} color="#94a3b8" />
+              </View>
+            )}
+          </TouchableOpacity>
+          {imgUrl && (
+            <TouchableOpacity
+              style={styles.cardZoomBtn}
+              onPress={() => openImageViewer(item, 0)}
+              activeOpacity={0.85}
+              accessibilityLabel="View full image"
+            >
+              <Icon name="search-plus" size={12} color="#FFFFFF" />
+            </TouchableOpacity>
           )}
-          <Text style={styles.productName} numberOfLines={2}>{item.product_name}</Text>
-          <Text style={styles.productPrice}>₹{item.amount}</Text>
-        </TouchableOpacity>
+          <TouchableOpacity onPress={() => openProductDetailModal(item)}>
+            <Text style={styles.productName} numberOfLines={2}>{item.product_name}</Text>
+            <Text style={styles.productPrice}>₹{item.amount}</Text>
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity 
           style={styles.cardAddButton} 
           onPress={() => openProductDetailModal(item)}
@@ -215,11 +299,16 @@ const TopProductsScreen = ({ navigation, route }) => {
     return (
       <View style={styles.itemContainer}>
         {mediaUrl ? (
-          <Image
-            style={styles.itemImage}
-            source={{ uri: mediaUrl }}
-            resizeMode="cover"
-          />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => openImageViewer(item?.product_variant_combinations?.products || { image_url: mediaUrl }, 0, false)}
+          >
+            <Image
+              style={styles.itemImage}
+              source={{ uri: mediaUrl }}
+              resizeMode="cover"
+            />
+          </TouchableOpacity>
         ) : (
           <View style={[styles.itemImage, styles.placeholderImage]}>
             <Icon name="shopping-bag" size={20} color="#94a3b8" />
@@ -291,15 +380,11 @@ const TopProductsScreen = ({ navigation, route }) => {
                       const isImage = isImageMedia(media);
                       return (
                         <View key={media.id || `modal-media-${index}`} style={styles.slide}>
-                          <TouchableOpacity onPress={() => {
-                            const imageUrls = modalMediaList
-                              .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                              .map(m => ({ url: m.media_url || m.uri }));
-                            if (imageUrls.length > 0) {
-                              setViewerImages(imageUrls);
-                              setIsImageViewerVisible(true);
-                            }
-                          }} style={styles.mediaContainer}>
+                          <TouchableOpacity
+                            onPress={() => openImageViewer(selectedProduct, index)}
+                            style={styles.mediaContainer}
+                            activeOpacity={0.9}
+                          >
                             {isImage ? (
                               <Image source={{ uri: mediaUrl }} style={styles.media} resizeMode="contain" />
                             ) : (
@@ -313,15 +398,7 @@ const TopProductsScreen = ({ navigation, route }) => {
                             {isImage && (
                               <TouchableOpacity
                                 style={styles.zoomIcon}
-                                onPress={() => {
-                                  const imageUrls = modalMediaList
-                                    .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                                    .map(m => ({ url: m.media_url || m.uri }));
-                                  if (imageUrls.length > 0) {
-                                    setViewerImages(imageUrls);
-                                    setIsImageViewerVisible(true);
-                                  }
-                                }}
+                                onPress={() => openImageViewer(selectedProduct, index)}
                               >
                                 <MaterialIcons name="zoom-out-map" size={24} color="white" />
                               </TouchableOpacity>
@@ -440,10 +517,14 @@ const TopProductsScreen = ({ navigation, route }) => {
           </View>
         </View>
       </Modal>
-    {/* Full Screen Image Viewer Modal */}
-      <Modal visible={isImageViewerVisible} transparent={true} onRequestClose={() => setIsImageViewerVisible(false)}>
-        <ImageViewer imageUrls={viewerImages} enableSwipeDown={true} onSwipeDown={() => setIsImageViewerVisible(false)} />
-      </Modal>
+      {/* Full Screen Image Viewer Modal */}
+      <FullScreenImageViewer
+        visible={isImageViewerVisible}
+        mediaList={viewerImages}
+        initialIndex={viewerInitialIndex}
+        onClose={() => setIsImageViewerVisible(false)}
+        title={viewerTitle || 'Product Images'}
+      />
     </View>
   );
 };
@@ -463,6 +544,18 @@ const styles = StyleSheet.create({
   productImage: {
     width: '100%',
     height: 150,
+  },
+  cardZoomBtn: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
   },
   productName: {
     fontSize: 16,

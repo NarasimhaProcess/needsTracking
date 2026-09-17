@@ -20,6 +20,7 @@ import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const OrderDetailScreen = ({ navigation, route }) => {
   const { orderId, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
@@ -39,7 +40,61 @@ const OrderDetailScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState(null);
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [viewerImages, setViewerImages] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState('');
   const webViewRef = useRef(null);
+
+  const openItemImageViewer = (tappedItem) => {
+    const items = order?.order_items || [];
+    const mediaList = [];
+    let initialIdx = 0;
+
+    items.forEach((oi) => {
+      const prod = oi?.product_variant_combinations?.products;
+      const pMedia = (prod?.product_media || []).filter((m) => m && (m.media_url || m.uri));
+      const isTarget = String(oi.id) === String(tappedItem?.id);
+      const prodName = prod?.product_name || 'Order Item';
+      const itemPrice = oi.price || prod?.amount;
+
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          if (isTarget && mIdx === 0) {
+            initialIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `order-item-${oi.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: pMedia.length > 1 ? `${prodName} (${mIdx + 1}/${pMedia.length})` : prodName,
+            subtitle: itemPrice ? `₹${itemPrice}` : null,
+          });
+        });
+      } else {
+        const url = prod?.image_url;
+        if (url) {
+          if (isTarget) {
+            initialIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `order-item-${oi.id}-img`,
+            uri: url,
+            type: 'image',
+            title: prodName,
+            subtitle: itemPrice ? `₹${itemPrice}` : null,
+          });
+        }
+      }
+    });
+
+    if (mediaList.length > 0) {
+      setViewerImages(mediaList);
+      setViewerIndex(initialIdx);
+      setViewerTitle(order?.order_number ? `Order #${order.order_number}` : 'Order Item Images');
+      setIsViewerVisible(true);
+    }
+  };
 
   const fetchOrderDetails = async () => {
     try {
@@ -174,7 +229,17 @@ const OrderDetailScreen = ({ navigation, route }) => {
     return (
       <View style={styles.orderItemDetail}>
         {mediaUrl ? (
-          <Image source={{ uri: mediaUrl }} style={styles.orderItemImage} resizeMode="cover" />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => openItemImageViewer(item)}
+            style={{ position: 'relative' }}
+            accessibilityLabel={`View full image for ${prod?.product_name || 'Product'}`}
+          >
+            <Image source={{ uri: mediaUrl }} style={styles.orderItemImage} resizeMode="cover" />
+            <View style={styles.itemZoomBadge}>
+              <Icon name="search-plus" size={10} color="#FFFFFF" />
+            </View>
+          </TouchableOpacity>
         ) : (
           <View style={styles.orderItemPlaceholder}>
             <Icon name="shopping-bag" size={20} color="#94a3b8" />
@@ -729,6 +794,14 @@ const OrderDetailScreen = ({ navigation, route }) => {
         visible={showPrinterSettings}
         onClose={() => setShowPrinterSettings(false)}
       />
+
+      <FullScreenImageViewer
+        visible={isViewerVisible}
+        mediaList={viewerImages}
+        initialIndex={viewerIndex}
+        onClose={() => setIsViewerVisible(false)}
+        title={viewerTitle || 'Order Items'}
+      />
     </View>
   );
 };
@@ -1109,6 +1182,17 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 8,
     marginRight: 12,
+  },
+  itemZoomBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   orderItemPlaceholder: {
     width: 48,

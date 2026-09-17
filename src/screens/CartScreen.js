@@ -13,12 +13,65 @@ import { getCart, updateCartItem, removeCartItem, supabase } from '../services/s
 import { getGuestCart, updateGuestCartItemQuantity, removeGuestCartItem } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const CartScreen = ({ navigation, route }) => {
   const { sellerId, sellerName, customerId } = route?.params || {};
   const [cart, setCart] = useState(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [viewerImages, setViewerImages] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+
+  const openCartImageViewer = (tappedItem) => {
+    const items = cart?.cart_items || [];
+    const mediaList = [];
+    let initialIdx = 0;
+
+    items.forEach((ci) => {
+      const prod = ci?.product_variant_combinations?.products;
+      const pMedia = (prod?.product_media || []).filter((m) => m && (m.media_url || m.uri));
+      const isTarget = String(ci.id) === String(tappedItem?.id);
+      const prodName = prod?.product_name || 'Cart Item';
+      const prodPrice = ci?.product_variant_combinations?.price || prod?.amount;
+
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          if (isTarget && mIdx === 0) {
+            initialIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `cart-${ci.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: pMedia.length > 1 ? `${prodName} (${mIdx + 1}/${pMedia.length})` : prodName,
+            subtitle: prodPrice ? `₹${prodPrice}` : null,
+          });
+        });
+      } else {
+        const url = getItemImageUrl(ci);
+        if (url) {
+          if (isTarget) {
+            initialIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `cart-${ci.id}-img`,
+            uri: url,
+            type: 'image',
+            title: prodName,
+            subtitle: prodPrice ? `₹${prodPrice}` : null,
+          });
+        }
+      }
+    });
+
+    if (mediaList.length > 0) {
+      setViewerImages(mediaList);
+      setViewerIndex(initialIdx);
+      setIsViewerVisible(true);
+    }
+  };
 
   const normalizeGuestCart = (guestCartData) => ({
     cart_items: (guestCartData || []).map(item => {
@@ -99,6 +152,7 @@ const CartScreen = ({ navigation, route }) => {
       const found = prod.product_media.find(m => m?.media_url);
       if (found?.media_url) return found.media_url;
     }
+    if (prod?.image_url) return prod.image_url;
     if (item?.image_url) return item.image_url;
     return null;
   };
@@ -108,11 +162,17 @@ const CartScreen = ({ navigation, route }) => {
     return (
       <View style={styles.itemContainer}>
         {imageUrl ? (
-          <Image
-            style={styles.itemImage}
-            source={{ uri: imageUrl }}
-            resizeMode="cover"
-          />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => openCartImageViewer(item)}
+            accessibilityLabel={`View full image for ${item?.product_variant_combinations?.products?.product_name || 'Product'}`}
+          >
+            <Image
+              style={styles.itemImage}
+              source={{ uri: imageUrl }}
+              resizeMode="cover"
+            />
+          </TouchableOpacity>
         ) : (
           <View style={[styles.itemImage, styles.placeholderImage]}>
             <Icon name="shopping-bag" size={24} color="#94a3b8" />
@@ -290,6 +350,15 @@ const CartScreen = ({ navigation, route }) => {
         sellerName={sellerName}
         customerId={customerId}
         forceShow={true}
+      />
+
+      {/* Fullscreen Media Viewer with Horizontal Swipe/Scroll & Thumbnails */}
+      <FullScreenImageViewer
+        visible={isViewerVisible}
+        mediaList={viewerImages}
+        initialIndex={viewerIndex}
+        onClose={() => setIsViewerVisible(false)}
+        title="Cart Items"
       />
     </View>
   );

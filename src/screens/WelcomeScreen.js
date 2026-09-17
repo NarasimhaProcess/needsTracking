@@ -23,6 +23,7 @@ import { useCart } from '../context/CartContext';
 import { supabase, extractStoreSettings } from '../services/supabase';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const { width } = Dimensions.get('window');
 
@@ -86,21 +87,76 @@ export default function WelcomeScreen() {
   const [viewerStoreName, setViewerStoreName] = useState('');
 
   const handleOpenMediaViewer = useCallback((seller, initialIndex = 0) => {
-    let items = (seller?.mediaList || []).filter((m) => m && m.uri);
-    if (items.length === 0) {
-      const fallbackUri = seller?.firstPhoto || seller?.avatar_url;
-      if (fallbackUri) {
-        items = [{ uri: fallbackUri, type: 'image' }];
+    // Compile media from all sellers so user can continuously scroll left or right across all stores!
+    const allSellersMedia = [];
+    let targetIdx = 0;
+    (sellers || []).forEach((s) => {
+      const sMedia = (s?.mediaList || []).filter((m) => m && m.uri);
+      if (sMedia.length > 0) {
+        sMedia.forEach((m, mIdx) => {
+          if (String(s.id) === String(seller?.id) && mIdx === initialIndex) {
+            targetIdx = allSellersMedia.length;
+          }
+          allSellersMedia.push({
+            id: `sel-${s.id}-m-${mIdx}`,
+            uri: m.uri,
+            type: m.type || 'image',
+            title: sMedia.length > 1 ? `${s.full_name} (${mIdx + 1}/${sMedia.length})` : s.full_name,
+            subtitle: s.city || s.address || null,
+          });
+        });
+      } else {
+        const photo = s.firstPhoto || s.avatar_url;
+        if (photo) {
+          if (String(s.id) === String(seller?.id)) {
+            targetIdx = allSellersMedia.length;
+          }
+          allSellersMedia.push({
+            id: `sel-${s.id}-photo`,
+            uri: photo,
+            type: 'image',
+            title: s.full_name,
+            subtitle: s.city || s.address || null,
+          });
+        }
+      }
+    });
+
+    if (allSellersMedia.length === 0 && seller) {
+      const items = (seller?.mediaList || []).filter((m) => m && m.uri);
+      if (items.length > 0) {
+        items.forEach((m, idx) => {
+          allSellersMedia.push({
+            id: `sel-single-${idx}`,
+            uri: m.uri,
+            type: m.type || 'image',
+            title: items.length > 1 ? `${seller.full_name} (${idx + 1}/${items.length})` : seller.full_name,
+            subtitle: seller.city || seller.address || null,
+          });
+        });
+        targetIdx = Math.min(Math.max(0, initialIndex), items.length - 1);
+      } else {
+        const fallbackUri = seller?.firstPhoto || seller?.avatar_url;
+        if (fallbackUri) {
+          allSellersMedia.push({
+            id: `sel-fallback`,
+            uri: fallbackUri,
+            type: 'image',
+            title: seller.full_name,
+            subtitle: seller.city || seller.address || null,
+          });
+          targetIdx = 0;
+        }
       }
     }
-    if (items.length === 0) return;
 
-    setViewerMediaList(items);
-    const validIndex = Math.min(Math.max(0, initialIndex), items.length - 1);
-    setViewerActiveIndex(validIndex);
-    setViewerStoreName(seller?.full_name || 'Store Media');
-    setViewerModalVisible(true);
-  }, []);
+    if (allSellersMedia.length > 0) {
+      setViewerMediaList(allSellersMedia);
+      setViewerActiveIndex(targetIdx);
+      setViewerStoreName(seller?.full_name || 'Stores & Media');
+      setViewerModalVisible(true);
+    }
+  }, [sellers]);
 
   const handleCloseMediaViewer = useCallback(() => {
     setViewerModalVisible(false);
@@ -797,122 +853,14 @@ export default function WelcomeScreen() {
         </View>
       </ScrollView>
 
-      {/* Fullscreen Media Viewer Modal with Option Images Scrolling */}
-      <Modal
+      {/* Fullscreen Media Viewer with Horizontal Swipe/Scroll & Thumbnails */}
+      <FullScreenImageViewer
         visible={viewerModalVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={handleCloseMediaViewer}
-      >
-        <View style={styles.viewerModalContainer}>
-          {/* Header Bar */}
-          <View style={styles.viewerHeaderBar}>
-            <View style={styles.viewerHeaderLeft}>
-              <Text style={styles.viewerStoreTitle} numberOfLines={1}>
-                {viewerStoreName}
-              </Text>
-              {viewerMediaList.length > 1 && (
-                <Text style={styles.viewerCounterText}>
-                  {viewerActiveIndex + 1} of {viewerMediaList.length} media
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity
-              style={styles.viewerCloseBtn}
-              onPress={handleCloseMediaViewer}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.viewerCloseBtnText}>✕ Close</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Main Media Preview Area with Prev / Next Navigation */}
-          <View style={styles.viewerMediaBox}>
-            {viewerMediaList[viewerActiveIndex] && (
-              <>
-                {viewerMediaList[viewerActiveIndex].type === 'video' ? (
-                  <Video
-                    source={{ uri: viewerMediaList[viewerActiveIndex].uri }}
-                    style={styles.viewerFullVideo}
-                    useNativeControls
-                    resizeMode={ResizeMode.CONTAIN}
-                    shouldPlay={true}
-                  />
-                ) : (
-                  <Image
-                    source={{ uri: viewerMediaList[viewerActiveIndex].uri }}
-                    style={styles.viewerFullImage}
-                    resizeMode="contain"
-                  />
-                )}
-
-                {/* Previous Arrow */}
-                {viewerMediaList.length > 1 && (
-                  <TouchableOpacity
-                    style={[styles.viewerNavBtn, styles.viewerNavBtnLeft]}
-                    onPress={handlePrevMedia}
-                    activeOpacity={0.7}
-                  >
-                    <Icon name="chevron-left" size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                )}
-
-                {/* Next Arrow */}
-                {viewerMediaList.length > 1 && (
-                  <TouchableOpacity
-                    style={[styles.viewerNavBtn, styles.viewerNavBtnRight]}
-                    onPress={handleNextMedia}
-                    activeOpacity={0.7}
-                  >
-                    <Icon name="chevron-right" size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-          </View>
-
-          {/* Bottom Scrolling Thumbnail Strip for all Option Images */}
-          {viewerMediaList.length > 1 && (
-            <View style={styles.viewerThumbScrollContainer}>
-              <Text style={styles.viewerThumbScrollTitle}>Option Images ({viewerMediaList.length}):</Text>
-              <ScrollView
-                horizontal
-                nestedScrollEnabled={true}
-                showsHorizontalScrollIndicator={true}
-                contentContainerStyle={styles.viewerThumbScrollContent}
-              >
-                {viewerMediaList.map((item, idx) => {
-                  const isActive = idx === viewerActiveIndex;
-                  return (
-                    <TouchableOpacity
-                      key={`modal-thumb-${idx}-${item.uri}`}
-                      style={[
-                        styles.viewerThumbItem,
-                        isActive && styles.viewerThumbItemActive,
-                      ]}
-                      onPress={() => setViewerActiveIndex(idx)}
-                      activeOpacity={0.8}
-                    >
-                      {item.type === 'video' ? (
-                        <View style={styles.viewerVideoThumbSmall}>
-                          <Text style={styles.viewerVideoPlaySmall}>▶</Text>
-                        </View>
-                      ) : (
-                        <Image
-                          source={{ uri: item.uri }}
-                          style={styles.viewerThumbImageSmall}
-                          resizeMode="cover"
-                        />
-                      )}
-                      {isActive && <View style={styles.activeDot} />}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-        </View>
-      </Modal>
+        mediaList={viewerMediaList}
+        initialIndex={viewerActiveIndex}
+        onClose={handleCloseMediaViewer}
+        title={viewerStoreName || 'Store Media'}
+      />
 
       {/* Persistent Bottom Navigation Footer */}
       <StoreNavigationFooter

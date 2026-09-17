@@ -26,6 +26,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Video } from 'expo-av';
 import UniversalWebView from '../components/UniversalWebView';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import * as Clipboard from 'expo-clipboard';
 import { Buffer } from 'buffer';
 
@@ -89,6 +90,10 @@ const FieldManagerScreen = ({ navigation, route }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [viewerMediaList, setViewerMediaList] = useState([]);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState('');
   const [addFileOptionModalVisible, setAddFileOptionModalVisible] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
   const [selectedMapCoords, setSelectedMapCoords] = useState(null);
@@ -580,45 +585,111 @@ const FieldManagerScreen = ({ navigation, route }) => {
     setShowMapModal(true);
   };
 
-  const renderFilePreview = ({ item }) => {
-    if (item.mimeType && item.mimeType.startsWith('image')) {
-      return <Image source={{ uri: item.uri }} style={styles.imagePreview} />;
-    } else if (item.mimeType && item.mimeType.startsWith('video')) {
-      return (
-        <Video
-          source={{ uri: item.uri }}
-          style={styles.videoPreview}
-          useNativeControls
-          resizeMode="contain"
-          isLooping
-        />
-      );
-    } else {
-      return <Icon name="file" size={100} color="#ccc" />;
+  const openDamageMediaViewer = (targetReport, initialIdx = 0) => {
+    setSelectedReport(targetReport);
+    const allMedia = [];
+    let target = 0;
+
+    (damageReports || []).forEach((rep) => {
+      const repFiles = rep?.damage_report_files || [];
+      repFiles.forEach((f, idx) => {
+        if (String(rep.id) === String(targetReport?.id) && idx === initialIdx) {
+          target = allMedia.length;
+        }
+        allMedia.push({
+          id: `fm-rep-${rep.id}-file-${f.id || idx}`,
+          uri: f.file_url || f.uri,
+          type: (f.file_type && f.file_type.startsWith('video')) || f.file_url?.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image',
+          title: rep.customer_name ? `${rep.customer_name} Damage Photo` : (rep.description ? `${rep.description.substring(0, 24)}...` : 'Damage Report Photo'),
+          subtitle: f.created_at ? new Date(f.created_at).toLocaleDateString() : null,
+        });
+      });
+    });
+
+    if (allMedia.length === 0 && targetReport?.damage_report_files) {
+      targetReport.damage_report_files.forEach((f, idx) => {
+        allMedia.push({
+          id: `fm-single-${f.id || idx}`,
+          uri: f.file_url || f.uri,
+          type: (f.file_type && f.file_type.startsWith('video')) || f.file_url?.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image',
+          title: targetReport.customer_name || 'Damage Report',
+          subtitle: f.created_at ? new Date(f.created_at).toLocaleDateString() : null,
+        });
+      });
+      target = Math.min(Math.max(0, initialIdx), allMedia.length - 1);
+    }
+
+    if (allMedia.length > 0) {
+      setViewerMediaList(allMedia);
+      setViewerInitialIndex(target);
+      setViewerTitle(targetReport?.customer_name ? `${targetReport.customer_name}'s Damage Photos` : 'Damage Photos');
+      setIsViewerVisible(true);
     }
   };
 
-  const renderReportFile = ({ item }) => {
-    if (item.file_type && item.file_type.startsWith('image')) {
-      return <Image source={{ uri: item.file_url }} style={styles.imagePreview} />;
-    } else if (item.file_type && item.file_type.startsWith('video')) {
-      return (
-        <Video
-          source={{ uri: item.file_url }}
-          style={styles.videoPreview}
-          useNativeControls
-          resizeMode="contain"
-          isLooping
-        />
-      );
-    } else {
-      return <Icon name="file" size={100} color="#ccc" />;
-    }
+  const openNewFilesViewer = (initialIdx = 0) => {
+    if (!files || files.length === 0) return;
+    const media = files.map((f, idx) => ({
+      id: `new-file-${idx}`,
+      uri: f.uri,
+      type: (f.mimeType && f.mimeType.startsWith('video')) || f.uri?.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image',
+      title: `Selected File (${idx + 1}/${files.length})`,
+    }));
+    setViewerMediaList(media);
+    setViewerInitialIndex(initialIdx);
+    setViewerTitle('Selected Files Preview');
+    setIsViewerVisible(true);
+  };
+
+  const renderFilePreview = ({ item, index }) => {
+    const isImage = item.mimeType && item.mimeType.startsWith('image');
+    const isVideo = item.mimeType && item.mimeType.startsWith('video');
+    return (
+      <TouchableOpacity activeOpacity={0.85} onPress={() => openNewFilesViewer(index)}>
+        {isImage ? (
+          <Image source={{ uri: item.uri }} style={styles.imagePreview} />
+        ) : isVideo ? (
+          <Video
+            source={{ uri: item.uri }}
+            style={styles.videoPreview}
+            useNativeControls
+            resizeMode="contain"
+            isLooping
+          />
+        ) : (
+          <Icon name="file" size={100} color="#ccc" />
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderReportFile = (fileItem, reportItem, fileIdx = 0) => {
+    const isImage = fileItem.file_type && fileItem.file_type.startsWith('image');
+    const isVideo = fileItem.file_type && fileItem.file_type.startsWith('video');
+    return (
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => openDamageMediaViewer(reportItem, fileIdx)}
+      >
+        {isImage ? (
+          <Image source={{ uri: fileItem.file_url }} style={styles.imagePreview} />
+        ) : isVideo ? (
+          <Video
+            source={{ uri: fileItem.file_url }}
+            style={styles.videoPreview}
+            useNativeControls
+            resizeMode="contain"
+            isLooping
+          />
+        ) : (
+          <Icon name="file" size={100} color="#ccc" />
+        )}
+      </TouchableOpacity>
+    );
   };
 
   const openPhotoViewer = (report) => {
-    setSelectedReport(report);
-    setPhotoModalVisible(true);
+    openDamageMediaViewer(report, 0);
   };
 
   return (
@@ -691,7 +762,7 @@ const FieldManagerScreen = ({ navigation, route }) => {
                 <FlatList
                   data={item.damage_report_files}
                   keyExtractor={(file) => file.id.toString()}
-                  renderItem={renderReportFile}
+                  renderItem={({ item: fileItem, index: fileIdx }) => renderReportFile(fileItem, item, fileIdx)}
                   horizontal
                   showsHorizontalScrollIndicator={false}
                 />
@@ -890,6 +961,15 @@ const FieldManagerScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      {/* Fullscreen Media Viewer with Horizontal Swipe/Scroll & Thumbnails */}
+      <FullScreenImageViewer
+        visible={isViewerVisible}
+        mediaList={viewerMediaList}
+        initialIndex={viewerInitialIndex}
+        onClose={() => setIsViewerVisible(false)}
+        title={viewerTitle || 'Damage Photos'}
+      />
     </View>
   );
 };

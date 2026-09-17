@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Video } from 'expo-av';
 import Swiper from 'react-native-swiper';
-import ImageViewer from 'react-native-image-zoom-viewer';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { addToCart, supabase } from '../services/supabase';
 
 const isImageMedia = (media) => {
@@ -36,7 +36,24 @@ const ProductDetailScreen = ({ navigation, route }) => {
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const [images, setImages] = useState([]);
+  const [initialMediaIndex, setInitialMediaIndex] = useState(0);
+  const [otherProducts, setOtherProducts] = useState(route?.params?.allProducts || []);
+
+  useEffect(() => {
+    if (product?.seller_id && otherProducts.length === 0) {
+      supabase
+        .from('products')
+        .select('id, product_name, amount, image_url, product_media (id, media_url, media_type)')
+        .eq('seller_id', product.seller_id)
+        .neq('id', product.id)
+        .limit(20)
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setOtherProducts(data);
+          }
+        });
+    }
+  }, [product?.seller_id]);
 
   useEffect(() => {
     if (!product && productId) {
@@ -158,7 +175,62 @@ const ProductDetailScreen = ({ navigation, route }) => {
     );
   }
 
-  const mediaList = (product.product_media || []).filter(m => m && (m.media_url || m.uri));
+  const mediaList = useMemo(() => {
+    const raw = (product.product_media || []).filter(m => m && (m.media_url || m.uri));
+    if (raw.length > 0) return raw;
+    if (product?.image_url) {
+      return [{ id: 'prod-img', media_url: product.image_url, uri: product.image_url, media_type: 'image' }];
+    }
+    return [];
+  }, [product]);
+
+  const fullViewerMedia = useMemo(() => {
+    const list = [];
+    if (mediaList.length > 0) {
+      mediaList.forEach((m, idx) => {
+        list.push({
+          id: `this-prod-${m.id || idx}`,
+          uri: m.media_url || m.uri,
+          type: m.media_type || 'image',
+          title: mediaList.length > 1 ? `${product.product_name} (${idx + 1}/${mediaList.length})` : product.product_name,
+          subtitle: product.amount ? `₹${product.amount}` : null,
+        });
+      });
+    } else if (product?.image_url) {
+      list.push({
+        id: `this-prod-img`,
+        uri: product.image_url,
+        type: 'image',
+        title: product.product_name,
+        subtitle: product.amount ? `₹${product.amount}` : null,
+      });
+    }
+
+    (otherProducts || []).forEach((p) => {
+      const pMedia = (p?.product_media || []).filter(m => m && (m.media_url || m.uri));
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          list.push({
+            id: `other-${p.id}-${m.id || mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: pMedia.length > 1 ? `${p.product_name} (${mIdx + 1}/${pMedia.length})` : p.product_name,
+            subtitle: p.amount ? `₹${p.amount}` : null,
+          });
+        });
+      } else if (p.image_url) {
+        list.push({
+          id: `other-${p.id}-img`,
+          uri: p.image_url,
+          type: 'image',
+          title: p.product_name,
+          subtitle: p.amount ? `₹${p.amount}` : null,
+        });
+      }
+    });
+
+    return list;
+  }, [product, mediaList, otherProducts]);
 
   return (
     <ScrollView style={styles.container}>
@@ -171,13 +243,8 @@ const ProductDetailScreen = ({ navigation, route }) => {
               <View key={media.id || `media-${index}`} style={styles.slide}>
                 <TouchableOpacity
                   onPress={() => {
-                    const imageUrls = mediaList
-                      .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                      .map(m => ({ url: m.media_url || m.uri }));
-                    if (imageUrls.length > 0) {
-                      setImages(imageUrls);
-                      setIsModalVisible(true);
-                    }
+                    setInitialMediaIndex(index);
+                    setIsModalVisible(true);
                   }}
                   style={styles.mediaContainer}
                   activeOpacity={0.9}
@@ -200,13 +267,8 @@ const ProductDetailScreen = ({ navigation, route }) => {
                     <TouchableOpacity
                       style={styles.zoomIcon}
                       onPress={() => {
-                        const imageUrls = mediaList
-                          .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                          .map(m => ({ url: m.media_url || m.uri }));
-                        if (imageUrls.length > 0) {
-                          setImages(imageUrls);
-                          setIsModalVisible(true);
-                        }
+                        setInitialMediaIndex(index);
+                        setIsModalVisible(true);
                       }}
                     >
                       <MaterialIcons name="zoom-out-map" size={24} color="white" />
@@ -298,13 +360,13 @@ const ProductDetailScreen = ({ navigation, route }) => {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={isModalVisible} transparent={true}>
-        <ImageViewer
-          imageUrls={images}
-          onCancel={() => setIsModalVisible(false)}
-          enableSwipeDown
-        />
-      </Modal>
+      <FullScreenImageViewer
+        visible={isModalVisible}
+        mediaList={fullViewerMedia}
+        initialIndex={initialMediaIndex}
+        onClose={() => setIsModalVisible(false)}
+        title={product?.product_name || 'Product Media'}
+      />
     </ScrollView>
   );
 };

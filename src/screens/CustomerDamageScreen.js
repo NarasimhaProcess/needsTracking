@@ -28,6 +28,7 @@ import { Video } from 'expo-av';
 import UniversalWebView from '../components/UniversalWebView';
 import * as Clipboard from 'expo-clipboard';
 import { Buffer } from 'buffer';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const { width, height } = Dimensions.get('window');
 
@@ -87,6 +88,10 @@ const CustomerDamageScreen = ({ navigation, route }) => {
   const [damageReports, setDamageReports] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [viewerMediaList, setViewerMediaList] = useState([]);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState('');
   const [selectedReport, setSelectedReport] = useState(null);
   const [addFileOptionModalVisible, setAddFileOptionModalVisible] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
@@ -573,21 +578,37 @@ const CustomerDamageScreen = ({ navigation, route }) => {
     setShowMapModal(true);
   };
 
+  const openNewFilesViewer = (initialIdx = 0) => {
+    if (!files || files.length === 0) return;
+    const media = files.map((f, idx) => ({
+      id: `new-file-${idx}`,
+      uri: f.uri,
+      type: (f.mimeType && f.mimeType.startsWith('video')) || f.uri?.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image',
+      title: `Selected File (${idx + 1}/${files.length})`,
+    }));
+    setViewerMediaList(media);
+    setViewerInitialIndex(initialIdx);
+    setViewerTitle('Selected Files Preview');
+    setIsViewerVisible(true);
+  };
+
   const renderFilePreview = ({ item, index }) => {
     const isVid = item.mimeType ? item.mimeType.startsWith('video') : item.uri?.match(/\.(mp4|mov|webm)$/i);
     return (
       <View style={styles.previewContainer}>
-        {isVid ? (
-          <Video
-            source={{ uri: item.uri }}
-            style={styles.videoPreview}
-            useNativeControls
-            resizeMode="contain"
-            isLooping
-          />
-        ) : (
-          <Image source={{ uri: item.uri }} style={styles.imagePreview} />
-        )}
+        <TouchableOpacity activeOpacity={0.85} onPress={() => openNewFilesViewer(index)}>
+          {isVid ? (
+            <Video
+              source={{ uri: item.uri }}
+              style={styles.videoPreview}
+              useNativeControls
+              resizeMode="contain"
+              isLooping
+            />
+          ) : (
+            <Image source={{ uri: item.uri }} style={styles.imagePreview} />
+          )}
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.removePreviewBtn}
           onPress={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
@@ -614,9 +635,50 @@ const CustomerDamageScreen = ({ navigation, route }) => {
     return <Image source={{ uri: item.file_url }} style={styles.imagePreview} />;
   };
 
+  const openDamageMediaViewer = (targetReport, initialIdx = 0) => {
+    const allMedia = [];
+    let target = 0;
+
+    (damageReports || []).forEach((rep) => {
+      const repFiles = rep?.damage_report_files || [];
+      repFiles.forEach((f, idx) => {
+        if (String(rep.id) === String(targetReport?.id) && idx === initialIdx) {
+          target = allMedia.length;
+        }
+        allMedia.push({
+          id: `damage-${rep.id}-${f.id || idx}`,
+          uri: f.file_url || f.uri,
+          type: (f.file_type && f.file_type.startsWith('video')) || f.file_url?.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image',
+          title: rep.customer_name ? `${rep.customer_name} Damage Photo` : 'Damage Report Media',
+          subtitle: f.created_at ? new Date(f.created_at).toLocaleDateString() : null,
+        });
+      });
+    });
+
+    if (allMedia.length === 0 && targetReport?.damage_report_files) {
+      targetReport.damage_report_files.forEach((f, idx) => {
+        allMedia.push({
+          id: `single-rep-${f.id || idx}`,
+          uri: f.file_url || f.uri,
+          type: (f.file_type && f.file_type.startsWith('video')) || f.file_url?.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image',
+          title: targetReport.customer_name || 'Damage Report',
+          subtitle: f.created_at ? new Date(f.created_at).toLocaleDateString() : null,
+        });
+      });
+      target = Math.min(Math.max(0, initialIdx), allMedia.length - 1);
+    }
+
+    if (allMedia.length > 0) {
+      setViewerMediaList(allMedia);
+      setViewerInitialIndex(target);
+      setViewerTitle(targetReport?.customer_name ? `${targetReport.customer_name}'s Damage Photos` : 'Damage Photos');
+      setIsViewerVisible(true);
+    }
+  };
+
   const openPhotoViewer = (report) => {
     setSelectedReport(report);
-    setPhotoModalVisible(true);
+    openDamageMediaViewer(report, 0);
   };
 
   return (
@@ -720,7 +782,14 @@ const CustomerDamageScreen = ({ navigation, route }) => {
                   <FlatList
                     data={item.damage_report_files}
                     keyExtractor={(file) => file.id.toString()}
-                    renderItem={renderReportFile}
+                    renderItem={({ item: fileItem, index: fileIdx }) => (
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => openDamageMediaViewer(item, fileIdx)}
+                      >
+                        {renderReportFile({ item: fileItem })}
+                      </TouchableOpacity>
+                    )}
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     style={styles.filesList}
@@ -946,6 +1015,15 @@ const CustomerDamageScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      {/* Full-Screen Media Viewer with Horizontal Scrolling & Thumbnails */}
+      <FullScreenImageViewer
+        visible={isViewerVisible}
+        mediaList={viewerMediaList}
+        initialIndex={viewerInitialIndex}
+        onClose={() => setIsViewerVisible(false)}
+        title={viewerTitle || 'Damage Photos'}
+      />
     </View>
   );
 };

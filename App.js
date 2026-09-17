@@ -1,5 +1,5 @@
 import 'react-native-get-random-values'; // Polyfill for crypto.getRandomValues
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Location from 'expo-location';
 import {
@@ -20,7 +20,7 @@ import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
 
 // React Navigation imports
-import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 
 // Import screens
@@ -54,14 +54,15 @@ import ProductDetailScreen from './src/screens/ProductDetailScreen';
 // Import custom navigators
 import ProductTabNavigator from './src/navigation/ProductTabNavigator';
 
-// Import services
+// Import services & context
 import { supabase, ensureUserProfile } from './src/services/supabase';
 import { CartProvider } from './src/context/CartContext';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { announceNewOrder } from './src/services/speechService';
 
 const Stack = createStackNavigator();
 
-export default function App() {
+function AppInner() {
   const navigationRef = useNavigationContainerRef();
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -445,20 +446,37 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
+  const { isDark, colors } = useTheme();
+
+  const navTheme = useMemo(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: colors.primary,
+        background: colors.background,
+        card: colors.surface,
+        text: colors.text,
+        border: colors.border,
+      },
+    };
+  }, [isDark, colors]);
+
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.primary }]}>Loading...</Text>
       </View>
     );
   }
 
   return (
     <CartProvider>
-      <View style={styles.rootContainer}>
-        <NavigationContainer ref={navigationRef}>
-          <StatusBar style="auto" />
+      <View style={[styles.rootContainer, { backgroundColor: colors.background }]}>
+        <NavigationContainer ref={navigationRef} theme={navTheme}>
+          <StatusBar style={isDark ? 'light' : 'dark'} />
           <Stack.Navigator initialRouteName="SellersMap" screenOptions={{ headerShown: false }}>
             <Stack.Screen name="SellersMap" component={SellersMapScreen} />
             <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
@@ -497,6 +515,14 @@ export default function App() {
         <NotificationBanner navigationRef={navigationRef} />
       </View>
     </CartProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppInner />
+    </ThemeProvider>
   );
 }
 
