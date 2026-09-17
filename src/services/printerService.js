@@ -441,14 +441,23 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
 
   const hasTaxesOrCharges = (config.printTaxBreakdown !== false) && (cgstAmount > 0 || sgstAmount > 0 || serviceCost > 0);
 
+  const expectedTotalWithTaxes =
+    safeParseNumber(data.subtotal, 0) +
+    safeParseNumber(data.deliveryFee, 0) -
+    safeParseNumber(data.discount, 0) +
+    cgstAmount +
+    sgstAmount +
+    serviceCost;
+
+  const parsedRawTotal = rawTotal !== null && rawTotal !== undefined ? safeParseNumber(rawTotal, -1) : -1;
   const computedTotal =
-    rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
-      ? safeParseNumber(rawTotal, 0)
-      : safeParseNumber(data.subtotal, 0) > 0
-      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0) + cgstAmount + sgstAmount + serviceCost
+    parsedRawTotal >= (expectedTotalWithTaxes - 0.05) && parsedRawTotal > 0
+      ? parsedRawTotal
+      : expectedTotalWithTaxes > 0
+      ? expectedTotalWithTaxes
       : data.items && Array.isArray(data.items) && data.items.length > 0
       ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0) + cgstAmount + sgstAmount + serviceCost
-      : 0;
+      : (parsedRawTotal > 0 ? parsedRawTotal : 0);
 
   const hasMetaTotals =
     (data.subtotal !== undefined && safeParseNumber(data.subtotal, 0) > 0) ||
@@ -549,14 +558,23 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const sgstAmount = safeParseNumber(data.sgstAmount, 0);
   const serviceCost = safeParseNumber(data.serviceCost, 0);
 
+  const expectedTotalWithTaxes =
+    safeParseNumber(data.subtotal, 0) +
+    safeParseNumber(data.deliveryFee, 0) -
+    safeParseNumber(data.discount, 0) +
+    cgstAmount +
+    sgstAmount +
+    serviceCost;
+
+  const parsedRawTotal = rawTotal !== null && rawTotal !== undefined ? safeParseNumber(rawTotal, -1) : -1;
   const computedTotal =
-    rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
-      ? safeParseNumber(rawTotal, 0)
-      : safeParseNumber(data.subtotal, 0) > 0
-      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0) + cgstAmount + sgstAmount + serviceCost
+    parsedRawTotal >= (expectedTotalWithTaxes - 0.05) && parsedRawTotal > 0
+      ? parsedRawTotal
+      : expectedTotalWithTaxes > 0
+      ? expectedTotalWithTaxes
       : data.items && Array.isArray(data.items) && data.items.length > 0
       ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0) + cgstAmount + sgstAmount + serviceCost
-      : 0;
+      : (parsedRawTotal > 0 ? parsedRawTotal : 0);
 
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
   const shouldPrintDayWise = config.printDayWiseNumber !== false && dayOrder;
@@ -1095,9 +1113,14 @@ export const printReceipt = async (orderDetails, options = {}) => {
     const deliveryFee = Number(order.delivery_fee || order.deliveryFee || 0);
     const discount = Number(order.discount_amount || order.discount || 0);
 
+    // Extract billing metadata if present in shipping_address JSON
+    const shippingBilling = (typeof shippingObj === 'object' && shippingObj?.billing) ? shippingObj.billing : null;
+
     let subtotal = 0;
     if (order.subtotal !== undefined && order.subtotal !== null && Number(order.subtotal) > 0) {
       subtotal = Number(order.subtotal);
+    } else if (shippingBilling?.subtotal !== undefined && Number(shippingBilling.subtotal) > 0) {
+      subtotal = Number(shippingBilling.subtotal);
     } else if (itemsTotal > 0) {
       subtotal = itemsTotal;
     } else if (order.total_amount !== undefined && order.total_amount !== null && Number(order.total_amount) > 0) {
@@ -1106,26 +1129,13 @@ export const printReceipt = async (orderDetails, options = {}) => {
       subtotal = Number(order.total);
     }
 
-    let total = 0;
-    if (order.total_amount !== undefined && order.total_amount !== null && Number(order.total_amount) > 0) {
-      total = Number(order.total_amount);
-    } else if (order.total !== undefined && order.total !== null && Number(order.total) > 0) {
-      total = Number(order.total);
-    } else if (order.amount !== undefined && order.amount !== null && Number(order.amount) > 0) {
-      total = Number(order.amount);
-    } else if (subtotal > 0) {
-      total = subtotal + deliveryFee - discount;
-    } else if (itemsTotal > 0) {
-      total = itemsTotal + deliveryFee - discount;
-    }
-
     const config = await getPrinterConfig();
-    let cgstAmount = Number(order.cgst_amount || order.cgstAmount || 0);
-    let sgstAmount = Number(order.sgst_amount || order.sgstAmount || 0);
-    let serviceCost = Number(order.service_cost || order.serviceCost || 0);
-    const cgstRate = Number(order.cgst_rate !== undefined ? order.cgst_rate : (config.cgstRate || 2.5));
-    const sgstRate = Number(order.sgst_rate !== undefined ? order.sgst_rate : (config.sgstRate || 2.5));
-    const serviceCostRate = Number(order.service_cost_rate !== undefined ? order.service_cost_rate : (config.serviceCostRate || 0));
+    let cgstAmount = Number(order.cgst_amount || order.cgstAmount || shippingBilling?.cgst_amount || 0);
+    let sgstAmount = Number(order.sgst_amount || order.sgstAmount || shippingBilling?.sgst_amount || 0);
+    let serviceCost = Number(order.service_cost || order.serviceCost || shippingBilling?.service_cost || 0);
+    const cgstRate = Number(order.cgst_rate !== undefined ? order.cgst_rate : shippingBilling?.cgst_rate !== undefined ? shippingBilling.cgst_rate : (config.cgstRate || 2.5));
+    const sgstRate = Number(order.sgst_rate !== undefined ? order.sgst_rate : shippingBilling?.sgst_rate !== undefined ? shippingBilling.sgst_rate : (config.sgstRate || 2.5));
+    const serviceCostRate = Number(order.service_cost_rate !== undefined ? order.service_cost_rate : shippingBilling?.service_cost_rate !== undefined ? shippingBilling.service_cost_rate : (config.serviceCostRate || 0));
 
     if (cgstAmount === 0 && sgstAmount === 0 && config.enableTax && subtotal > 0) {
       cgstAmount = Math.round(subtotal * (cgstRate / 100) * 100) / 100;
@@ -1133,6 +1143,13 @@ export const printReceipt = async (orderDetails, options = {}) => {
     }
     if (serviceCost === 0 && config.enableServiceCost && subtotal > 0 && serviceCostRate > 0) {
       serviceCost = Math.round(subtotal * (serviceCostRate / 100) * 100) / 100;
+    }
+
+    const expectedTotalWithTaxes = subtotal + deliveryFee - discount + cgstAmount + sgstAmount + serviceCost;
+    const rawOrderTotal = Number(order.total_amount || order.total || order.amount || 0);
+    let total = expectedTotalWithTaxes;
+    if (rawOrderTotal >= (expectedTotalWithTaxes - 0.05) && rawOrderTotal > 0) {
+      total = rawOrderTotal;
     }
 
     const { orderNumber, dayOrderNo } = extractOrderNumbers(order);

@@ -592,15 +592,71 @@ const OrderDetailScreen = ({ navigation, route }) => {
         )}
 
         {/* Total Amount & Payment */}
-        <View style={styles.detailCard}>
-          <View style={styles.amountRow}>
-            <Text style={styles.label}>Total Amount</Text>
-            <Text style={styles.amountValue}>₹{Number(order.total_amount || 0).toFixed(2)}</Text>
-          </View>
-          <Text style={styles.paymentMethodText}>
-            Payment Method: {(order.payment_method || 'Cash on Delivery').toUpperCase()}
-          </Text>
-        </View>
+        {(() => {
+          const orderBilling = (typeof shipping === 'object' && shipping?.billing)
+            ? shipping.billing
+            : (typeof order?.shipping_address === 'object' && order?.shipping_address?.billing)
+            ? order.shipping_address.billing
+            : null;
+
+          const orderItemsTotal = (order.order_items || []).reduce(
+            (sum, it) => sum + (Number(it.price || 0) * Number(it.quantity || 1)),
+            0
+          );
+          const detailSubtotal = order.subtotal !== undefined && order.subtotal !== null && Number(order.subtotal) > 0
+            ? Number(order.subtotal)
+            : orderBilling?.subtotal !== undefined && Number(orderBilling.subtotal) > 0
+            ? Number(orderBilling.subtotal)
+            : orderItemsTotal > 0
+            ? orderItemsTotal
+            : Number(order.total_amount || 0);
+
+          const detailCgst = Number(order.cgst_amount || orderBilling?.cgst_amount || 0);
+          const detailSgst = Number(order.sgst_amount || orderBilling?.sgst_amount || 0);
+          const detailService = Number(order.service_cost || orderBilling?.service_cost || 0);
+          const detailCgstRate = order.cgst_rate !== undefined ? order.cgst_rate : (orderBilling?.cgst_rate !== undefined ? orderBilling.cgst_rate : 2.5);
+          const detailSgstRate = order.sgst_rate !== undefined ? order.sgst_rate : (orderBilling?.sgst_rate !== undefined ? orderBilling.sgst_rate : 2.5);
+          const detailServiceRate = order.service_cost_rate !== undefined ? order.service_cost_rate : (orderBilling?.service_cost_rate !== undefined ? orderBilling.service_cost_rate : 0);
+          const hasTaxBreakdown = detailCgst > 0 || detailSgst > 0 || detailService > 0;
+
+          return (
+            <View style={styles.detailCard}>
+              {hasTaxBreakdown && (
+                <View style={{ marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#64748B' }}>Items Subtotal</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>₹{detailSubtotal.toFixed(2)}</Text>
+                  </View>
+                  {detailCgst > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>CGST ({detailCgstRate}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{detailCgst.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {detailSgst > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>SGST ({detailSgstRate}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{detailSgst.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {detailService > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Service Charge ({detailServiceRate}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{detailService.toFixed(2)}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+              <View style={styles.amountRow}>
+                <Text style={styles.label}>Total Amount</Text>
+                <Text style={styles.amountValue}>₹{Number(order.total_amount || 0).toFixed(2)}</Text>
+              </View>
+              <Text style={styles.paymentMethodText}>
+                Payment Method: {(order.payment_method || 'Cash on Delivery').toUpperCase()}
+              </Text>
+            </View>
+          );
+        })()}
 
         {/* Shipping Address */}
         <View style={styles.detailCard}>

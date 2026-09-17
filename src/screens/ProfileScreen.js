@@ -206,11 +206,29 @@ const ProfileScreen = ({ navigation, route }) => {
     }
   };
 
+  const syncTaxSettingsToAuth = async (cfg) => {
+    try {
+      await supabase.auth.updateUser({
+        data: {
+          tax_settings: {
+            enable_tax: cfg.enableTax === true,
+            cgst_rate: cfg.cgstRate !== undefined ? Number(cfg.cgstRate) : 2.5,
+            sgst_rate: cfg.sgstRate !== undefined ? Number(cfg.sgstRate) : 2.5,
+            enable_service_cost: cfg.enableServiceCost === true,
+            service_cost_rate: cfg.serviceCostRate !== undefined ? Number(cfg.serviceCostRate) : 0,
+            print_tax_breakdown: cfg.printTaxBreakdown !== false,
+          },
+        },
+      });
+    } catch (_) {}
+  };
+
   const handleToggleTax = async (val) => {
     try {
       const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), enableTax: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
+      syncTaxSettingsToAuth(updated);
       if (profile?.id) {
         try {
           await supabase.from('profiles').update({ enable_tax: val }).eq('id', profile.id);
@@ -233,6 +251,7 @@ const ProfileScreen = ({ navigation, route }) => {
     const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), cgstRate: rate };
     setPrinterConfig(updated);
     await savePrinterConfig(updated);
+    syncTaxSettingsToAuth(updated);
     if (profile?.id) {
       try {
         await supabase.from('profiles').update({ cgst_rate: rate }).eq('id', profile.id);
@@ -246,6 +265,7 @@ const ProfileScreen = ({ navigation, route }) => {
     const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), sgstRate: rate };
     setPrinterConfig(updated);
     await savePrinterConfig(updated);
+    syncTaxSettingsToAuth(updated);
     if (profile?.id) {
       try {
         await supabase.from('profiles').update({ sgst_rate: rate }).eq('id', profile.id);
@@ -258,6 +278,7 @@ const ProfileScreen = ({ navigation, route }) => {
       const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), enableServiceCost: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
+      syncTaxSettingsToAuth(updated);
       if (profile?.id) {
         try {
           await supabase.from('profiles').update({ enable_service_cost: val }).eq('id', profile.id);
@@ -280,6 +301,7 @@ const ProfileScreen = ({ navigation, route }) => {
     const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), serviceCostRate: rate };
     setPrinterConfig(updated);
     await savePrinterConfig(updated);
+    syncTaxSettingsToAuth(updated);
     if (profile?.id) {
       try {
         await supabase.from('profiles').update({ service_cost_rate: rate }).eq('id', profile.id);
@@ -292,6 +314,12 @@ const ProfileScreen = ({ navigation, route }) => {
       const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), printTaxBreakdown: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
+      syncTaxSettingsToAuth(updated);
+      if (profile?.id) {
+        try {
+          await supabase.from('profiles').update({ print_tax_breakdown: val }).eq('id', profile.id);
+        } catch (_) {}
+      }
     } catch (err) {
       console.warn('Error updating printTaxBreakdown:', err);
     }
@@ -452,6 +480,25 @@ const ProfileScreen = ({ navigation, route }) => {
           if (lat != null && lon != null) {
             setMapInitialRegion({ latitude: lat, longitude: lon });
             setMarkerLocation({ latitude: lat, longitude: lon });
+          }
+
+          // Sync Tax & Service Charge Settings from profile data or user metadata
+          const metaTax = user.user_metadata?.tax_settings || {};
+          const syncedTaxConfig = {
+            enableTax: data.enable_tax !== undefined && data.enable_tax !== null ? Boolean(data.enable_tax) : (metaTax.enable_tax !== undefined ? Boolean(metaTax.enable_tax) : undefined),
+            cgstRate: data.cgst_rate !== undefined && data.cgst_rate !== null ? Number(data.cgst_rate) : (metaTax.cgst_rate !== undefined ? Number(metaTax.cgst_rate) : undefined),
+            sgstRate: data.sgst_rate !== undefined && data.sgst_rate !== null ? Number(data.sgst_rate) : (metaTax.sgst_rate !== undefined ? Number(metaTax.sgst_rate) : undefined),
+            enableServiceCost: data.enable_service_cost !== undefined && data.enable_service_cost !== null ? Boolean(data.enable_service_cost) : (metaTax.enable_service_cost !== undefined ? Boolean(metaTax.enable_service_cost) : undefined),
+            serviceCostRate: data.service_cost_rate !== undefined && data.service_cost_rate !== null ? Number(data.service_cost_rate) : (metaTax.service_cost_rate !== undefined ? Number(metaTax.service_cost_rate) : undefined),
+            printTaxBreakdown: data.print_tax_breakdown !== undefined && data.print_tax_breakdown !== null ? Boolean(data.print_tax_breakdown) : (metaTax.print_tax_breakdown !== undefined ? Boolean(metaTax.print_tax_breakdown) : undefined),
+          };
+          const cleanSynced = Object.fromEntries(Object.entries(syncedTaxConfig).filter(([_, v]) => v !== undefined));
+          if (Object.keys(cleanSynced).length > 0) {
+            getPrinterConfig().then((cfg) => {
+              const merged = { ...cfg, ...cleanSynced };
+              setPrinterConfig(merged);
+              savePrinterConfig(merged);
+            });
           }
 
           // Extract Store & Product Active Settings
@@ -950,6 +997,12 @@ const ProfileScreen = ({ navigation, route }) => {
         zip_code: (zipCode || '').trim(),
         latitude: parsedLat,
         longitude: parsedLon,
+        enable_tax: printerConfig?.enableTax === true,
+        cgst_rate: printerConfig?.cgstRate !== undefined ? Number(printerConfig.cgstRate) : 2.5,
+        sgst_rate: printerConfig?.sgstRate !== undefined ? Number(printerConfig.sgstRate) : 2.5,
+        enable_service_cost: printerConfig?.enableServiceCost === true,
+        service_cost_rate: printerConfig?.serviceCostRate !== undefined ? Number(printerConfig.serviceCostRate) : 0,
+        print_tax_breakdown: printerConfig?.printTaxBreakdown !== false,
         updated_at: new Date().toISOString(),
       };
 
@@ -962,11 +1015,25 @@ const ProfileScreen = ({ navigation, route }) => {
       updates.role = effectiveRole;
 
       // Try upserting to profiles table
-      const { data: updatedData, error: profileError } = await supabase
+      let { data: updatedData, error: profileError } = await supabase
         .from('profiles')
         .upsert(updates, { onConflict: 'id' })
         .select()
         .maybeSingle();
+
+      if (profileError && (profileError.code === 'PGRST204' || profileError.message?.includes('column'))) {
+        console.warn('Retrying profile upsert without tax columns:', profileError.message);
+        const fallbackUpdates = { ...updates };
+        delete fallbackUpdates.enable_tax;
+        delete fallbackUpdates.cgst_rate;
+        delete fallbackUpdates.sgst_rate;
+        delete fallbackUpdates.enable_service_cost;
+        delete fallbackUpdates.service_cost_rate;
+        delete fallbackUpdates.print_tax_breakdown;
+        const retryResult = await supabase.from('profiles').upsert(fallbackUpdates, { onConflict: 'id' }).select().maybeSingle();
+        updatedData = retryResult.data;
+        profileError = retryResult.error;
+      }
 
       if (profileError) {
         console.error('Error updating profile:', profileError.message);
@@ -1033,6 +1100,14 @@ const ProfileScreen = ({ navigation, route }) => {
           latitude: parsedLat,
           longitude: parsedLon,
           role: effectiveRole,
+          tax_settings: {
+            enable_tax: printerConfig?.enableTax === true,
+            cgst_rate: printerConfig?.cgstRate !== undefined ? Number(printerConfig.cgstRate) : 2.5,
+            sgst_rate: printerConfig?.sgstRate !== undefined ? Number(printerConfig.sgstRate) : 2.5,
+            enable_service_cost: printerConfig?.enableServiceCost === true,
+            service_cost_rate: printerConfig?.serviceCostRate !== undefined ? Number(printerConfig.serviceCostRate) : 0,
+            print_tax_breakdown: printerConfig?.printTaxBreakdown !== false,
+          },
           ...(isSeller
             ? {
                 store_settings: {

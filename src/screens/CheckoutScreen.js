@@ -18,6 +18,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import { Picker } from '@react-native-picker/picker';
 import * as Clipboard from 'expo-clipboard';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import LeafletMap from '../components/LeafletMap';
 import {
   supabase,
@@ -30,6 +31,7 @@ import {
 import { getGuestCart, clearGuestCart } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
+import { getPrinterConfig } from '../services/printerService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 
 const CheckoutScreen = ({ navigation, route }) => {
@@ -85,6 +87,7 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [customUpiId, setCustomUpiId] = useState('');
   const [showEditUpi, setShowEditUpi] = useState(false);
+  const [sellerTaxConfig, setSellerTaxConfig] = useState(null);
 
   const normalizeGuestCart = (guestCartData) => ({
     cart_items: (guestCartData || []).map((item) => {
@@ -124,6 +127,22 @@ const CheckoutScreen = ({ navigation, route }) => {
           .eq('id', user.id)
           .maybeSingle();
 
+        // Check persistent local storage and user metadata for verification
+        let isPersistentlyVerified = false;
+        try {
+          const localVerified = await AsyncStorage.getItem(`@checkout_verified_${user.id}`);
+          if (localVerified === 'true') {
+            isPersistentlyVerified = true;
+          }
+        } catch (_) {}
+
+        const isAccountVerified =
+          isPersistentlyVerified ||
+          Boolean(user.email_confirmed_at) ||
+          Boolean(user.confirmed_at) ||
+          user.user_metadata?.email_verified === true ||
+          user.user_metadata?.mobile_verified === true;
+
         if (profileData) {
           setProfile(profileData);
           if (profileData.mobile) {
@@ -143,6 +162,10 @@ const CheckoutScreen = ({ navigation, route }) => {
             setSelectedCoords(profCoords);
             setMapInitialRegion(profCoords);
           }
+        }
+
+        if (isAccountVerified || profileData?.mobile) {
+          setIsMobileVerified(true);
         }
 
         // Fetch multiple addresses for this buyer
@@ -224,7 +247,7 @@ const CheckoutScreen = ({ navigation, route }) => {
   }, [name, mobile, address, city, postalCode, country, selectedCoords]);
 
   const cartItems = cart?.cart_items || [];
-  const totalAmount = cartItems.reduce(
+  const subtotal = cartItems.reduce(
     (total, item) =>
       total +
       (Number(item?.product_variant_combinations?.price || item?.price || 0) *
@@ -232,7 +255,36 @@ const CheckoutScreen = ({ navigation, route }) => {
     0
   );
 
+  const isTaxEnabled = sellerTaxConfig?.enableTax === true;
+  const isServiceCostEnabled = sellerTaxConfig?.enableServiceCost === true;
+
+  const cgstRate = isTaxEnabled ? Number(sellerTaxConfig?.cgstRate !== undefined ? sellerTaxConfig.cgstRate : 2.5) : 0;
+  const sgstRate = isTaxEnabled ? Number(sellerTaxConfig?.sgstRate !== undefined ? sellerTaxConfig.sgstRate : 2.5) : 0;
+  const serviceCostRate = isServiceCostEnabled ? Number(sellerTaxConfig?.serviceCostRate !== undefined ? sellerTaxConfig.serviceCostRate : 0) : 0;
+
+  const cgstAmount = isTaxEnabled && subtotal > 0 ? Math.round(subtotal * (cgstRate / 100) * 100) / 100 : 0;
+  const sgstAmount = isTaxEnabled && subtotal > 0 ? Math.round(subtotal * (sgstRate / 100) * 100) / 100 : 0;
+  const serviceCost = isServiceCostEnabled && subtotal > 0 && serviceCostRate > 0 ? Math.round(subtotal * (serviceCostRate / 100) * 100) / 100 : 0;
+
+  const totalAmount = subtotal + cgstAmount + sgstAmount + serviceCost;
+
   const tableOptions = ['Main counter', ...Array.from({ length: 10 }, (_, i) => (i + 1).toString())];
+
+  useEffect(() => {
+    getPrinterConfig()
+      .then((cfg) => {
+        if (cfg) {
+          setSellerTaxConfig({
+            enableTax: Boolean(cfg.enableTax),
+            cgstRate: cfg.cgstRate !== undefined ? Number(cfg.cgstRate) : 2.5,
+            sgstRate: cfg.sgstRate !== undefined ? Number(cfg.sgstRate) : 2.5,
+            enableServiceCost: Boolean(cfg.enableServiceCost),
+            serviceCostRate: cfg.serviceCostRate !== undefined ? Number(cfg.serviceCostRate) : 0,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch Seller QR Code & UPI Information whenever cart or paymentMethod changes
   const fetchSellerUpiInfo = useCallback(async () => {
@@ -259,7 +311,7 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         const { data: profData } = await supabase
           .from('profiles')
-          .select('id, full_name, mobile, email, media_urls')
+          .select('id, full_name, mobile, email, media_urls, enable_tax, cgst_rate, sgst_rate, enable_service_cost, service_cost_rate')
           .eq('id', targetSellerId)
           .maybeSingle();
 
@@ -267,6 +319,15 @@ const CheckoutScreen = ({ navigation, route }) => {
           setSellerProfile(profData);
           if (!sellerUpiId && profData.mobile) {
             setSellerUpiId(`${profData.mobile}@upi`);
+          }
+          if (profData.enable_tax !== undefined || profData.enable_service_cost !== undefined) {
+            setSellerTaxConfig({
+              enableTax: Boolean(profData.enable_tax),
+              cgstRate: profData.cgst_rate !== undefined && profData.cgst_rate !== null ? Number(profData.cgst_rate) : 2.5,
+              sgstRate: profData.sgst_rate !== undefined && profData.sgst_rate !== null ? Number(profData.sgst_rate) : 2.5,
+              enableServiceCost: Boolean(profData.enable_service_cost),
+              serviceCostRate: profData.service_cost_rate !== undefined && profData.service_cost_rate !== null ? Number(profData.service_cost_rate) : 0,
+            });
           }
         }
       } else if (currentUser?.id) {
@@ -612,6 +673,27 @@ const CheckoutScreen = ({ navigation, route }) => {
       if (verifyError) throw verifyError;
 
       const cleanMobile = mobile.trim().replace(/[\s\-()]/g, '').slice(-10);
+
+      // 1. Permanently remember on this device so user is never asked again
+      try {
+        await AsyncStorage.setItem(`@checkout_verified_${user.id}`, 'true');
+        if (cleanMobile) {
+          await AsyncStorage.setItem(`@checkout_verified_mobile_${user.id}`, cleanMobile);
+        }
+      } catch (storageErr) {
+        console.warn('AsyncStorage verification persist notice:', storageErr);
+      }
+
+      // 2. Persist to auth user_metadata
+      await supabase.auth.updateUser({
+        data: {
+          mobile: cleanMobile,
+          mobile_verified: true,
+          email_verified: true,
+        },
+      }).catch(() => {});
+
+      // 3. Persist to profiles table
       const { error: profError } = await supabase
         .from('profiles')
         .update({
@@ -624,16 +706,12 @@ const CheckoutScreen = ({ navigation, route }) => {
         console.warn('Profile update notice:', profError);
       }
 
-      await supabase.auth.updateUser({
-        data: { mobile: cleanMobile },
-      }).catch(() => {});
-
       setIsMobileVerified(true);
       setShowOtpModal(false);
       setOtpCode('');
       setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile }));
 
-      showAlert('✅ Verified', 'Your mobile number has been verified and updated in your profile!');
+      showAlert('✅ Verified', 'Your contact details have been verified! You will not be asked again.');
     } catch (err) {
       showAlert('Verification Failed', err.message || 'Invalid or expired code. Please try again.');
     } finally {
@@ -690,8 +768,29 @@ const CheckoutScreen = ({ navigation, route }) => {
       return;
     }
 
-    // Require Email OTP verification if buyer has no mobile in profile and not yet verified this session
-    if (!profile?.mobile && !isMobileVerified) {
+    const isShopOrder = profile && profile.role === 'seller';
+
+    // Check if buyer has already verified via profile, session state, user metadata, saved addresses, or persistent AsyncStorage
+    let alreadyVerified = isMobileVerified || Boolean(profile?.mobile);
+    if (!alreadyVerified && orderUserId) {
+      try {
+        const localCheck = await AsyncStorage.getItem(`@checkout_verified_${orderUserId}`);
+        if (
+          localCheck === 'true' ||
+          Boolean(user?.email_confirmed_at) ||
+          Boolean(user?.confirmed_at) ||
+          user?.user_metadata?.email_verified === true ||
+          user?.user_metadata?.mobile_verified === true ||
+          (savedAddresses && savedAddresses.length > 0)
+        ) {
+          alreadyVerified = true;
+          setIsMobileVerified(true);
+        }
+      } catch (_) {}
+    }
+
+    // Never require email OTP for counter/shop orders, and never ask users who have already validated
+    if (!isShopOrder && !alreadyVerified) {
       setLoading(false);
       showAlert(
         'Verify Contact Number',
@@ -729,8 +828,18 @@ const CheckoutScreen = ({ navigation, route }) => {
       }
     }
 
+    // Persist verified status to AsyncStorage and user_metadata permanently
+    if (orderUserId) {
+      try {
+        await AsyncStorage.setItem(`@checkout_verified_${orderUserId}`, 'true');
+        await AsyncStorage.setItem(`@checkout_verified_mobile_${orderUserId}`, cleanMobile.slice(-10));
+        await supabase.auth.updateUser({
+          data: { mobile: cleanMobile.slice(-10), mobile_verified: true, email_verified: true },
+        }).catch(() => {});
+      } catch (_) {}
+    }
+
     const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
-    const isShopOrder = profile && profile.role === 'seller';
 
     // Group cart items by seller (product vendor user_id)
     const itemsBySeller = {};
@@ -770,11 +879,40 @@ const CheckoutScreen = ({ navigation, route }) => {
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
         const targetSellerId = isValidUUID(rawSellerId) ? rawSellerId.trim() : null;
 
+        const groupSubtotal = sellerGroup.subtotal;
+        const groupCgst = isTaxEnabled && groupSubtotal > 0 ? Math.round(groupSubtotal * (cgstRate / 100) * 100) / 100 : 0;
+        const groupSgst = isTaxEnabled && groupSubtotal > 0 ? Math.round(groupSubtotal * (sgstRate / 100) * 100) / 100 : 0;
+        const groupService = isServiceCostEnabled && groupSubtotal > 0 && serviceCostRate > 0 ? Math.round(groupSubtotal * (serviceCostRate / 100) * 100) / 100 : 0;
+        const groupTotal = groupSubtotal + groupCgst + groupSgst + groupService;
+
+        const billingBreakdown = {
+          subtotal: groupSubtotal,
+          cgst_amount: groupCgst,
+          sgst_amount: groupSgst,
+          service_cost: groupService,
+          cgst_rate: cgstRate,
+          sgst_rate: sgstRate,
+          service_cost_rate: serviceCostRate,
+          total: groupTotal,
+        };
+
+        const shippingWithBilling = {
+          ...(typeof shippingAddress === 'object' ? shippingAddress : { address: shippingAddress }),
+          billing: billingBreakdown,
+        };
+
         const orderPayload = {
           user_id: orderUserId,
           seller_id: targetSellerId,
-          shipping_address: shippingAddress,
-          total_amount: sellerGroup.subtotal,
+          shipping_address: shippingWithBilling,
+          total_amount: groupTotal,
+          subtotal: groupSubtotal,
+          cgst_amount: groupCgst,
+          sgst_amount: groupSgst,
+          service_cost: groupService,
+          cgst_rate: cgstRate,
+          sgst_rate: sgstRate,
+          service_cost_rate: serviceCostRate,
           status: orderStatus,
           payment_method: paymentMethod,
           order_type: isShopOrder ? 'shop-order' : 'delivery',
@@ -791,10 +929,24 @@ const CheckoutScreen = ({ navigation, route }) => {
           .single();
 
         if (orderError && (orderError.code === 'PGRST204' || (orderError.message && orderError.message.includes('column')))) {
-          console.warn('Retrying sub-order creation without seller_id column:', orderError.message);
-          const fallbackPayload = { ...orderPayload };
-          delete fallbackPayload.seller_id;
-          const retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+          console.warn('Retrying sub-order creation without extra columns:', orderError.message);
+          const fallbackPayload = {
+            user_id: orderUserId,
+            seller_id: targetSellerId,
+            shipping_address: shippingWithBilling,
+            total_amount: groupTotal,
+            status: orderStatus,
+            payment_method: paymentMethod,
+            order_type: isShopOrder ? 'shop-order' : 'delivery',
+          };
+          if (isShopOrder) {
+            fallbackPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
+          }
+          let retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+          if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && retry.error.message.includes('seller_id')))) {
+            delete fallbackPayload.seller_id;
+            retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+          }
           order = retry.data;
           orderError = retry.error;
         }
@@ -820,6 +972,18 @@ const CheckoutScreen = ({ navigation, route }) => {
           throw orderItemsError;
         }
 
+        if (order) {
+          order.billing = billingBreakdown;
+          order.subtotal = groupSubtotal;
+          order.cgst_amount = groupCgst;
+          order.sgst_amount = groupSgst;
+          order.service_cost = groupService;
+          order.cgst_rate = cgstRate;
+          order.sgst_rate = sgstRate;
+          order.service_cost_rate = serviceCostRate;
+          order.order_items = sellerGroup.items;
+        }
+
         createdOrders.push(order);
 
         // Trigger Delivery Manager Assignment for Delivery Orders
@@ -838,7 +1002,7 @@ const CheckoutScreen = ({ navigation, route }) => {
           const notificationTitle = isShopOrder
             ? (orderType === 'Dine-in' ? `Order Placed for Table #${tableNo}` : 'Parcel Order Placed')
             : '🎉 Order Placed Successfully!';
-          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${sellerGroup.subtotal.toFixed(2)} is confirmed.`;
+          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${groupTotal.toFixed(2)} is confirmed.`;
 
           await schedulePushNotification(
             notificationTitle,
@@ -1006,6 +1170,32 @@ const CheckoutScreen = ({ navigation, route }) => {
           <Text style={styles.summaryItems}>
             {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'} in cart
           </Text>
+          {(isTaxEnabled || (isServiceCostEnabled && serviceCost > 0)) && (
+            <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 8 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ fontSize: 13, color: '#64748B' }}>Items Subtotal</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>₹{subtotal.toFixed(2)}</Text>
+              </View>
+              {isTaxEnabled && cgstAmount > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>CGST ({cgstRate}%)</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{cgstAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {isTaxEnabled && sgstAmount > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>SGST ({sgstRate}%)</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{sgstAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {isServiceCostEnabled && serviceCost > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>Service Charge ({serviceCostRate}%)</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{serviceCost.toFixed(2)}</Text>
+                </View>
+              )}
+            </View>
+          )}
           <Text style={styles.summaryTotal}>Total: ₹{totalAmount.toFixed(2)}</Text>
         </View>
 
@@ -1149,9 +1339,6 @@ const CheckoutScreen = ({ navigation, route }) => {
               onChangeText={(text) => {
                 const cleaned = text.replace(/[^0-9]/g, '').slice(0, 10);
                 setMobile(cleaned);
-                if (cleaned.length !== 10 && !profile?.mobile) {
-                  setIsMobileVerified(false);
-                }
               }}
               keyboardType="phone-pad"
               maxLength={10}
