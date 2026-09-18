@@ -138,3 +138,22 @@
   4. **Login / Signup Scoping ([BuyerLoginScreen.js](file:///workspaces/needsTracking/src/screens/BuyerLoginScreen.js), [BuyerSignupScreen.js](file:///workspaces/needsTracking/src/screens/BuyerSignupScreen.js), [LoginScreen.js](file:///workspaces/needsTracking/src/screens/LoginScreen.js))**: Displayed the active "Shopping At Store: [Store Name]" header banner, and ensured users are returned directly to the scanned store's catalog after email, OTP, or Google authentication.
   5. **Shopkeeper QR Modal & Printable Standee ([StoreQrModal.js](file:///workspaces/needsTracking/src/components/StoreQrModal.js), [printerService.js](file:///workspaces/needsTracking/src/services/printerService.js))**: Built interactive modal with high-res QR code, direct URL copy, and 1-tap A4 portrait printable counter standee for physical store counters.
   6. Successfully compiled and verified web production export (`dist/`).
+## 2026-09-18 05:45:00 UTC
+- **User Request**: "in check out page pay with upi details should take it from seller profile only, no need of change customize upi id also, if seller not configure dont show this option only cash on delivery, and order type by default dine-in, so login or delivery contact address not mandatory if user not login, orders goes to seller only, and while click Pay with UPI just ask user is it parcel or Dine-in, If Dine-in Goes to next step slece change to order type to parcel then signin or address is mandatory, If you guess any idea let me know" / "can u check last fix"
+- **Summary**:
+  1. **Strict Seller Profile UPI Enforcement ([CheckoutScreen.js](file:///workspaces/needsTracking/src/screens/CheckoutScreen.js), [UpiQrScreen.js](file:///workspaces/needsTracking/src/screens/UpiQrScreen.js))**:
+     - Removed custom UPI ID editing/override fields so buyers cannot alter payee details.
+     - UPI payment details are strictly resolved from the seller's active QR code (`user_qr_codes`) and `profiles.upi_id`.
+     - When the seller has not configured a UPI ID, the "Pay with UPI" option is completely hidden and automatically falls back to Cash on Delivery / Pay at Counter (`cod`).
+  2. **Default Dine-in & Guest Checkout**:
+     - Order type defaults to **Dine-in**.
+     - Dine-in customers do not need to log in or enter delivery addresses (supports guest orders directly to table/counter).
+     - Orders are marked `order_type: 'shop-order'` and assigned directly to the store seller only (no external delivery manager assignment).
+  3. **Interactive Order Type Modal on "Pay with UPI"**:
+     - Clicking "Pay with UPI" prompts the customer: *"Is this order for Dine-in or Parcel?"*.
+     - **Dine-in**: Proceeds directly to UPI payment with no login or delivery address required.
+     - **Parcel**: Switches order type to Parcel, making account sign-in, verified contact number, and delivery address mandatory before proceeding.
+  4. **Supabase Database Migration ([enable_guest_and_dine_in_orders.sql](file:///workspaces/needsTracking/enable_guest_and_dine_in_orders.sql))**:
+     - Adds `seller_id`, `table_no`, and `order_type` columns to `orders`.
+     - Configures RLS policies (`orders_insert_policy`, `orders_select_policy`, `order_items_insert_policy`) allowing guest customers (`auth.uid() IS NULL`) to insert Dine-in orders and store sellers to view and manage all orders placed at their store.
+  5. **Production Build**: Verified zero missing styles, validated Babel transforms, and completed clean Expo web production export (`dist/`).

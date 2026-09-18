@@ -79,14 +79,14 @@ const UpiQrScreen = ({ navigation, route }) => {
 
           const { data: prof } = await supabase
             .from('profiles')
-            .select('id, full_name, mobile')
+            .select('id, full_name, mobile, upi_id')
             .eq('id', targetUserId)
             .maybeSingle();
 
           if (prof) {
             if (prof.full_name) setPayeeName(prof.full_name);
-            if (!payeeUpiId && prof.mobile) {
-              setPayeeUpiId(`${prof.mobile}@upi`);
+            if (!payeeUpiId && prof.upi_id && prof.upi_id.includes('@')) {
+              setPayeeUpiId(prof.upi_id.trim());
             }
           }
         }

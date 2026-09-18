@@ -28,7 +28,7 @@ import {
   addUserAddress,
   deleteUserAddress,
 } from '../services/supabase';
-import { getGuestCart, clearGuestCart } from '../services/localStorageService';
+import { getGuestCart, clearGuestCart, getPreferredStore } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
 import { getPrinterConfig } from '../services/printerService';
@@ -82,16 +82,20 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [verifyingEmailOtp, setVerifyingEmailOtp] = useState(false);
   const [isMobileVerified, setIsMobileVerified] = useState(false);
 
-  // UPI QR Code State
+  // UPI QR Code State (strictly from seller profile)
   const [sellerQr, setSellerQr] = useState(null);
   const [sellerProfile, setSellerProfile] = useState(null);
   const [sellerUpiId, setSellerUpiId] = useState('');
   const [loadingSellerQr, setLoadingSellerQr] = useState(false);
   const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' (with bill amount) | 'profile' (uploaded QR)
   const [copiedUpi, setCopiedUpi] = useState(false);
-  const [customUpiId, setCustomUpiId] = useState('');
-  const [showEditUpi, setShowEditUpi] = useState(false);
   const [sellerTaxConfig, setSellerTaxConfig] = useState(null);
+
+  // Order Type Modal State (Prompted when user clicks Pay with UPI)
+  const [showOrderTypeModal, setShowOrderTypeModal] = useState(false);
+  const [orderTypeModalAction, setOrderTypeModalAction] = useState('select_upi'); // 'select_upi' | 'place_order'
+  const [orderTypeConfirmed, setOrderTypeConfirmed] = useState(false);
+
 
   const normalizeGuestCart = (guestCartData) => ({
     cart_items: (guestCartData || []).map((item) => {
@@ -290,39 +294,51 @@ const CheckoutScreen = ({ navigation, route }) => {
       .catch(() => {});
   }, []);
 
-  // Fetch Seller QR Code & UPI Information whenever cart or paymentMethod changes
+  // Fetch Seller QR Code & UPI Information whenever cart, seller or mount changes
   const fetchSellerUpiInfo = useCallback(async () => {
     try {
       setLoadingSellerQr(true);
-      // Determine primary seller ID from cart items
-      let targetSellerId = customerId || null;
+      // Determine primary seller ID from route, params, cart, preferred store or seller profile
+      let targetSellerId = route?.params?.sellerId || customerId || null;
       if (!targetSellerId && cart?.cart_items && cart.cart_items.length > 0) {
         const prod = cart.cart_items[0]?.product_variant_combinations?.products;
         targetSellerId = prod?.user_id || prod?.customer_id || null;
+      }
+      if (!targetSellerId) {
+        try {
+          const pref = await getPreferredStore();
+          if (pref?.sellerId) {
+            targetSellerId = pref.sellerId;
+          }
+        } catch (_) {}
       }
       if (!targetSellerId && profile?.role === 'seller' && currentUser?.id) {
         targetSellerId = currentUser.id;
       }
 
+      let configuredUpiId = '';
+      let configuredQr = null;
+
       if (targetSellerId) {
         const qrData = await getActiveQrCode(targetSellerId);
         if (qrData) {
+          configuredQr = qrData;
           setSellerQr(qrData);
           if (qrData.name && qrData.name.includes('@')) {
-            setSellerUpiId(qrData.name);
+            configuredUpiId = qrData.name.trim();
           }
         }
 
         const { data: profData } = await supabase
           .from('profiles')
-          .select('id, full_name, mobile, email, media_urls, enable_tax, cgst_rate, sgst_rate, enable_service_cost, service_cost_rate')
+          .select('id, full_name, mobile, email, media_urls, upi_id, enable_tax, cgst_rate, sgst_rate, enable_service_cost, service_cost_rate')
           .eq('id', targetSellerId)
           .maybeSingle();
 
         if (profData) {
           setSellerProfile(profData);
-          if (!sellerUpiId && profData.mobile) {
-            setSellerUpiId(`${profData.mobile}@upi`);
+          if (!configuredUpiId && profData.upi_id && profData.upi_id.includes('@')) {
+            configuredUpiId = profData.upi_id.trim();
           }
           if (profData.enable_tax !== undefined || profData.enable_service_cost !== undefined) {
             setSellerTaxConfig({
@@ -337,31 +353,47 @@ const CheckoutScreen = ({ navigation, route }) => {
       } else if (currentUser?.id) {
         const qrData = await getActiveQrCode(currentUser.id);
         if (qrData) {
+          configuredQr = qrData;
           setSellerQr(qrData);
           if (qrData.name && qrData.name.includes('@')) {
-            setSellerUpiId(qrData.name);
+            configuredUpiId = qrData.name.trim();
           }
         }
+      }
+
+      setSellerUpiId(configuredUpiId);
+
+      const hasUpi = Boolean(
+        (configuredUpiId && configuredUpiId.includes('@')) ||
+        (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url || (configuredQr.name && configuredQr.name.includes('@'))))
+      );
+
+      // If seller has not configured UPI, lock payment method to 'cod'
+      if (!hasUpi) {
+        setPaymentMethod('cod');
+      } else {
+        setPaymentMethod((prev) => prev || 'upi');
       }
     } catch (err) {
       console.warn('Error fetching seller UPI info:', err);
     } finally {
       setLoadingSellerQr(false);
     }
-  }, [cart, customerId, profile, currentUser, sellerUpiId]);
+  }, [cart, customerId, profile, currentUser]);
 
   useEffect(() => {
-    if (paymentMethod === 'upi') {
-      fetchSellerUpiInfo();
-    }
-  }, [paymentMethod, fetchSellerUpiInfo]);
+    fetchSellerUpiInfo();
+  }, [fetchSellerUpiInfo]);
 
-  // Derive active UPI parameters
+  // Derive active UPI parameters strictly from seller profile
   const activeUpiId =
-    customUpiId.trim() ||
     sellerUpiId.trim() ||
-    (sellerProfile?.mobile ? `${sellerProfile.mobile}@upi` : '') ||
-    (profile?.mobile ? `${profile.mobile}@upi` : 'store@okaxis');
+    (sellerQr?.name && sellerQr.name.includes('@') ? sellerQr.name.trim() : '');
+
+  const isUpiConfigured = Boolean(
+    (sellerUpiId && sellerUpiId.includes('@')) ||
+    (sellerQr && (sellerQr.qr_image_url || sellerQr.qr_code_url || (sellerQr.name && sellerQr.name.includes('@'))))
+  );
 
   const payeeName =
     sellerProfile?.full_name ||
@@ -371,13 +403,76 @@ const CheckoutScreen = ({ navigation, route }) => {
   const orderNote = `Bill #${(cart?.id || 'Order').toString().slice(-6)}`;
 
   // Official UPI Payment URI format (supported across all Indian UPI apps)
-  const dynamicUpiUri = `upi://pay?pa=${encodeURIComponent(activeUpiId)}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(orderNote)}`;
+  const dynamicUpiUri = activeUpiId
+    ? `upi://pay?pa=${encodeURIComponent(activeUpiId)}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(orderNote)}`
+    : '';
 
   // Dynamic QR Code image incorporating exact order bill amount
-  const dynamicQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`;
+  const dynamicQrImageUrl = dynamicUpiUri
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`
+    : null;
 
   // Profile-uploaded QR image URL (from user_qr_codes table)
   const profileQrImageUrl = sellerQr?.qr_image_url || null;
+
+  // Prompt Order Type when Pay with UPI is clicked
+  const handlePayWithUpiPress = (action = 'select_upi') => {
+    if (!isUpiConfigured) {
+      showAlert(
+        'UPI Not Configured',
+        'Store seller has not configured UPI details. Please choose Cash on Delivery / Counter.'
+      );
+      setPaymentMethod('cod');
+      return;
+    }
+    setOrderTypeModalAction(action);
+    setShowOrderTypeModal(true);
+  };
+
+  const handleSelectDineIn = () => {
+    setOrderType('Dine-in');
+    setOrderTypeConfirmed(true);
+    setPaymentMethod('upi');
+    setShowOrderTypeModal(false);
+    if (orderTypeModalAction === 'place_order') {
+      handlePlaceOrder({ forcedOrderType: 'Dine-in', forcedPaymentMethod: 'upi' });
+    }
+  };
+
+  const handleSelectParcel = () => {
+    setOrderType('Parcel');
+    setOrderTypeConfirmed(true);
+    setPaymentMethod('upi');
+    setShowOrderTypeModal(false);
+    if (!currentUser) {
+      showAlert(
+        'Sign In Required for Parcel Order',
+        'Parcel orders require delivery & contact details. Please sign in or create an account to proceed.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign In / Sign Up',
+            onPress: () =>
+              navigation.navigate('BuyerLogin', {
+                redirectTo: 'Checkout',
+                redirectParams: { cart, customerId },
+              }),
+          },
+        ]
+      );
+      return;
+    }
+
+    if (!mobile.trim() || !address.trim()) {
+      showAlert(
+        'Delivery Address Required',
+        'Please enter your 10-digit mobile number and delivery address below for your parcel order.'
+      );
+    } else if (orderTypeModalAction === 'place_order') {
+      handlePlaceOrder({ forcedOrderType: 'Parcel', forcedPaymentMethod: 'upi' });
+    }
+  };
+
 
   const handleCopyUpiId = async () => {
     try {
@@ -723,117 +818,129 @@ const CheckoutScreen = ({ navigation, route }) => {
     }
   };
 
-  const handlePlaceOrder = async () => {
-    if (!paymentMethod) {
+  const handlePlaceOrder = async (overrideOpts = {}) => {
+    const activeMethod = overrideOpts?.forcedPaymentMethod || paymentMethod;
+    const activeType = overrideOpts?.forcedOrderType || orderType;
+    const isDineIn = activeType === 'Dine-in';
+
+    if (!activeMethod) {
       showAlert('Payment Method', 'Please select a payment method.');
       return;
     }
 
-    setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    const orderUserId = user?.id;
-
-    if (!orderUserId) {
-      setLoading(false);
+    if (activeMethod === 'upi' && !isUpiConfigured) {
       showAlert(
-        'Sign In Required',
-        'Please sign in or create an account to place your order.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Sign In / Sign Up',
-            onPress: () =>
-              navigation.navigate('BuyerLogin', {
-                redirectTo: 'Checkout',
-                redirectParams: { cart, customerId },
-              }),
-          },
-        ]
+        'UPI Not Configured',
+        'Store seller has not configured UPI payment details. Please proceed with Cash payment.'
       );
+      setPaymentMethod('cod');
       return;
     }
 
-    if (!name.trim()) {
-      setLoading(false);
-      showAlert('Shipping Details', 'Please enter your full name.');
-      return;
-    }
+    const { data: { user } = {} } = await supabase.auth.getUser();
+    const orderUserId = user?.id || null;
 
-    const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
-    if (!cleanMobile) {
-      setLoading(false);
-      showAlert('Mobile Required', 'Please provide a 10-digit mobile number for order delivery.');
-      return;
-    }
+    // Validation rules: Mandatory login & address for Parcel; optional/skipped for Dine-in
+    if (!isDineIn) {
+      if (!orderUserId) {
+        showAlert(
+          'Sign In Required for Parcel',
+          'Parcel orders require account sign-in to save delivery details. Please sign in or create an account to place your order.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Sign In / Sign Up',
+              onPress: () =>
+                navigation.navigate('BuyerLogin', {
+                  redirectTo: 'Checkout',
+                  redirectParams: { cart, customerId },
+                }),
+            },
+          ]
+        );
+        return;
+      }
 
-    if (!/^(?:\+91|91)?[6-9]\d{9}$/.test(cleanMobile)) {
-      setLoading(false);
-      showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
-      return;
-    }
+      if (!name.trim()) {
+        showAlert('Shipping Details', 'Please enter your full name for parcel delivery.');
+        return;
+      }
 
-    const isShopOrder = profile && profile.role === 'seller';
+      const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
+      if (!cleanMobile) {
+        showAlert('Mobile Required', 'Please provide a 10-digit mobile number for order delivery.');
+        return;
+      }
 
-    // Check if buyer has already verified via profile, session state, user metadata, saved addresses, or persistent AsyncStorage
-    let alreadyVerified = isMobileVerified || Boolean(profile?.mobile);
-    if (!alreadyVerified && orderUserId) {
-      try {
-        const localCheck = await AsyncStorage.getItem(`@checkout_verified_${orderUserId}`);
-        if (
-          localCheck === 'true' ||
-          Boolean(user?.email_confirmed_at) ||
-          Boolean(user?.confirmed_at) ||
-          user?.user_metadata?.email_verified === true ||
-          user?.user_metadata?.mobile_verified === true ||
-          (savedAddresses && savedAddresses.length > 0)
-        ) {
-          alreadyVerified = true;
-          setIsMobileVerified(true);
-        }
-      } catch (_) {}
-    }
+      if (!/^(?:\+91|91)?[6-9]\d{9}$/.test(cleanMobile)) {
+        showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
+        return;
+      }
 
-    // Never require email OTP for counter/shop orders, and never ask users who have already validated
-    if (!isShopOrder && !alreadyVerified) {
-      setLoading(false);
-      showAlert(
-        'Verify Contact Number',
-        `For your first checkout, please verify your mobile number. We will send a 6-digit verification code to your registered email (${user?.email || 'your account'}).`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Send Code to Email',
-            onPress: () => handleSendEmailOtp(cleanMobile),
-          },
-        ]
-      );
-      return;
-    }
+      const isShopOrder = profile && profile.role === 'seller';
 
-    if (!address.trim()) {
-      setLoading(false);
-      showAlert('Shipping Details', 'Please enter your delivery address.');
-      return;
-    }
+      // Check if buyer has already verified via profile, session state, user metadata, saved addresses, or persistent AsyncStorage
+      let alreadyVerified = isMobileVerified || Boolean(profile?.mobile);
+      if (!alreadyVerified && orderUserId) {
+        try {
+          const localCheck = await AsyncStorage.getItem(`@checkout_verified_${orderUserId}`);
+          if (
+            localCheck === 'true' ||
+            Boolean(user?.email_confirmed_at) ||
+            Boolean(user?.confirmed_at) ||
+            user?.user_metadata?.email_verified === true ||
+            user?.user_metadata?.mobile_verified === true ||
+            (savedAddresses && savedAddresses.length > 0)
+          ) {
+            alreadyVerified = true;
+            setIsMobileVerified(true);
+          }
+        } catch (_) {}
+      }
 
-    // Persist mobile to profile if missing
-    if (!profile?.mobile || profile.mobile !== cleanMobile.slice(-10)) {
-      try {
-        await supabase
-          .from('profiles')
-          .update({
-            mobile: cleanMobile.slice(-10),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', orderUserId);
-        setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile.slice(-10) }));
-      } catch (profErr) {
-        console.warn('Profile mobile sync notice:', profErr);
+      if (!isShopOrder && !alreadyVerified) {
+        showAlert(
+          'Verify Contact Number',
+          `For your first checkout, please verify your mobile number. We will send a 6-digit verification code to your registered email (${user?.email || 'your account'}).`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Send Code to Email',
+              onPress: () => handleSendEmailOtp(cleanMobile),
+            },
+          ]
+        );
+        return;
+      }
+
+      if (!address.trim()) {
+        showAlert('Shipping Details', 'Please enter your delivery address.');
+        return;
       }
     }
 
-    // Persist verified status to AsyncStorage and user_metadata permanently
-    if (orderUserId) {
+    setLoading(true);
+
+    const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
+
+    // Persist mobile to profile if missing (when logged in)
+    if (orderUserId && cleanMobile) {
+      if (!profile?.mobile || profile.mobile !== cleanMobile.slice(-10)) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              mobile: cleanMobile.slice(-10),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', orderUserId);
+          setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile.slice(-10) }));
+        } catch (profErr) {
+          console.warn('Profile mobile sync notice:', profErr);
+        }
+      }
+
+      // Persist verified status to AsyncStorage and user_metadata permanently
       try {
         await AsyncStorage.setItem(`@checkout_verified_${orderUserId}`, 'true');
         await AsyncStorage.setItem(`@checkout_verified_mobile_${orderUserId}`, cleanMobile.slice(-10));
@@ -843,7 +950,7 @@ const CheckoutScreen = ({ navigation, route }) => {
       } catch (_) {}
     }
 
-    const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
+    const orderStatus = activeMethod === 'cod' ? 'processing' : 'pending_payment';
 
     // Group cart items by seller (product vendor user_id)
     const itemsBySeller = {};
@@ -877,7 +984,7 @@ const CheckoutScreen = ({ navigation, route }) => {
         const sellerGroup = itemsBySeller[sellerKey];
         const rawSellerId = sellerGroup.sellerId && sellerGroup.sellerId !== 'store'
           ? sellerGroup.sellerId
-          : (isShopOrder ? profile?.id : null);
+          : (profile?.role === 'seller' ? profile?.id : null);
         const isValidUUID = (val) =>
           typeof val === 'string' &&
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
@@ -900,10 +1007,21 @@ const CheckoutScreen = ({ navigation, route }) => {
           total: groupTotal,
         };
 
-        const shippingWithBilling = {
-          ...(typeof shippingAddress === 'object' ? shippingAddress : { address: shippingAddress }),
-          billing: billingBreakdown,
-        };
+        const shippingWithBilling = isDineIn
+          ? {
+              type: 'Dine-in',
+              table_no: tableNo || 'Main counter',
+              name: name.trim() || 'Guest Diner',
+              mobile: cleanMobile || (profile?.mobile || ''),
+              address: `Dine-in (${tableNo || 'Main counter'})`,
+              city: city || '',
+              postalCode: postalCode || '',
+              billing: billingBreakdown,
+            }
+          : {
+              ...(typeof shippingAddress === 'object' ? shippingAddress : { address: shippingAddress }),
+              billing: billingBreakdown,
+            };
 
         const orderPayload = {
           user_id: orderUserId,
@@ -918,13 +1036,10 @@ const CheckoutScreen = ({ navigation, route }) => {
           sgst_rate: sgstRate,
           service_cost_rate: serviceCostRate,
           status: orderStatus,
-          payment_method: paymentMethod,
-          order_type: isShopOrder ? 'shop-order' : 'delivery',
+          payment_method: activeMethod,
+          order_type: 'shop-order', // Dine-in and parcel shop orders go directly to seller
+          table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
         };
-
-        if (isShopOrder) {
-          orderPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
-        }
 
         let { data: order, error: orderError } = await supabase
           .from('orders')
@@ -940,12 +1055,10 @@ const CheckoutScreen = ({ navigation, route }) => {
             shipping_address: shippingWithBilling,
             total_amount: groupTotal,
             status: orderStatus,
-            payment_method: paymentMethod,
-            order_type: isShopOrder ? 'shop-order' : 'delivery',
+            payment_method: activeMethod,
+            order_type: 'shop-order',
+            table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
           };
-          if (isShopOrder) {
-            fallbackPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
-          }
           let retry = await supabase.from('orders').insert(fallbackPayload).select().single();
           if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && retry.error.message.includes('seller_id')))) {
             delete fallbackPayload.seller_id;
@@ -957,6 +1070,25 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         if (orderError) {
           console.error('Error creating sub-order:', orderError.message);
+          if (orderError.code === '42501' && !orderUserId) {
+            setLoading(false);
+            showAlert(
+              'Sign In Required',
+              'To place a guest dine-in order, please sign in or create an account (or apply enable_guest_and_dine_in_orders.sql in Supabase SQL editor).',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Sign In / Sign Up',
+                  onPress: () =>
+                    navigation.navigate('BuyerLogin', {
+                      redirectTo: 'Checkout',
+                      redirectParams: { cart, customerId },
+                    }),
+                },
+              ]
+            );
+            return;
+          }
           throw orderError;
         }
 
@@ -990,8 +1122,8 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         createdOrders.push(order);
 
-        // Trigger Delivery Manager Assignment for Delivery Orders
-        if (!isShopOrder) {
+        // Dine-in orders never assign delivery manager - orders go directly to seller only!
+        if (!isDineIn && activeType === 'delivery') {
           try {
             await supabase.functions.invoke('assign-delivery-manager', {
               body: { order: { id: order.id } },
@@ -1003,10 +1135,10 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         // Send local confirmation notification
         try {
-          const notificationTitle = isShopOrder
-            ? (orderType === 'Dine-in' ? `Order Placed for Table #${tableNo}` : 'Parcel Order Placed')
-            : '🎉 Order Placed Successfully!';
-          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${groupTotal.toFixed(2)} is confirmed.`;
+          const notificationTitle = isDineIn
+            ? `🍽️ Order Placed for Table #${tableNo || 'Main counter'}`
+            : '📦 Parcel Order Placed!';
+          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${groupTotal.toFixed(2)} is confirmed with store.`;
 
           await schedulePushNotification(
             notificationTitle,
@@ -1199,13 +1331,13 @@ const CheckoutScreen = ({ navigation, route }) => {
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={true}
       >
-        {/* Guest Sign-In Notice Banner */}
-        {!currentUser && (
+        {/* Guest Sign-In Notice Banner (Only mandatory for Parcel orders) */}
+        {!currentUser && orderType === 'Parcel' && (
           <View style={styles.guestBanner}>
             <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.guestBannerTitle}>🛍️ Sign in to complete order</Text>
+              <Text style={styles.guestBannerTitle}>🛍️ Sign in to complete parcel order</Text>
               <Text style={styles.guestBannerSubtitle}>
-                Log in or create an account to save your address and track orders.
+                Log in or create an account to save your address and deliver parcel orders.
               </Text>
             </View>
             <TouchableOpacity
@@ -1257,252 +1389,350 @@ const CheckoutScreen = ({ navigation, route }) => {
           <Text style={styles.summaryTotal}>Total: ₹{totalAmount.toFixed(2)}</Text>
         </View>
 
-        {/* Delivery Address Header */}
-        <View style={styles.addressSectionHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.sectionHeading}>Delivery Address & Contact</Text>
-            <Text style={styles.sectionSubheading}>Choose saved address or pick location with GPS map</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.addAddressHeaderBtn}
-            onPress={handleOpenAddAddressModal}
-            activeOpacity={0.8}
-          >
-            <Icon name="map-marker" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.addAddressHeaderBtnText}>+ Add / Map</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Saved Addresses Horizontal Carousel */}
-        {savedAddresses && savedAddresses.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.savedAddressesScroll}
-          >
-            {savedAddresses.map((addr) => {
-              const isSelected = selectedAddressId === addr.id;
-              return (
-                <TouchableOpacity
-                  key={addr.id}
-                  style={[styles.addressCard, isSelected && styles.addressCardSelected]}
-                  onPress={() => handleSelectAddress(addr)}
-                  activeOpacity={0.85}
-                >
-                  <View style={styles.addressCardTopRow}>
-                    <View
-                      style={[
-                        styles.addressTagBadge,
-                        addr.tag === 'Work'
-                          ? styles.tagWork
-                          : addr.tag === 'Other'
-                          ? styles.tagOther
-                          : styles.tagHome,
-                      ]}
-                    >
-                      <Icon
-                        name={addr.tag === 'Work' ? 'briefcase' : addr.tag === 'Other' ? 'map-pin' : 'home'}
-                        size={11}
-                        color="#0F172A"
-                        style={{ marginRight: 4 }}
-                      />
-                      <Text style={styles.addressTagText}>{addr.tag || 'Home'}</Text>
-                    </View>
-                    <Icon
-                      name={isSelected ? 'check-circle' : 'circle-o'}
-                      size={18}
-                      color={isSelected ? '#007AFF' : '#94A3B8'}
-                    />
-                  </View>
-
-                  <Text style={styles.addressCardName} numberOfLines={1}>
-                    {addr.recipient_name}
-                  </Text>
-                  <Text style={styles.addressCardMobile}>
-                    <Icon name="phone" size={11} color="#64748B" /> {addr.mobile}
-                  </Text>
-                  <Text style={styles.addressCardDetails} numberOfLines={2}>
-                    {addr.address_line_1}, {addr.city} {addr.zip_code ? `- ${addr.zip_code}` : ''}
-                  </Text>
-
-                  {addr.latitude && addr.longitude && (
-                    <View style={styles.addressGpsBadge}>
-                      <Icon name="crosshairs" size={10} color="#10B981" style={{ marginRight: 4 }} />
-                      <Text style={styles.addressGpsText}>GPS Pinned</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        ) : (
-          <TouchableOpacity
-            style={styles.emptyAddressBanner}
-            onPress={handleOpenAddAddressModal}
-            activeOpacity={0.8}
-          >
-            <View style={styles.emptyAddressIconCircle}>
-              <Icon name="map-marker" size={20} color="#007AFF" />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.emptyAddressTitle}>Set Delivery Location on Map</Text>
-              <Text style={styles.emptyAddressSubtitle}>
-                Tap to pick location from map and save your delivery address
-              </Text>
-            </View>
-            <Icon name="chevron-right" size={14} color="#94A3B8" />
-          </TouchableOpacity>
-        )}
-
-        {/* Active Address Form Fields */}
-        <View style={styles.addressFormBox}>
-          <Text style={styles.formFieldLabel}>Recipient Full Name *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Full Name *"
-            placeholderTextColor="#94a3b8"
-            value={name}
-            onChangeText={setName}
-          />
-
-          <View style={styles.mobileInputHeaderRow}>
-            <Text style={styles.formFieldLabel}>Mobile Number (10 digits) *</Text>
-            {isMobileVerified || profile?.mobile ? (
-              <View style={styles.verifiedBadge}>
-                <Icon name="check-circle" size={12} color="#10B981" style={{ marginRight: 4 }} />
-                <Text style={styles.verifiedBadgeText}>Verified</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                onPress={() => handleSendEmailOtp()}
-                disabled={sendingEmailOtp}
-                style={styles.verifyOtpLinkBtn}
-              >
-                {sendingEmailOtp ? (
-                  <ActivityIndicator size="small" color="#007AFF" />
-                ) : (
-                  <Text style={styles.verifyOtpLinkText}>Verify via Email OTP</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={styles.mobileInputWrap}>
-            <Text style={styles.countryCodePrefix}>+91</Text>
-            <TextInput
-              style={[styles.input, styles.mobileInputInner]}
-              placeholder="10-digit mobile number *"
-              placeholderTextColor="#94a3b8"
-              value={mobile}
-              onChangeText={(text) => {
-                const cleaned = text.replace(/[^0-9]/g, '').slice(0, 10);
-                setMobile(cleaned);
+        {/* Order Type Selector (Dine-in Default vs Parcel) */}
+        <View style={styles.orderTypeCard}>
+          <Text style={styles.sectionHeading}>Order Type</Text>
+          <View style={styles.orderTypeSegmentedRow}>
+            <TouchableOpacity
+              style={[
+                styles.orderTypeSegmentBtn,
+                orderType === 'Dine-in' && styles.orderTypeSegmentBtnActive,
+              ]}
+              onPress={() => {
+                setOrderType('Dine-in');
+                setOrderTypeConfirmed(true);
               }}
-              keyboardType="phone-pad"
-              maxLength={10}
-            />
+              activeOpacity={0.8}
+            >
+              <Icon
+                name="cutlery"
+                size={15}
+                color={orderType === 'Dine-in' ? '#FFFFFF' : '#007AFF'}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.orderTypeSegmentText,
+                  orderType === 'Dine-in' && styles.orderTypeSegmentTextActive,
+                ]}
+              >
+                🍽️ Dine-in (Default)
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.orderTypeSegmentBtn,
+                orderType === 'Parcel' && styles.orderTypeSegmentBtnActive,
+              ]}
+              onPress={() => {
+                setOrderType('Parcel');
+                setOrderTypeConfirmed(true);
+                if (!currentUser) {
+                  showAlert(
+                    'Sign In Required for Parcel',
+                    'Parcel orders require delivery & contact details. Please sign in or create an account to proceed.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Sign In / Sign Up',
+                        onPress: () =>
+                          navigation.navigate('BuyerLogin', {
+                            redirectTo: 'Checkout',
+                            redirectParams: { cart, customerId },
+                          }),
+                      },
+                    ]
+                  );
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Icon
+                name="cube"
+                size={15}
+                color={orderType === 'Parcel' ? '#FFFFFF' : '#007AFF'}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.orderTypeSegmentText,
+                  orderType === 'Parcel' && styles.orderTypeSegmentTextActive,
+                ]}
+              >
+                📦 Parcel / Takeaway
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.formFieldLabel}>Address / Street / Landmark *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Address / Street / Landmark *"
-            placeholderTextColor="#94a3b8"
-            value={address}
-            onChangeText={setAddress}
-          />
+          {orderType === 'Dine-in' ? (
+            <View style={styles.dineInDetailsBox}>
+              <View style={styles.dineInHeaderRow}>
+                <Icon name="check-circle" size={14} color="#10B981" style={{ marginRight: 6 }} />
+                <Text style={styles.dineInNoticeText}>
+                  Dining in at store. Login and delivery address are not mandatory!
+                </Text>
+              </View>
 
-          <View style={styles.addressCityRow}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={styles.formFieldLabel}>City *</Text>
+              <Text style={styles.formFieldLabel}>Select Table / Counter:</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={tableNo}
+                  onValueChange={(itemValue) => setTableNo(itemValue)}
+                  style={styles.picker}
+                >
+                  {tableOptions.map((option) => (
+                    <Picker.Item
+                      key={option}
+                      label={option === 'Main counter' ? 'Main Counter (Self Pick-up)' : `Table #${option}`}
+                      value={option}
+                    />
+                  ))}
+                </Picker>
+              </View>
+
+              <Text style={[styles.formFieldLabel, { marginTop: 10 }]}>Customer Name (Optional):</Text>
               <TextInput
                 style={styles.input}
-                placeholder="City *"
+                placeholder="Guest Customer (Optional)"
                 placeholderTextColor="#94a3b8"
-                value={city}
-                onChangeText={setCity}
+                value={name}
+                onChangeText={setName}
               />
             </View>
-            <View style={{ flex: 1, marginLeft: 8 }}>
-              <Text style={styles.formFieldLabel}>Postal Code</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Postal Code"
-                placeholderTextColor="#94a3b8"
-                value={postalCode}
-                onChangeText={setPostalCode}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-
-          {selectedCoords && (
-            <View style={styles.activeCoordsRow}>
-              <Icon name="crosshairs" size={13} color="#10B981" style={{ marginRight: 6 }} />
-              <Text style={styles.activeCoordsText}>
-                GPS Coordinates: {selectedCoords.latitude.toFixed(5)}, {selectedCoords.longitude.toFixed(5)}
+          ) : (
+            <View style={styles.parcelNoticeBox}>
+              <Icon name="info-circle" size={14} color="#D97706" style={{ marginRight: 6 }} />
+              <Text style={styles.parcelNoticeText}>
+                Parcel Order: Contact number, delivery address & sign-in are mandatory.
               </Text>
             </View>
           )}
         </View>
 
-        {profile && profile.role === 'seller' && (
-          <>
-            <Text style={styles.sectionHeading}>Order Type</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={orderType}
-                onValueChange={(itemValue) => setOrderType(itemValue)}
-                style={styles.picker}
+        {/* Delivery Address & Contact (Rendered ONLY when orderType is Parcel) */}
+        {orderType === 'Parcel' && (
+          <View>
+            <View style={styles.addressSectionHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionHeading}>Delivery Address & Contact *</Text>
+                <Text style={styles.sectionSubheading}>Choose saved address or pick location with GPS map</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addAddressHeaderBtn}
+                onPress={handleOpenAddAddressModal}
+                activeOpacity={0.8}
               >
-                <Picker.Item label="Dine-in" value="Dine-in" />
-                <Picker.Item label="Parcel" value="Parcel" />
-              </Picker>
+                <Icon name="map-marker" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.addAddressHeaderBtnText}>+ Add / Map</Text>
+              </TouchableOpacity>
             </View>
 
-            {orderType === 'Dine-in' && (
-              <>
-                <Text style={styles.sectionHeading}>Dine-in Details</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={tableNo}
-                    onValueChange={(itemValue) => setTableNo(itemValue)}
-                    style={styles.picker}
-                  >
-                    {tableOptions.map((option) => (
-                      <Picker.Item key={option} label={option} value={option} />
-                    ))}
-                  </Picker>
+            {/* Saved Addresses Horizontal Carousel */}
+            {savedAddresses && savedAddresses.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.savedAddressesScroll}
+              >
+                {savedAddresses.map((addr) => {
+                  const isSelected = selectedAddressId === addr.id;
+                  return (
+                    <TouchableOpacity
+                      key={addr.id}
+                      style={[styles.addressCard, isSelected && styles.addressCardSelected]}
+                      onPress={() => handleSelectAddress(addr)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.addressCardTopRow}>
+                        <View
+                          style={[
+                            styles.addressTagBadge,
+                            addr.tag === 'Work'
+                              ? styles.tagWork
+                              : addr.tag === 'Other'
+                              ? styles.tagOther
+                              : styles.tagHome,
+                          ]}
+                        >
+                          <Icon
+                            name={addr.tag === 'Work' ? 'briefcase' : addr.tag === 'Other' ? 'map-pin' : 'home'}
+                            size={11}
+                            color="#0F172A"
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text style={styles.addressTagText}>{addr.tag || 'Home'}</Text>
+                        </View>
+                        <Icon
+                          name={isSelected ? 'check-circle' : 'circle-o'}
+                          size={18}
+                          color={isSelected ? '#007AFF' : '#94A3B8'}
+                        />
+                      </View>
+
+                      <Text style={styles.addressCardName} numberOfLines={1}>
+                        {addr.recipient_name}
+                      </Text>
+                      <Text style={styles.addressCardMobile}>
+                        <Icon name="phone" size={11} color="#64748B" /> {addr.mobile}
+                      </Text>
+                      <Text style={styles.addressCardDetails} numberOfLines={2}>
+                        {addr.address_line_1}, {addr.city} {addr.zip_code ? `- ${addr.zip_code}` : ''}
+                      </Text>
+
+                      {addr.latitude && addr.longitude && (
+                        <View style={styles.addressGpsBadge}>
+                          <Icon name="crosshairs" size={10} color="#10B981" style={{ marginRight: 4 }} />
+                          <Text style={styles.addressGpsText}>GPS Pinned</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <TouchableOpacity
+                style={styles.emptyAddressBanner}
+                onPress={handleOpenAddAddressModal}
+                activeOpacity={0.8}
+              >
+                <View style={styles.emptyAddressIconCircle}>
+                  <Icon name="map-marker" size={20} color="#007AFF" />
                 </View>
-              </>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.emptyAddressTitle}>Set Delivery Location on Map</Text>
+                  <Text style={styles.emptyAddressSubtitle}>
+                    Tap to pick location from map and save your delivery address
+                  </Text>
+                </View>
+                <Icon name="chevron-right" size={14} color="#94A3B8" />
+              </TouchableOpacity>
             )}
-          </>
+
+            {/* Active Address Form Fields */}
+            <View style={styles.addressFormBox}>
+              <Text style={styles.formFieldLabel}>Recipient Full Name *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Full Name *"
+                placeholderTextColor="#94a3b8"
+                value={name}
+                onChangeText={setName}
+              />
+
+              <View style={styles.mobileInputHeaderRow}>
+                <Text style={styles.formFieldLabel}>Mobile Number (10 digits) *</Text>
+                {isMobileVerified || profile?.mobile ? (
+                  <View style={styles.verifiedBadge}>
+                    <Icon name="check-circle" size={12} color="#10B981" style={{ marginRight: 4 }} />
+                    <Text style={styles.verifiedBadgeText}>Verified</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => handleSendEmailOtp()}
+                    disabled={sendingEmailOtp}
+                    style={styles.verifyOtpLinkBtn}
+                  >
+                    {sendingEmailOtp ? (
+                      <ActivityIndicator size="small" color="#007AFF" />
+                    ) : (
+                      <Text style={styles.verifyOtpLinkText}>Verify via Email OTP</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.mobileInputWrap}>
+                <Text style={styles.countryCodePrefix}>+91</Text>
+                <TextInput
+                  style={[styles.input, styles.mobileInputInner]}
+                  placeholder="10-digit mobile number *"
+                  placeholderTextColor="#94a3b8"
+                  value={mobile}
+                  onChangeText={(text) => {
+                    const cleaned = text.replace(/[^0-9]/g, '').slice(0, 10);
+                    setMobile(cleaned);
+                  }}
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                />
+              </View>
+
+              <Text style={styles.formFieldLabel}>Address / Street / Landmark *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Address / Street / Landmark *"
+                placeholderTextColor="#94a3b8"
+                value={address}
+                onChangeText={setAddress}
+              />
+
+              <View style={styles.addressCityRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.formFieldLabel}>City *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="City *"
+                    placeholderTextColor="#94a3b8"
+                    value={city}
+                    onChangeText={setCity}
+                  />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.formFieldLabel}>Postal Code</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Postal Code"
+                    placeholderTextColor="#94a3b8"
+                    value={postalCode}
+                    onChangeText={setPostalCode}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              {selectedCoords && (
+                <View style={styles.activeCoordsRow}>
+                  <Icon name="crosshairs" size={13} color="#10B981" style={{ marginRight: 6 }} />
+                  <Text style={styles.activeCoordsText}>
+                    GPS Coordinates: {selectedCoords.latitude.toFixed(5)}, {selectedCoords.longitude.toFixed(5)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
         )}
 
         <Text style={styles.sectionHeading}>Payment Method</Text>
         <View style={styles.paymentMethodContainer}>
-          <TouchableOpacity
-            style={[styles.paymentButton, paymentMethod === 'upi' && styles.selectedPaymentButton]}
-            onPress={() => setPaymentMethod('upi')}
-            activeOpacity={0.8}
-          >
-            <Icon
-              name="qrcode"
-              size={22}
-              color={paymentMethod === 'upi' ? '#FFFFFF' : '#007AFF'}
-              style={{ marginBottom: 6 }}
-            />
-            <Text
-              style={[
-                styles.paymentButtonText,
-                paymentMethod === 'upi' && styles.selectedPaymentButtonText,
-              ]}
+          {isUpiConfigured && (
+            <TouchableOpacity
+              style={[styles.paymentButton, paymentMethod === 'upi' && styles.selectedPaymentButton]}
+              onPress={() => handlePayWithUpiPress('select_upi')}
+              activeOpacity={0.8}
             >
-              Pay with UPI
-            </Text>
-          </TouchableOpacity>
+              <Icon
+                name="qrcode"
+                size={22}
+                color={paymentMethod === 'upi' ? '#FFFFFF' : '#007AFF'}
+                style={{ marginBottom: 6 }}
+              />
+              <Text
+                style={[
+                  styles.paymentButtonText,
+                  paymentMethod === 'upi' && styles.selectedPaymentButtonText,
+                ]}
+              >
+                Pay with UPI
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            style={[styles.paymentButton, paymentMethod === 'cod' && styles.selectedPaymentButton]}
+            style={[
+              styles.paymentButton,
+              paymentMethod === 'cod' && styles.selectedPaymentButton,
+              !isUpiConfigured && { flex: 1 },
+            ]}
             onPress={() => setPaymentMethod('cod')}
             activeOpacity={0.8}
           >
@@ -1518,13 +1748,22 @@ const CheckoutScreen = ({ navigation, route }) => {
                 paymentMethod === 'cod' && styles.selectedPaymentButtonText,
               ]}
             >
-              Cash on Delivery
+              {orderType === 'Dine-in' ? 'Pay at Counter (Cash)' : 'Cash on Delivery'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* UPI PAYMENT CARD (Displayed when user selects UPI) */}
-        {paymentMethod === 'upi' && (
+        {!isUpiConfigured && (
+          <View style={styles.noUpiBanner}>
+            <Icon name="info-circle" size={13} color="#64748B" style={{ marginRight: 6 }} />
+            <Text style={styles.noUpiBannerText}>
+              Cash payment only (Seller has not configured UPI details).
+            </Text>
+          </View>
+        )}
+
+        {/* UPI PAYMENT CARD (Displayed strictly from seller profile when UPI is configured) */}
+        {paymentMethod === 'upi' && isUpiConfigured && (
           <View style={styles.upiCardContainer}>
             {/* Header */}
             <View style={styles.upiCardHeader}>
@@ -1666,36 +1905,6 @@ const CheckoutScreen = ({ navigation, route }) => {
                 </Text>
               </TouchableOpacity>
             </View>
-
-            {/* Expandable Custom UPI ID */}
-            <TouchableOpacity
-              style={styles.toggleEditUpiBtn}
-              onPress={() => setShowEditUpi(!showEditUpi)}
-            >
-              <Text style={styles.toggleEditUpiText}>
-                {showEditUpi ? 'Hide custom UPI ID' : 'Change or customize UPI ID'}
-              </Text>
-              <Icon
-                name={showEditUpi ? 'chevron-up' : 'chevron-down'}
-                size={11}
-                color="#007AFF"
-                style={{ marginLeft: 5 }}
-              />
-            </TouchableOpacity>
-
-            {showEditUpi && (
-              <View style={styles.editUpiBox}>
-                <Text style={styles.editUpiLabel}>Custom Payee UPI ID:</Text>
-                <TextInput
-                  style={styles.editUpiInput}
-                  placeholder="e.g. yourstore@okaxis, 9876543210@paytm"
-                  placeholderTextColor="#94a3b8"
-                  value={customUpiId}
-                  onChangeText={setCustomUpiId}
-                  autoCapitalize="none"
-                />
-              </View>
-            )}
           </View>
         )}
       </ScrollView>
@@ -1718,7 +1927,13 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         <TouchableOpacity
           style={[styles.footerPlaceOrderBtn, loading && styles.placeOrderButtonDisabled]}
-          onPress={handlePlaceOrder}
+          onPress={() => {
+            if (paymentMethod === 'upi' && !orderTypeConfirmed) {
+              handlePayWithUpiPress('place_order');
+            } else {
+              handlePlaceOrder();
+            }
+          }}
           disabled={loading}
           activeOpacity={0.85}
         >
@@ -1733,7 +1948,9 @@ const CheckoutScreen = ({ navigation, route }) => {
                 style={{ marginRight: 6 }}
               />
               <Text style={styles.footerPlaceOrderBtnText}>
-                {paymentMethod === 'upi' ? 'Pay with UPI' : 'Place Order'}
+                {paymentMethod === 'upi'
+                  ? (orderType === 'Dine-in' ? 'Pay with UPI (Dine-in)' : 'Pay with UPI (Parcel)')
+                  : (orderType === 'Dine-in' ? 'Confirm Dine-in Order' : 'Place Order')}
               </Text>
             </>
           )}
@@ -1750,6 +1967,85 @@ const CheckoutScreen = ({ navigation, route }) => {
         customerId={customerId}
         forceShow={true}
       />
+
+      {/* ORDER TYPE SELECTION MODAL (Prompted when user clicks Pay with UPI) */}
+      <Modal
+        visible={showOrderTypeModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowOrderTypeModal(false)}
+      >
+        <View style={styles.orderTypeModalOverlay}>
+          <View style={styles.orderTypeModalCard}>
+            <View style={styles.orderTypeModalHeader}>
+              <View style={styles.orderTypeModalIconWrap}>
+                <Icon name="question-circle" size={26} color="#007AFF" />
+              </View>
+              <Text style={styles.orderTypeModalTitle}>Select Order Type</Text>
+              <Text style={styles.orderTypeModalSub}>
+                Is this order for Dine-in at the store or Parcel takeaway?
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.modalOptionCard,
+                orderType === 'Dine-in' && styles.modalOptionCardActive,
+              ]}
+              onPress={handleSelectDineIn}
+              activeOpacity={0.8}
+            >
+              <View style={styles.modalOptionIconCircle}>
+                <Icon name="cutlery" size={18} color="#007AFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                  <Text style={styles.modalOptionTitle}>🍽️ Dine-in (Default)</Text>
+                  <View style={styles.modalOptionBadgeGreen}>
+                    <Text style={styles.modalOptionBadgeGreenText}>No Login Needed</Text>
+                  </View>
+                </View>
+                <Text style={styles.modalOptionDesc}>
+                  Eat at store. Select your table or counter. No login or delivery address required.
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.modalOptionCard,
+                orderType === 'Parcel' && styles.modalOptionCardActive,
+              ]}
+              onPress={handleSelectParcel}
+              activeOpacity={0.8}
+            >
+              <View style={styles.modalOptionIconCircleOrange}>
+                <Icon name="cube" size={18} color="#D97706" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                  <Text style={styles.modalOptionTitle}>📦 Parcel / Takeaway</Text>
+                  <View style={styles.modalOptionBadgeOrange}>
+                    <Text style={styles.modalOptionBadgeOrangeText}>Sign In Required</Text>
+                  </View>
+                </View>
+                <Text style={styles.modalOptionDesc}>
+                  Delivery or takeaway. Requires contact number and delivery address.
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.orderTypeModalCancelBtn}
+              onPress={() => setShowOrderTypeModal(false)}
+            >
+              <Text style={styles.orderTypeModalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* EMAIL OTP VERIFICATION MODAL */}
       <Modal
@@ -2419,38 +2715,233 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#007AFF',
   },
-  toggleEditUpiBtn: {
+  orderTypeCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  orderTypeSegmentedRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 14,
+    gap: 4,
+  },
+  orderTypeSegmentBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  orderTypeSegmentBtnActive: {
+    backgroundColor: '#007AFF',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  orderTypeSegmentText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  orderTypeSegmentTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  dineInDetailsBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 12,
+  },
+  dineInHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 6,
+    paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  toggleEditUpiText: {
+  dineInNoticeText: {
     fontSize: 12,
-    color: '#007AFF',
+    color: '#065F46',
     fontWeight: '600',
+    flex: 1,
   },
-  editUpiBox: {
-    marginTop: 8,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+  parcelNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  editUpiLabel: {
+  parcelNoticeText: {
     fontSize: 12,
+    color: '#92400E',
     fontWeight: '600',
-    color: '#475569',
-    marginBottom: 6,
+    flex: 1,
   },
-  editUpiInput: {
-    backgroundColor: '#F8FAFC',
+  noUpiBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  noUpiBannerText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
+    flex: 1,
+  },
+  orderTypeModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  orderTypeModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  orderTypeModalHeader: {
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  orderTypeModalIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  orderTypeModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
     color: '#0F172A',
+    marginBottom: 4,
+  },
+  orderTypeModalSub: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  modalOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  modalOptionCardActive: {
+    borderColor: '#007AFF',
+    backgroundColor: '#F0F7FF',
+  },
+  modalOptionIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  modalOptionIconCircleOrange: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FEF3C7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  modalOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginRight: 8,
+  },
+  modalOptionDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  modalOptionBadgeGreen: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  modalOptionBadgeGreenText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  modalOptionBadgeOrange: {
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  modalOptionBadgeOrangeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  orderTypeModalCancelBtn: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  orderTypeModalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
   },
 
   /* Docked Action Footer Bar */
