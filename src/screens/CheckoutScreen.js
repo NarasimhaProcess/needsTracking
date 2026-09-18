@@ -1041,71 +1041,82 @@ const CheckoutScreen = ({ navigation, route }) => {
           table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
         };
 
-        let { data: order, error: orderError } = await supabase
-          .from('orders')
-          .insert(orderPayload)
-          .select()
-          .single();
+        let order = null;
+        let orderError = null;
 
-        if (orderError && (orderError.code === 'PGRST204' || (orderError.message && orderError.message.includes('column')))) {
-          console.warn('Retrying sub-order creation without extra columns:', orderError.message);
-          const fallbackPayload = {
-            user_id: orderUserId,
-            seller_id: targetSellerId,
-            shipping_address: shippingWithBilling,
-            total_amount: groupTotal,
-            status: orderStatus,
-            payment_method: activeMethod,
-            order_type: 'shop-order',
-            table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
-          };
-          let retry = await supabase.from('orders').insert(fallbackPayload).select().single();
-          if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && retry.error.message.includes('seller_id')))) {
-            delete fallbackPayload.seller_id;
-            retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+        // If unauthenticated guest, try SECURITY DEFINER RPC to bypass client-side RLS limits
+        if (!orderUserId) {
+          try {
+            const rawItemsPayload = sellerGroup.items.map((item) => ({
+              product_variant_combination_id: item.product_variant_combinations.id,
+              quantity: item.quantity,
+              price: item.product_variant_combinations.price,
+            }));
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('create_guest_dine_in_order', {
+              p_order: orderPayload,
+              p_items: rawItemsPayload,
+            });
+            if (!rpcErr && rpcData) {
+              order = rpcData;
+            } else if (rpcErr) {
+              console.warn('RPC create_guest_dine_in_order notice, falling back to direct table insert:', rpcErr.message);
+            }
+          } catch (rpcCatchErr) {
+            console.warn('RPC create_guest_dine_in_order exception, falling back to direct insert:', rpcCatchErr);
           }
-          order = retry.data;
-          orderError = retry.error;
         }
 
-        if (orderError) {
-          console.error('Error creating sub-order:', orderError.message);
-          if (orderError.code === '42501' && !orderUserId) {
-            setLoading(false);
-            showAlert(
-              'Sign In Required',
-              'To place a guest dine-in order, please sign in or create an account (or apply enable_guest_and_dine_in_orders.sql in Supabase SQL editor).',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Sign In / Sign Up',
-                  onPress: () =>
-                    navigation.navigate('BuyerLogin', {
-                      redirectTo: 'Checkout',
-                      redirectParams: { cart, customerId },
-                    }),
-                },
-              ]
-            );
-            return;
+        // Direct table insert if order not yet created by RPC
+        if (!order) {
+          let res = await supabase
+            .from('orders')
+            .insert(orderPayload)
+            .select()
+            .single();
+          order = res.data;
+          orderError = res.error;
+
+          if (orderError && (orderError.code === 'PGRST204' || (orderError.message && orderError.message.includes('column')))) {
+            console.warn('Retrying sub-order creation without extra columns:', orderError.message);
+            const fallbackPayload = {
+              user_id: orderUserId,
+              seller_id: targetSellerId,
+              shipping_address: shippingWithBilling,
+              total_amount: groupTotal,
+              status: orderStatus,
+              payment_method: activeMethod,
+              order_type: 'shop-order',
+              table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
+            };
+            let retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+            if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && retry.error.message.includes('seller_id')))) {
+              delete fallbackPayload.seller_id;
+              retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+            }
+            order = retry.data;
+            orderError = retry.error;
           }
-          throw orderError;
-        }
 
-        const orderItemsPayload = sellerGroup.items.map((item) => ({
-          order_id: order.id,
-          product_variant_combination_id: item.product_variant_combinations.id,
-          quantity: item.quantity,
-          price: item.product_variant_combinations.price,
-        }));
+          if (orderError) {
+            console.error('Error creating sub-order:', orderError.message);
+            throw orderError;
+          }
 
-        const { error: orderItemsError } = await supabase
-          .from('order_items')
-          .insert(orderItemsPayload);
+          const orderItemsPayload = sellerGroup.items.map((item) => ({
+            order_id: order.id,
+            product_variant_combination_id: item.product_variant_combinations.id,
+            quantity: item.quantity,
+            price: item.product_variant_combinations.price,
+          }));
 
-        if (orderItemsError) {
-          console.error('Error creating order items:', orderItemsError.message);
-          throw orderItemsError;
+          const { error: orderItemsError } = await supabase
+            .from('order_items')
+            .insert(orderItemsPayload);
+
+          if (orderItemsError) {
+            console.error('Error creating order items:', orderItemsError.message);
+            throw orderItemsError;
+          }
         }
 
         if (order) {
