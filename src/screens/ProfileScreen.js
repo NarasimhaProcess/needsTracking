@@ -56,6 +56,7 @@ import {
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { useTheme } from '../context/ThemeContext';
+import { decodeQrFromImage } from '../services/qrScanService';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
@@ -603,16 +604,29 @@ const ProfileScreen = ({ navigation, route }) => {
         }
 
         const activeQr = await getActiveQrCode(user.id);
+        let currentUpiId = user.user_metadata?.upi_id || data?.upi_id || '';
         if (activeQr) {
           setUpiQrCodeUrl(activeQr.qr_image_url);
-          if (activeQr.name && activeQr.name.includes('@')) {
-            setUpiId(activeQr.name);
+          if (!currentUpiId && activeQr.name && activeQr.name.includes('@')) {
+            currentUpiId = activeQr.name.trim();
+          }
+          // If UPI ID is missing, scan active QR image in background to recover it
+          if (!currentUpiId && activeQr.qr_image_url) {
+            decodeQrFromImage(activeQr.qr_image_url)
+              .then((scan) => {
+                if (scan?.success && scan.upiId) {
+                  const detected = scan.upiId.trim();
+                  setUpiId(detected);
+                  updateQrCode(activeQr.id, detected, true).catch(() => {});
+                  supabase.from('profiles').update({ upi_id: detected }).eq('id', user.id).catch(() => {});
+                  supabase.auth.updateUser({ data: { upi_id: detected } }).catch(() => {});
+                }
+              })
+              .catch(() => {});
           }
         }
-        if (user.user_metadata?.upi_id) {
-          setUpiId(user.user_metadata.upi_id);
-        } else if (data?.upi_id) {
-          setUpiId(data.upi_id);
+        if (currentUpiId) {
+          setUpiId(currentUpiId);
         }
       }
     } catch (err) {

@@ -24,6 +24,7 @@ import {
   supabase,
   getCart,
   getActiveQrCode,
+  updateQrCode,
   getUserAddresses,
   addUserAddress,
   deleteUserAddress,
@@ -34,6 +35,12 @@ import { showAlert } from '../utils/alertUtils';
 import { getPrinterConfig } from '../services/printerService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import {
+  decodeQrFromImage,
+  generateQrDataUrl,
+  buildUpiPaymentUri,
+  parseUpiString,
+} from '../services/qrScanService';
 
 const CheckoutScreen = ({ navigation, route }) => {
   const { cart: initialCart, customerId } = route?.params || {};
@@ -86,8 +93,13 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [sellerQr, setSellerQr] = useState(null);
   const [sellerProfile, setSellerProfile] = useState(null);
   const [sellerUpiId, setSellerUpiId] = useState('');
+  const [sellerRawUpiText, setSellerRawUpiText] = useState('');
   const [loadingSellerQr, setLoadingSellerQr] = useState(false);
-  const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' (with bill amount) | 'profile' (uploaded QR)
+  const [qrTab, setQrTab] = useState('profile'); // 'profile' (uploaded QR from profile) | 'dynamic' (with bill amount)
+  const [dynamicQrDataUrl, setDynamicQrDataUrl] = useState(null);
+  const [qrImageLoading, setQrImageLoading] = useState(false);
+  const [qrImageError, setQrImageError] = useState(false);
+  const [isScanningProfileQr, setIsScanningProfileQr] = useState(false);
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [sellerTaxConfig, setSellerTaxConfig] = useState(null);
 
@@ -331,23 +343,41 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         const { data: profData } = await supabase
           .from('profiles')
-          .select('id, full_name, mobile, email, media_urls, upi_id, enable_tax, cgst_rate, sgst_rate, enable_service_cost, service_cost_rate')
+          .select('id, full_name, mobile, email, media_urls')
           .eq('id', targetSellerId)
           .maybeSingle();
 
         if (profData) {
           setSellerProfile(profData);
-          if (!configuredUpiId && profData.upi_id && profData.upi_id.includes('@')) {
-            configuredUpiId = profData.upi_id.trim();
-          }
-          if (profData.enable_tax !== undefined || profData.enable_service_cost !== undefined) {
-            setSellerTaxConfig({
-              enableTax: Boolean(profData.enable_tax),
-              cgstRate: profData.cgst_rate !== undefined && profData.cgst_rate !== null ? Number(profData.cgst_rate) : 2.5,
-              sgstRate: profData.sgst_rate !== undefined && profData.sgst_rate !== null ? Number(profData.sgst_rate) : 2.5,
-              enableServiceCost: Boolean(profData.enable_service_cost),
-              serviceCostRate: profData.service_cost_rate !== undefined && profData.service_cost_rate !== null ? Number(profData.service_cost_rate) : 0,
-            });
+        }
+
+        // If seller has uploaded a profile QR code, scan it to extract UPI ID, Merchant Name & Raw URI!
+        const profileQrUrl = configuredQr?.qr_image_url || configuredQr?.qr_code_url;
+        if (profileQrUrl) {
+          try {
+            setIsScanningProfileQr(true);
+            const scan = await decodeQrFromImage(profileQrUrl);
+            if (scan?.success) {
+              if (scan.rawText) {
+                setSellerRawUpiText(scan.rawText);
+              }
+              if (scan.upiId) {
+                configuredUpiId = scan.upiId.trim();
+                // Sync back to database for future instant loads
+                if (configuredQr?.id && configuredQr.name !== configuredUpiId) {
+                  try {
+                    updateQrCode(configuredQr.id, configuredUpiId, true).catch(() => {});
+                  } catch (_) {}
+                }
+              }
+              if (scan.payeeName && !profData?.full_name) {
+                setSellerProfile((prev) => ({ ...(prev || {}), full_name: scan.payeeName }));
+              }
+            }
+          } catch (scanErr) {
+            console.warn('Notice scanning profile QR in checkout:', scanErr);
+          } finally {
+            setIsScanningProfileQr(false);
           }
         }
       } else if (currentUser?.id) {
@@ -358,6 +388,25 @@ const CheckoutScreen = ({ navigation, route }) => {
           if (qrData.name && qrData.name.includes('@')) {
             configuredUpiId = qrData.name.trim();
           }
+          if (qrData.qr_image_url || qrData.qr_code_url) {
+            try {
+              setIsScanningProfileQr(true);
+              const scan = await decodeQrFromImage(qrData.qr_image_url || qrData.qr_code_url);
+              if (scan?.success) {
+                if (scan.rawText) {
+                  setSellerRawUpiText(scan.rawText);
+                }
+                if (scan.upiId) {
+                  configuredUpiId = scan.upiId.trim();
+                  if (qrData.id && qrData.name !== configuredUpiId) {
+                    updateQrCode(qrData.id, configuredUpiId, true).catch(() => {});
+                  }
+                }
+              }
+            } catch (_) {} finally {
+              setIsScanningProfileQr(false);
+            }
+          }
         }
       }
 
@@ -367,6 +416,13 @@ const CheckoutScreen = ({ navigation, route }) => {
         (configuredUpiId && configuredUpiId.includes('@')) ||
         (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url || (configuredQr.name && configuredQr.name.includes('@'))))
       );
+
+      // Prioritize uploaded seller profile QR if available
+      if (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url)) {
+        setQrTab('profile');
+      } else {
+        setQrTab('dynamic');
+      }
 
       // If seller has not configured UPI, lock payment method to 'cod'
       if (!hasUpi) {
@@ -407,13 +463,37 @@ const CheckoutScreen = ({ navigation, route }) => {
     ? `upi://pay?pa=${encodeURIComponent(activeUpiId)}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(orderNote)}`
     : '';
 
-  // Dynamic QR Code image incorporating exact order bill amount
-  const dynamicQrImageUrl = dynamicUpiUri
+  // Local instant high-resolution QR code generator (no external API delay)
+  useEffect(() => {
+    let isMounted = true;
+    if (dynamicUpiUri) {
+      generateQrDataUrl(dynamicUpiUri, { width: 350, margin: 2 }).then((dataUrl) => {
+        if (isMounted && dataUrl) {
+          setDynamicQrDataUrl(dataUrl);
+          setQrImageError(false);
+        }
+      }).catch(() => {});
+    } else {
+      setDynamicQrDataUrl(null);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [dynamicUpiUri]);
+
+  // Fallback web QR Code image URL
+  const fallbackDynamicQrUrl = dynamicUpiUri
     ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`
     : null;
 
   // Profile-uploaded QR image URL (from user_qr_codes table)
-  const profileQrImageUrl = sellerQr?.qr_image_url || null;
+  const profileQrImageUrl = sellerQr?.qr_image_url || sellerQr?.qr_code_url || null;
+
+  // Unified QR code image URL to display
+  const displayedQrUri =
+    qrTab === 'profile'
+      ? (profileQrImageUrl || dynamicQrDataUrl || fallbackDynamicQrUrl)
+      : (dynamicQrDataUrl || fallbackDynamicQrUrl || profileQrImageUrl);
 
   // Prompt Order Type when Pay with UPI is clicked
   const handlePayWithUpiPress = (action = 'select_upi') => {
@@ -486,13 +566,83 @@ const CheckoutScreen = ({ navigation, route }) => {
     } catch (_) {}
   };
 
-  const handleOpenDirectUpiPay = () => {
-    Linking.openURL(dynamicUpiUri).catch(() => {
+  const handleOpenDirectUpiPay = async () => {
+    let targetUpiUri = dynamicUpiUri;
+
+    // If dynamicUpiUri is missing, build with activeUpiId
+    if (!targetUpiUri && activeUpiId) {
+      targetUpiUri = buildUpiPaymentUri({
+        upiId: activeUpiId,
+        payeeName,
+        amount: totalAmount,
+        note: orderNote,
+      });
+    }
+
+    // If still missing, try decoding profile QR image immediately
+    if (!targetUpiUri && profileQrImageUrl) {
+      try {
+        const scan = await decodeQrFromImage(profileQrImageUrl);
+        if (scan?.success && scan.upiId) {
+          setSellerUpiId(scan.upiId);
+          targetUpiUri = buildUpiPaymentUri({
+            upiId: scan.upiId,
+            payeeName,
+            amount: totalAmount,
+            note: orderNote,
+          });
+        }
+      } catch (_) {}
+    }
+
+    if (!targetUpiUri) {
       showAlert(
-        'UPI App Not Found',
-        `Could not launch a UPI app automatically. Please scan the QR Code on screen using Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+        'Scan Store QR Code',
+        `Please scan the Seller's QR code displayed on screen with Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
       );
-    });
+      return;
+    }
+
+    // Check if on Desktop Web browser where UPI handler apps don't exist
+    const isDesktopWeb =
+      Platform.OS === 'web' &&
+      typeof navigator !== 'undefined' &&
+      !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    if (isDesktopWeb) {
+      if (activeUpiId) {
+        handleCopyUpiId();
+      }
+      showAlert(
+        'Mobile UPI Payment',
+        `UPI payment apps (Google Pay, PhonePe, Paytm) are mobile apps.\n\n` +
+        `1. Scan the QR code displayed on screen using your mobile phone's camera or UPI app.\n` +
+        (activeUpiId ? `2. Or pay ₹${totalAmount.toFixed(2)} directly to UPI ID: ${activeUpiId} (copied to clipboard!).` : '')
+      );
+      return;
+    }
+
+    // Launch on mobile device or mobile browser
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.href = targetUpiUri;
+      } else {
+        const canOpen = await Linking.canOpenURL(targetUpiUri).catch(() => false);
+        if (canOpen) {
+          await Linking.openURL(targetUpiUri);
+        } else {
+          await Linking.openURL(targetUpiUri);
+        }
+      }
+    } catch (err) {
+      if (activeUpiId) {
+        handleCopyUpiId();
+      }
+      showAlert(
+        'Open UPI App',
+        `Could not open UPI app automatically. Please scan the QR code on screen using Google Pay, PhonePe, or Paytm, or pay to:\n\n${activeUpiId || 'Merchant'}\n(Copied to clipboard!)`
+      );
+    }
   };
 
   // Handle Address selection
@@ -1208,10 +1358,11 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   const openQrImageViewer = () => {
     const list = [];
-    if (dynamicQrImageUrl) {
+    const activeDynamicUrl = dynamicQrDataUrl || fallbackDynamicQrUrl;
+    if (activeDynamicUrl) {
       list.push({
         id: 'checkout-dynamic-qr',
-        uri: dynamicQrImageUrl,
+        uri: activeDynamicUrl,
         type: 'image',
         title: `Dynamic UPI QR Code (₹${totalAmount.toFixed(2)})`,
         subtitle: `Scan to pay ₹${totalAmount.toFixed(2)} to ${resolvedSellerName || 'Store'}`,
@@ -1222,8 +1373,8 @@ const CheckoutScreen = ({ navigation, route }) => {
         id: 'checkout-profile-qr',
         uri: profileQrImageUrl,
         type: 'image',
-        title: `Profile QR Code - ${resolvedSellerName || 'Store'}`,
-        subtitle: `Payee: ${resolvedSellerName || 'Store'}`,
+        title: `Seller Profile QR Code - ${resolvedSellerName || 'Store'}`,
+        subtitle: `UPI ID: ${activeUpiId || 'Store QR'}`,
       });
     }
     (cartItems || []).forEach((ci) => {
