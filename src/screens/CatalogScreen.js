@@ -47,6 +47,7 @@ import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import StoreQrModal from '../components/StoreQrModal';
 
 const { width } = Dimensions.get('window');
+const SUBCAT_VIEW_MODE_KEY = '@catalog_subcat_view_mode';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -188,10 +189,25 @@ const CatalogScreen = ({ navigation, route }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isHorizontalScreen = windowWidth > windowHeight && windowWidth >= 640;
 
-  // Subcategory visibility, view mode, and sidebar state
+  // Subcategory visibility, view mode, and sidebar state (defaults to 'grid', switchable to 'strip')
   const [isSubcatVisible, setIsSubcatVisible] = useState(true);
-  const [subcatViewMode, setSubcatViewMode] = useState('horizontal'); // 'horizontal' | 'vertical'
+  const [subcatViewMode, setSubcatViewMode] = useState('grid'); // 'grid' (default) | 'strip'
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+
+  React.useEffect(() => {
+    AsyncStorage.getItem(SUBCAT_VIEW_MODE_KEY)
+      .then((saved) => {
+        if (saved === 'grid' || saved === 'strip' || saved === 'vertical' || saved === 'horizontal') {
+          setSubcatViewMode(saved === 'horizontal' || saved === 'strip' ? 'strip' : 'grid');
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleChangeSubcatViewMode = (mode) => {
+    setSubcatViewMode(mode);
+    AsyncStorage.setItem(SUBCAT_VIEW_MODE_KEY, mode).catch(() => {});
+  };
 
   // Responsive column count for product grid
   const numColumns = useMemo(() => {
@@ -1830,42 +1846,72 @@ const CatalogScreen = ({ navigation, route }) => {
             </ScrollView>
           </View>
 
-          {/* Subcategory Bar with Hide/Show & Horizontal/Vertical View Modes */}
+          {/* Subcategory Bar with Hide/Show & Grid/Strip View Modes */}
           {selectedCategory !== 'all' && catalogSubcategories && catalogSubcategories.length > 0 && (
             <View style={styles.subcategoryBarWrapper}>
               <View style={styles.subcategoryControlHeader}>
                 <View style={styles.subcategoryControlTitleBox}>
                   <Icon name="tags" size={11} color="#475569" style={{ marginRight: 5 }} />
                   <Text style={styles.subcategoryControlTitle}>
-                    Subcategories ({catalogSubcategories.length})
+                    Sub Catalog ({catalogSubcategories.length})
                     {selectedSubcategory !== 'all' ? (
                       <Text style={{ color: '#007AFF', fontWeight: '700' }}> • Filtered</Text>
                     ) : null}
                   </Text>
                 </View>
                 <View style={styles.subcategoryControlActionBtns}>
-                  {/* View Mode Toggle: Strip (horizontal) vs Grid (vertical wrap) */}
-                  <TouchableOpacity
-                    style={[styles.subcatActionBtn, subcatViewMode === 'vertical' && styles.subcatActionBtnActive]}
-                    onPress={() => setSubcatViewMode((prev) => (prev === 'horizontal' ? 'vertical' : 'horizontal'))}
-                    activeOpacity={0.7}
-                    accessibilityLabel="Toggle Subcategories View"
-                  >
-                    <Icon
-                      name={subcatViewMode === 'vertical' ? 'ellipsis-h' : 'th-large'}
-                      size={11}
-                      color={subcatViewMode === 'vertical' ? '#007AFF' : '#64748B'}
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text
+                  {/* View Mode Segmented Control: Grid (Default) vs Strip */}
+                  <View style={styles.subcatViewToggleGroup}>
+                    <TouchableOpacity
                       style={[
-                        styles.subcatActionBtnText,
-                        subcatViewMode === 'vertical' && styles.subcatActionBtnTextActive,
+                        styles.subcatToggleTab,
+                        (subcatViewMode === 'grid' || subcatViewMode === 'vertical') && styles.subcatToggleTabActive,
                       ]}
+                      onPress={() => handleChangeSubcatViewMode('grid')}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Grid View"
                     >
-                      {subcatViewMode === 'vertical' ? 'Strip' : 'Grid'}
-                    </Text>
-                  </TouchableOpacity>
+                      <Icon
+                        name="th-large"
+                        size={10}
+                        color={(subcatViewMode === 'grid' || subcatViewMode === 'vertical') ? '#007AFF' : '#64748B'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.subcatToggleTabText,
+                          (subcatViewMode === 'grid' || subcatViewMode === 'vertical') && styles.subcatToggleTabTextActive,
+                        ]}
+                      >
+                        Grid
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.subcatToggleTab,
+                        (subcatViewMode === 'strip' || subcatViewMode === 'horizontal') && styles.subcatToggleTabActive,
+                      ]}
+                      onPress={() => handleChangeSubcatViewMode('strip')}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Strip View"
+                    >
+                      <Icon
+                        name="bars"
+                        size={10}
+                        color={(subcatViewMode === 'strip' || subcatViewMode === 'horizontal') ? '#007AFF' : '#64748B'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.subcatToggleTabText,
+                          (subcatViewMode === 'strip' || subcatViewMode === 'horizontal') && styles.subcatToggleTabTextActive,
+                        ]}
+                      >
+                        Strip
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
 
                   {/* Hide / Show Toggle */}
                   <TouchableOpacity
@@ -1908,9 +1954,9 @@ const CatalogScreen = ({ navigation, route }) => {
                 </View>
               )}
 
-              {/* Subcategories: Horizontal Strip vs Vertical Multi-Row Grid */}
+              {/* Subcategories: Strip (horizontal scroll) vs Grid (multi-row wrap) */}
               {isSubcatVisible && (
-                subcatViewMode === 'horizontal' ? (
+                (subcatViewMode === 'strip' || subcatViewMode === 'horizontal') ? (
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -1965,8 +2011,13 @@ const CatalogScreen = ({ navigation, route }) => {
                     })}
                   </ScrollView>
                 ) : (
-                  /* Vertical Wrap Grid */
-                  <View style={styles.subcategoryGridContainer}>
+                  /* Multi-Row Grid View (Default) */
+                  <ScrollView
+                    style={styles.subcategoryGridScroll}
+                    contentContainerStyle={styles.subcategoryGridContainer}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                  >
                     <TouchableOpacity
                       style={[
                         styles.subcategoryChip,
@@ -2016,7 +2067,7 @@ const CatalogScreen = ({ navigation, route }) => {
                         </TouchableOpacity>
                       );
                     })}
-                  </View>
+                  </ScrollView>
                 )
               )}
             </View>
@@ -3520,6 +3571,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  subcatViewToggleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  subcatToggleTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+  },
+  subcatToggleTabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 1.5,
+    elevation: 2,
+  },
+  subcatToggleTabText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  subcatToggleTabTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
   subcatActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3569,13 +3653,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#007AFF',
   },
+  subcategoryGridScroll: {
+    maxHeight: 180,
+  },
   subcategoryGridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     paddingHorizontal: 12,
+    paddingVertical: 2,
     gap: 6,
-    maxHeight: 140,
-    overflow: Platform.OS === 'web' ? 'auto' : 'scroll',
   },
   subcategoryChipGrid: {
     marginRight: 0,
