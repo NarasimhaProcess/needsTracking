@@ -2216,19 +2216,13 @@ const ProfileScreen = ({ navigation, route }) => {
             : 'Set your Merchant UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.'}
         </Text>
 
-        <Text style={styles.inputLabel}>Merchant UPI ID / VPA (e.g. store@okaxis or 9876543210@upi)</Text>
+        <Text style={styles.inputLabel}>Merchant ID / UPI ID (e.g. mystore, 9876543210, or store@okaxis)</Text>
         <View style={styles.upiInputRow}>
           <TextInput
             style={[styles.input, styles.upiInputFlex]}
-            placeholder="e.g. store@okaxis, 9876543210@upi, or 9876543210"
+            placeholder="e.g. mystore, 9876543210, or store@okaxis"
             value={upiId}
             onChangeText={setUpiId}
-            onBlur={() => {
-              if (upiId && upiId.trim()) {
-                const norm = normalizeUpiId(upiId);
-                if (norm && !isGenericQrName(norm)) setUpiId(norm);
-              }
-            }}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -2244,32 +2238,8 @@ const ProfileScreen = ({ navigation, route }) => {
             )}
           </TouchableOpacity>
         </View>
-
-        {/* Quick UPI Handle Chips */}
-        <View style={styles.upiChipsRow}>
-          <Text style={styles.upiChipsLabel}>Quick handles:</Text>
-          {['@upi', '@okaxis', '@paytm', '@ybl', '@okhdfcbank', '@icici'].map((suffix) => (
-            <TouchableOpacity
-              key={suffix}
-              style={[
-                styles.upiChip,
-                (upiId || '').endsWith(suffix) && styles.upiChipActive,
-              ]}
-              onPress={() => handleSelectUpiSuffix(suffix)}
-            >
-              <Text
-                style={[
-                  styles.upiChipText,
-                  (upiId || '').endsWith(suffix) && styles.upiChipTextActive,
-                ]}
-              >
-                {suffix}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
         <Text style={styles.upiInputHelper}>
-          💡 Enter your UPI ID, 10-digit mobile number, or Merchant ID. Tap any handle above to auto-fill or switch.
+          💡 Enter your Merchant ID, 10-digit mobile number, or full UPI VPA. Customers will pay directly with their exact order bill amount at Checkout.
         </Text>
 
         {upiId.trim() ? (
@@ -2389,46 +2359,6 @@ const ProfileScreen = ({ navigation, route }) => {
           keyboardType="phone-pad"
         />
 
-        <Text style={styles.inputLabel}>Merchant / Store UPI ID (VPA)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. storename@okaxis, 9876543210@upi, or 9876543210"
-          value={upiId}
-          onChangeText={setUpiId}
-          onBlur={() => {
-            if (upiId && upiId.trim()) {
-              const norm = normalizeUpiId(upiId);
-              if (norm && !isGenericQrName(norm)) setUpiId(norm);
-            }
-          }}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        <View style={styles.upiChipsRow}>
-          <Text style={styles.upiChipsLabel}>Quick handles:</Text>
-          {['@upi', '@okaxis', '@paytm', '@ybl', '@okhdfcbank', '@icici'].map((suffix) => (
-            <TouchableOpacity
-              key={`form-${suffix}`}
-              style={[
-                styles.upiChip,
-                (upiId || '').endsWith(suffix) && styles.upiChipActive,
-              ]}
-              onPress={() => handleSelectUpiSuffix(suffix)}
-            >
-              <Text
-                style={[
-                  styles.upiChipText,
-                  (upiId || '').endsWith(suffix) && styles.upiChipTextActive,
-                ]}
-              >
-                {suffix}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.upiInputHelper}>
-          💡 Enter your UPI ID, 10-digit mobile number, or Merchant ID. The '@upi' handle is added automatically when saving or tapping outside. Saved when you tap 'Update Profile'.
-        </Text>
 
         <Text style={styles.inputLabel}>Address Line 1</Text>
         <TextInput
