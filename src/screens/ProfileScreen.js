@@ -56,7 +56,7 @@ import {
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { useTheme } from '../context/ThemeContext';
-import { decodeQrFromImage } from '../services/qrScanService';
+import { decodeQrFromImage, parseUpiString, normalizeUpiId } from '../services/qrScanService';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
@@ -607,15 +607,15 @@ const ProfileScreen = ({ navigation, route }) => {
         let currentUpiId = user.user_metadata?.upi_id || data?.upi_id || '';
         if (activeQr) {
           setUpiQrCodeUrl(activeQr.qr_image_url);
-          if (!currentUpiId && activeQr.name && activeQr.name.includes('@')) {
-            currentUpiId = activeQr.name.trim();
+          if (!currentUpiId && activeQr.name) {
+            currentUpiId = normalizeUpiId(activeQr.name) || activeQr.name.trim();
           }
           // If UPI ID is missing, scan active QR image in background to recover it
           if (!currentUpiId && activeQr.qr_image_url) {
             decodeQrFromImage(activeQr.qr_image_url)
               .then((scan) => {
                 if (scan?.success && scan.upiId) {
-                  const detected = scan.upiId.trim();
+                  const detected = normalizeUpiId(scan.upiId) || scan.upiId.trim();
                   setUpiId(detected);
                   updateQrCode(activeQr.id, detected, true).catch(() => {});
                   supabase.from('profiles').update({ upi_id: detected }).eq('id', user.id).catch(() => {});
@@ -626,7 +626,7 @@ const ProfileScreen = ({ navigation, route }) => {
           }
         }
         if (currentUpiId) {
-          setUpiId(currentUpiId);
+          setUpiId(normalizeUpiId(currentUpiId) || currentUpiId);
         }
       }
     } catch (err) {
@@ -1114,6 +1114,8 @@ const ProfileScreen = ({ navigation, route }) => {
         }
       }
 
+      const normalizedUpi = normalizeUpiId(upiId);
+
       // 2. Update auth user metadata (name/full_name/profile_media/store_settings/upi_id) and email if changed
       const authUpdates = {
         data: {
@@ -1121,7 +1123,7 @@ const ProfileScreen = ({ navigation, route }) => {
           full_name: trimmedName,
           avatar_url: avatarUrl,
           profile_media: finalMediaList,
-          upi_id: (upiId || '').trim(),
+          upi_id: normalizedUpi || (upiId || '').trim(),
           mobile: trimmedMobile,
           address_line_1: (addressLine1 || '').trim(),
           address_line_2: (addressLine2 || '').trim(),
@@ -1151,17 +1153,23 @@ const ProfileScreen = ({ navigation, route }) => {
         },
       };
 
-      if (upiId && upiId.trim().includes('@')) {
+      if (normalizedUpi) {
         try {
           await supabase
             .from('profiles')
-            .update({ upi_id: upiId.trim() })
+            .update({ upi_id: normalizedUpi })
             .eq('id', user.id);
         } catch (_) {}
         try {
           const activeQr = await getActiveQrCode(user.id);
           if (activeQr) {
-            await updateQrCode(activeQr.id, upiId.trim(), true);
+            await updateQrCode(activeQr.id, normalizedUpi, true);
+          } else {
+            const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+              `upi://pay?pa=${encodeURIComponent(normalizedUpi)}&pn=${encodeURIComponent(trimmedName || 'Store')}&cu=INR`
+            )}`;
+            await addQrCode(user.id, dynamicQrUrl, normalizedUpi, true);
+            setUpiQrCodeUrl(dynamicQrUrl);
           }
         } catch (qrSyncErr) {
           console.warn('Notice syncing QR code name:', qrSyncErr);
@@ -1466,16 +1474,34 @@ const ProfileScreen = ({ navigation, route }) => {
     }
   };
 
+  const handleSelectUpiSuffix = (suffix) => {
+    let base = (upiId || '').trim();
+    if (base.toLowerCase().includes('upi://pay')) {
+      const match = base.match(/[?&]pa=([^&"'\s]+)/i);
+      if (match) base = decodeURIComponent(match[1]).trim();
+    }
+    if (base.includes('@')) {
+      base = base.split('@')[0].trim();
+    }
+    if (!base) {
+      base = (mobile || '').replace(/\D/g, '').slice(-10) || (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+    const updated = base ? `${base}${suffix}` : suffix;
+    setUpiId(updated);
+  };
+
   const handleSaveUpiId = async () => {
-    const trimmed = upiId.trim();
-    if (!trimmed) {
-      showAlert('Invalid UPI ID', 'Please enter a valid UPI ID (e.g., yourname@okaxis or 9876543210@upi)');
+    const normalized = normalizeUpiId(upiId);
+    if (!normalized) {
+      showAlert(
+        'Enter UPI ID / Mobile',
+        'Please enter your UPI ID, 10-digit mobile number, or Merchant ID (e.g. 9876543210@upi, store@okaxis, or 9876543210).'
+      );
       return;
     }
-    if (!trimmed.includes('@')) {
-      showAlert('Invalid UPI ID', 'A valid UPI ID must include "@" (e.g. mobile@upi or username@okhdfcbank)');
-      return;
-    }
+
+    setUpiId(normalized);
+
     try {
       setSavingUpiId(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -1486,14 +1512,14 @@ const ProfileScreen = ({ navigation, route }) => {
 
       // Update user metadata with UPI ID
       await supabase.auth.updateUser({
-        data: { upi_id: trimmed },
+        data: { upi_id: normalized },
       });
 
       // Try updating profiles table if column exists
       try {
         await supabase
           .from('profiles')
-          .update({ upi_id: trimmed })
+          .update({ upi_id: normalized })
           .eq('id', user.id);
       } catch (err) {
         // column may not exist in profiles table
@@ -1501,18 +1527,21 @@ const ProfileScreen = ({ navigation, route }) => {
 
       // Sync with active QR code in user_qr_codes
       const activeQr = await getActiveQrCode(user.id);
+      const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+        `upi://pay?pa=${encodeURIComponent(normalized)}&pn=${encodeURIComponent(name.trim() || 'Store')}&cu=INR`
+      )}`;
+
       if (activeQr) {
-        await updateQrCode(activeQr.id, trimmed, true);
+        await updateQrCode(activeQr.id, normalized, true);
       } else {
-        // Generate dynamic QR code URL for this UPI ID
-        const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-          `upi://pay?pa=${trimmed}&pn=${encodeURIComponent(name.trim() || 'Store')}&cu=INR`
-        )}`;
-        await addQrCode(user.id, dynamicQrUrl, trimmed, true);
+        await addQrCode(user.id, dynamicQrUrl, normalized, true);
         setUpiQrCodeUrl(dynamicQrUrl);
       }
 
-      showAlert('Success', 'UPI ID saved successfully! Customers will now see dynamic UPI QR code with their exact order bill amount at checkout.');
+      showAlert(
+        'UPI ID Saved',
+        `Merchant UPI ID configured as "${normalized}". Customers will now see dynamic UPI QR code with their exact order bill amount at checkout.`
+      );
     } catch (err) {
       console.error('Error saving UPI ID:', err);
       showAlert('Error', err.message || 'Failed to save UPI ID.');
@@ -2149,7 +2178,7 @@ const ProfileScreen = ({ navigation, route }) => {
         <View style={styles.upiInputRow}>
           <TextInput
             style={[styles.input, styles.upiInputFlex]}
-            placeholder="e.g. store@okaxis or 9876543210@upi"
+            placeholder="e.g. store@okaxis, 9876543210@upi, or 9876543210"
             value={upiId}
             onChangeText={setUpiId}
             autoCapitalize="none"
@@ -2168,6 +2197,33 @@ const ProfileScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
 
+        {/* Quick UPI Handle Chips */}
+        <View style={styles.upiChipsRow}>
+          <Text style={styles.upiChipsLabel}>Quick handles:</Text>
+          {['@upi', '@okaxis', '@paytm', '@ybl', '@okhdfcbank', '@icici'].map((suffix) => (
+            <TouchableOpacity
+              key={suffix}
+              style={[
+                styles.upiChip,
+                (upiId || '').endsWith(suffix) && styles.upiChipActive,
+              ]}
+              onPress={() => handleSelectUpiSuffix(suffix)}
+            >
+              <Text
+                style={[
+                  styles.upiChipText,
+                  (upiId || '').endsWith(suffix) && styles.upiChipTextActive,
+                ]}
+              >
+                {suffix}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.upiInputHelper}>
+          💡 Enter your UPI ID, 10-digit mobile number, or Merchant ID. Tap any handle above to auto-fill or switch.
+        </Text>
+
         {upiId.trim() ? (
           <View style={styles.dynamicPreviewContainer}>
             <View style={styles.badgeRow}>
@@ -2180,8 +2236,9 @@ const ProfileScreen = ({ navigation, route }) => {
             <TouchableOpacity
               activeOpacity={0.88}
               onPress={() => {
+                const activeCleanUpi = normalizeUpiId(upiId) || upiId.trim();
                 const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
-                  `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                  `upi://pay?pa=${encodeURIComponent(activeCleanUpi)}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
                 )}`;
                 const combined = [
                   { id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` },
@@ -2197,7 +2254,7 @@ const ProfileScreen = ({ navigation, route }) => {
               <Image
                 source={{
                   uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-                    `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                    `upi://pay?pa=${encodeURIComponent(normalizeUpiId(upiId) || upiId.trim())}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
                   )}`,
                 }}
                 style={styles.previewQrImage}
@@ -2286,12 +2343,37 @@ const ProfileScreen = ({ navigation, route }) => {
         <Text style={styles.inputLabel}>Merchant / Store UPI ID (VPA)</Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g. storename@okaxis or 9876543210@upi"
+          placeholder="e.g. storename@okaxis, 9876543210@upi, or 9876543210"
           value={upiId}
           onChangeText={setUpiId}
           autoCapitalize="none"
           autoCorrect={false}
         />
+        <View style={styles.upiChipsRow}>
+          <Text style={styles.upiChipsLabel}>Quick handles:</Text>
+          {['@upi', '@okaxis', '@paytm', '@ybl', '@okhdfcbank', '@icici'].map((suffix) => (
+            <TouchableOpacity
+              key={`form-${suffix}`}
+              style={[
+                styles.upiChip,
+                (upiId || '').endsWith(suffix) && styles.upiChipActive,
+              ]}
+              onPress={() => handleSelectUpiSuffix(suffix)}
+            >
+              <Text
+                style={[
+                  styles.upiChipText,
+                  (upiId || '').endsWith(suffix) && styles.upiChipTextActive,
+                ]}
+              >
+                {suffix}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.upiInputHelper}>
+          💡 Enter your UPI ID, 10-digit mobile number, or Merchant ID. Saved automatically when you tap 'Save Profile'.
+        </Text>
 
         <Text style={styles.inputLabel}>Address Line 1</Text>
         <TextInput
@@ -3239,6 +3321,45 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
     fontSize: 14,
+  },
+  upiChipsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  upiChipsLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    marginRight: 2,
+  },
+  upiChip: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  upiChipActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  upiChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  upiChipTextActive: {
+    color: '#ffffff',
+  },
+  upiInputHelper: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 12,
+    lineHeight: 15,
   },
   dynamicPreviewContainer: {
     backgroundColor: '#f0fdf4',

@@ -16,6 +16,7 @@ import * as Clipboard from 'expo-clipboard';
 import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import { normalizeUpiId } from '../services/qrScanService';
 
 const UpiQrScreen = ({ navigation, route }) => {
   const { cart, totalAmount: passedAmount, shippingAddress, order, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
@@ -73,8 +74,9 @@ const UpiQrScreen = ({ navigation, route }) => {
           if (qrCode) {
             const url = qrCode.qr_image_url || qrCode.qr_code_url;
             setActiveQrImageUrl(url);
-            if (qrCode.name && qrCode.name.includes('@')) {
-              foundUpi = qrCode.name.trim();
+            const normQr = normalizeUpiId(qrCode.name);
+            if (normQr) {
+              foundUpi = normQr;
               setPayeeUpiId(foundUpi);
             }
           }
@@ -87,8 +89,9 @@ const UpiQrScreen = ({ navigation, route }) => {
 
           if (prof) {
             if (prof.full_name) setPayeeName(prof.full_name);
-            if (prof.upi_id && prof.upi_id.includes('@')) {
-              foundUpi = prof.upi_id.trim();
+            const normProf = normalizeUpiId(prof.upi_id);
+            if (normProf) {
+              foundUpi = normProf;
               setPayeeUpiId(foundUpi);
             }
           }

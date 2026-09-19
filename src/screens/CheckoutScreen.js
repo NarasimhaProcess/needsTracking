@@ -40,6 +40,7 @@ import {
   generateQrDataUrl,
   buildUpiPaymentUri,
   parseUpiString,
+  normalizeUpiId,
 } from '../services/qrScanService';
 
 const CheckoutScreen = ({ navigation, route }) => {
@@ -339,8 +340,9 @@ const CheckoutScreen = ({ navigation, route }) => {
         if (qrData) {
           configuredQr = qrData;
           setSellerQr(qrData);
-          if (qrData.name && qrData.name.includes('@')) {
-            configuredUpiId = qrData.name.trim();
+          const normQr = normalizeUpiId(qrData.name);
+          if (normQr) {
+            configuredUpiId = normQr;
           }
         }
 
@@ -352,8 +354,11 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         if (profData) {
           setSellerProfile(profData);
-          if (!configuredUpiId && profData.upi_id && profData.upi_id.includes('@')) {
-            configuredUpiId = profData.upi_id.trim();
+          if (!configuredUpiId && profData.upi_id) {
+            const normProf = normalizeUpiId(profData.upi_id);
+            if (normProf) {
+              configuredUpiId = normProf;
+            }
           }
         }
 
@@ -368,7 +373,7 @@ const CheckoutScreen = ({ navigation, route }) => {
                 setSellerRawUpiText(scan.rawText);
               }
               if (scan.upiId) {
-                configuredUpiId = scan.upiId.trim();
+                configuredUpiId = normalizeUpiId(scan.upiId) || scan.upiId.trim();
                 // Sync back to database for future instant loads
                 if (configuredQr?.id && configuredQr.name !== configuredUpiId) {
                   try {
@@ -391,8 +396,9 @@ const CheckoutScreen = ({ navigation, route }) => {
         if (qrData) {
           configuredQr = qrData;
           setSellerQr(qrData);
-          if (qrData.name && qrData.name.includes('@')) {
-            configuredUpiId = qrData.name.trim();
+          const normQr = normalizeUpiId(qrData.name);
+          if (normQr) {
+            configuredUpiId = normQr;
           }
           if (qrData.qr_image_url || qrData.qr_code_url) {
             try {
@@ -403,7 +409,7 @@ const CheckoutScreen = ({ navigation, route }) => {
                   setSellerRawUpiText(scan.rawText);
                 }
                 if (scan.upiId) {
-                  configuredUpiId = scan.upiId.trim();
+                  configuredUpiId = normalizeUpiId(scan.upiId) || scan.upiId.trim();
                   if (qrData.id && qrData.name !== configuredUpiId) {
                     updateQrCode(qrData.id, configuredUpiId, true).catch(() => {});
                   }
@@ -419,8 +425,8 @@ const CheckoutScreen = ({ navigation, route }) => {
       setSellerUpiId(configuredUpiId);
 
       const hasUpi = Boolean(
-        (configuredUpiId && configuredUpiId.includes('@')) ||
-        (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url || (configuredQr.name && configuredQr.name.includes('@'))))
+        configuredUpiId ||
+        (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url || configuredQr.name))
       );
 
       // Prioritize uploaded seller profile QR if available
@@ -449,12 +455,13 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   // Derive active UPI parameters strictly from seller profile
   const activeUpiId =
-    sellerUpiId.trim() ||
-    (sellerQr?.name && sellerQr.name.includes('@') ? sellerQr.name.trim() : '');
+    normalizeUpiId(sellerUpiId) ||
+    normalizeUpiId(sellerQr?.name) ||
+    '';
 
   const isUpiConfigured = Boolean(
-    (sellerUpiId && sellerUpiId.includes('@')) ||
-    (sellerQr && (sellerQr.qr_image_url || sellerQr.qr_code_url || (sellerQr.name && sellerQr.name.includes('@'))))
+    activeUpiId ||
+    (sellerQr && (sellerQr.qr_image_url || sellerQr.qr_code_url || sellerQr.name))
   );
 
   const payeeName =

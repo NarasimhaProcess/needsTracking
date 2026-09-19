@@ -154,6 +154,21 @@ export function parseUpiString(text) {
     };
   }
 
+  // 6. 10-digit mobile number, UPI number, or alphanumeric Merchant ID fallback
+  const normalizedCandidate = normalizeUpiId(trimmed);
+  if (normalizedCandidate && normalizedCandidate.includes('@')) {
+    return {
+      rawText: trimmed,
+      upiId: normalizedCandidate,
+      payeeName: '',
+      amount: '',
+      currency: 'INR',
+      merchantCode: '',
+      note: '',
+      isUpi: true,
+    };
+  }
+
   return {
     rawText: trimmed,
     upiId: '',
@@ -164,6 +179,68 @@ export function parseUpiString(text) {
     note: '',
     isUpi: false,
   };
+}
+
+/**
+ * Normalizes any UPI ID, 10-digit mobile number, or Merchant ID into a valid standard UPI VPA (Virtual Payment Address).
+ * Supports:
+ * - Full UPI URI: upi://pay?pa=store@okaxis -> store@okaxis
+ * - Query string: pa=store@okaxis -> store@okaxis
+ * - Plain VPA: store@okaxis -> store@okaxis
+ * - 10-digit Mobile: 9876543210 -> 9876543210@upi
+ * - With Country Code: +919876543210 / 919876543210 -> 9876543210@upi
+ * - Alphanumeric Merchant ID: storename / merchant123 -> merchant123@upi
+ */
+export function normalizeUpiId(text) {
+  if (!text || typeof text !== 'string') return '';
+  let trimmed = text.trim();
+  if (!trimmed) return '';
+
+  // 1. If full URI or query with pa=
+  if (trimmed.toLowerCase().includes('upi://pay')) {
+    const paMatch = trimmed.match(/[?&]pa=([^&"'\s]+)/i);
+    if (paMatch) {
+      trimmed = decodeURIComponent(paMatch[1]).trim();
+    }
+  } else if (trimmed.includes('pa=') && trimmed.includes('@')) {
+    const paMatch = trimmed.match(/[?&]pa=([^&"'\s]+)/i) || trimmed.match(/pa=([^&"'\s]+)/i);
+    if (paMatch) {
+      trimmed = decodeURIComponent(paMatch[1]).trim();
+    }
+  }
+
+  // 2. Remove all spaces
+  trimmed = trimmed.replace(/\s+/g, '');
+
+  // 3. If already has @
+  if (trimmed.includes('@')) {
+    if (trimmed.endsWith('@')) {
+      trimmed = `${trimmed}upi`;
+    }
+    if (!trimmed.startsWith('@')) {
+      return trimmed;
+    }
+    return '';
+  }
+
+  // 4. Check if 10-digit mobile number (with optional +91, 91, or 0 prefix)
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length === 10) {
+    return `${digits}@upi`;
+  }
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return `${digits.slice(2)}@upi`;
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return `${digits.slice(1)}@upi`;
+  }
+
+  // 5. Alphanumeric Merchant ID / Store ID (e.g. merchant123, storeid)
+  if (/^[a-zA-Z0-9.\-_]{2,64}$/.test(trimmed)) {
+    return `${trimmed}@upi`;
+  }
+
+  return trimmed;
 }
 
 /**
@@ -193,8 +270,8 @@ export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount
     }
   }
 
-  if (!upiId || !upiId.includes('@')) return '';
-  const cleanUpi = upiId.trim();
+  const cleanUpi = normalizeUpiId(upiId);
+  if (!cleanUpi) return '';
   const cleanName = payeeName.trim() || 'Store Merchant';
   // Strip # and any character that is not alphanumeric, space, or hyphen
   const cleanNote = String(note || 'Order Payment').replace(/[^a-zA-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim() || 'Order Payment';
