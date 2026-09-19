@@ -1153,6 +1153,12 @@ const ProfileScreen = ({ navigation, route }) => {
 
       if (upiId && upiId.trim().includes('@')) {
         try {
+          await supabase
+            .from('profiles')
+            .update({ upi_id: upiId.trim() })
+            .eq('id', user.id);
+        } catch (_) {}
+        try {
           const activeQr = await getActiveQrCode(user.id);
           if (activeQr) {
             await updateQrCode(activeQr.id, upiId.trim(), true);
@@ -2128,23 +2134,22 @@ const ProfileScreen = ({ navigation, route }) => {
         )}
       </View>
 
-      {/* UPI QR Code & Payment Settings Section */}
-      {(!isBuyer || Boolean(upiId && upiId.trim())) && (
-        <View style={styles.upiSectionCard}>
-          <View style={styles.upiHeaderRow}>
-            <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
-          </View>
-          <Text style={styles.sectionSubtitle}>
-            {isDelivery
-              ? 'Set your UPI ID (VPA) for receiving direct tips and delivery payouts.'
-              : 'Set your UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.'}
-          </Text>
+      {/* UPI QR Code & Payment Settings Section - Always Visible */}
+      <View style={styles.upiSectionCard}>
+        <View style={styles.upiHeaderRow}>
+          <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
+        </View>
+        <Text style={styles.sectionSubtitle}>
+          {isDelivery
+            ? 'Set your UPI ID (VPA) for receiving direct tips and delivery payouts.'
+            : 'Set your Merchant UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.'}
+        </Text>
 
-        <Text style={styles.inputLabel}>UPI ID / VPA (e.g. mobile@upi, store@okaxis)</Text>
+        <Text style={styles.inputLabel}>Merchant UPI ID / VPA (e.g. store@okaxis or 9876543210@upi)</Text>
         <View style={styles.upiInputRow}>
           <TextInput
             style={[styles.input, styles.upiInputFlex]}
-            placeholder="e.g. 9876543210@upi or store@okaxis"
+            placeholder="e.g. store@okaxis or 9876543210@upi"
             value={upiId}
             onChangeText={setUpiId}
             autoCapitalize="none"
@@ -2248,7 +2253,6 @@ const ProfileScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </View>
-      )}
 
       {/* Input Fields */}
       <View style={styles.formGroup}>
@@ -2277,6 +2281,16 @@ const ProfileScreen = ({ navigation, route }) => {
           value={mobile}
           onChangeText={setMobile}
           keyboardType="phone-pad"
+        />
+
+        <Text style={styles.inputLabel}>Merchant / Store UPI ID (VPA)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. storename@okaxis or 9876543210@upi"
+          value={upiId}
+          onChangeText={setUpiId}
+          autoCapitalize="none"
+          autoCorrect={false}
         />
 
         <Text style={styles.inputLabel}>Address Line 1</Text>
