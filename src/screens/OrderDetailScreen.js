@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
+import { supabase, getOrderById, updateOrderStatus, updateOrderPaymentStatus } from '../services/supabase';
 import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
@@ -199,6 +199,32 @@ const OrderDetailScreen = ({ navigation, route }) => {
       }
       setLoading(false);
     }
+  };
+
+  const handleTogglePayment = async () => {
+    const isPaid = (order?.payment_status === 'paid' || order?.status === 'completed' || order?.status === 'paid');
+    const nextStatus = isPaid ? 'pending' : 'paid';
+    const payRef = extractOrderNumbers(order).paymentReference || order?.payment_reference || order?.shipping_address?.payment_reference || 'N/A';
+
+    Alert.alert(
+      'Update Payment Status',
+      `Payment Reference: ${payRef}\n\nDo you want to mark payment as "${nextStatus === 'paid' ? 'DONE (PAID)' : 'PENDING'}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: nextStatus === 'paid' ? 'Mark Paid' : 'Mark Pending',
+          onPress: async () => {
+            const updated = await updateOrderPaymentStatus(orderId, nextStatus);
+            if (updated) {
+              setOrder(prev => ({ ...prev, payment_status: nextStatus }));
+              Alert.alert('Success', `Payment marked as ${nextStatus.toUpperCase()}.`);
+            } else {
+              Alert.alert('Error', 'Failed to update payment status.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleCallPartner = (phone) => {
@@ -716,14 +742,81 @@ const OrderDetailScreen = ({ navigation, route }) => {
                 <Text style={styles.label}>Total Amount</Text>
                 <Text style={styles.amountValue}>₹{Number(order.total_amount || 0).toFixed(2)}</Text>
               </View>
-              <Text style={styles.paymentMethodText}>
-                Payment Method: {(order.payment_method || 'Cash on Delivery').toUpperCase()}
-              </Text>
-              {Boolean(shipping?.payment_note || shipping?.payment_reference) && (
-                <Text style={[styles.paymentMethodText, { color: '#007AFF', marginTop: 4, fontWeight: '700' }]}>
-                  Payment Ref: {shipping.payment_note || shipping.payment_reference}
-                </Text>
-              )}
+              {/* Payment Section & 6-Digit Code Verification */}
+              <View style={styles.paymentSectionBox}>
+                <View style={styles.paymentMetaRow}>
+                  <Text style={styles.paymentMethodText}>
+                    Mode: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{(order.payment_method || 'Cash on Delivery').toUpperCase()}</Text>
+                  </Text>
+                  <View style={[
+                    styles.paymentStatusPillDetail,
+                    (order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid')
+                      ? styles.paymentStatusPaidDetail
+                      : styles.paymentStatusPendingDetail
+                  ]}>
+                    <Icon
+                      name={(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? "check-circle" : "clock-o"}
+                      size={11}
+                      color={(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? "#16A34A" : "#D97706"}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={[
+                      styles.paymentStatusTextDetail,
+                      (order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? styles.textGreen : styles.textAmber
+                    ]}>
+                      {(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? 'Payment Done' : 'Payment Pending'}
+                    </Text>
+                  </View>
+                </View>
+
+                {(() => {
+                  const payRef = extractOrderNumbers(order).paymentReference ||
+                    order.payment_reference ||
+                    shipping?.payment_reference ||
+                    shipping?.billing?.payment_reference ||
+                    shipping?.payment_note;
+                  if (!payRef) return null;
+                  return (
+                    <View style={styles.payVerificationBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Icon name="tag" size={13} color="#4F46E5" style={{ marginRight: 6 }} />
+                          <Text style={styles.payRefLabel}>6-Digit Payment Code:</Text>
+                        </View>
+                        <Text style={styles.payRefValue}>{payRef}</Text>
+                      </View>
+                      <Text style={styles.payRefHelpText}>
+                        Reconciliation: Check this 6-digit code against your UPI or bank statement credits to confirm payment done properly.
+                      </Text>
+                    </View>
+                  );
+                })()}
+
+                {canUpdateStatus && (
+                  <TouchableOpacity
+                    style={[
+                      styles.togglePayBtn,
+                      (order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid')
+                        ? styles.togglePayBtnPending
+                        : styles.togglePayBtnPaid
+                    ]}
+                    onPress={handleTogglePayment}
+                    activeOpacity={0.85}
+                  >
+                    <Icon
+                      name={(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? "undo" : "check-circle"}
+                      size={13}
+                      color="#FFFFFF"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.togglePayBtnText}>
+                      {(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid')
+                        ? "Mark Payment as Pending"
+                        : "Mark Payment as Done (Received)"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           );
         })()}
@@ -1231,6 +1324,92 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#94A3B8',
     marginVertical: 16,
+  },
+  paymentSectionBox: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  paymentMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  paymentStatusPillDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  paymentStatusPaidDetail: {
+    backgroundColor: '#DCFCE7',
+  },
+  paymentStatusPendingDetail: {
+    backgroundColor: '#FEF3C7',
+  },
+  paymentStatusTextDetail: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  textGreen: {
+    color: '#16A34A',
+  },
+  textAmber: {
+    color: '#D97706',
+  },
+  payVerificationBox: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    padding: 10,
+    marginVertical: 8,
+  },
+  payRefLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3730A3',
+  },
+  payRefValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#4338CA',
+    letterSpacing: 1,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  payRefHelpText: {
+    fontSize: 11,
+    color: '#4B5563',
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  togglePayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  togglePayBtnPaid: {
+    backgroundColor: '#16A34A',
+  },
+  togglePayBtnPending: {
+    backgroundColor: '#D97706',
+  },
+  togglePayBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

@@ -260,9 +260,28 @@ export const extractOrderNumbers = (order = {}) => {
     }
   }
 
+  // Extract 6-digit unique payment transaction reference if available
+  let paymentReference = order.payment_reference || null;
+  if (!paymentReference && order.shipping_address) {
+    let shipping = order.shipping_address;
+    if (typeof shipping === 'string') {
+      try {
+        shipping = JSON.parse(shipping);
+      } catch (_) {}
+    }
+    if (typeof shipping === 'object' && shipping !== null) {
+      paymentReference = shipping.payment_reference || shipping.billing?.payment_reference || null;
+      if (!paymentReference && shipping.payment_note) {
+        const match = String(shipping.payment_note).match(/\b(\d{6})\b/);
+        if (match) paymentReference = match[1];
+      }
+    }
+  }
+
   return {
     orderNumber: String(orderNum),
     dayOrderNo: dayOrderNo ? String(dayOrderNo) : null,
+    paymentReference: paymentReference ? String(paymentReference) : null,
   };
 };
 
@@ -498,6 +517,9 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
 
   if (data.paymentMethod) {
     addText(formatTwoColumns('Payment Mode:', String(data.paymentMethod).toUpperCase(), width));
+  }
+  if (data.paymentReference) {
+    addText(formatTwoColumns('UPI/Pay Ref:', String(data.paymentReference), width));
   }
   if (data.paymentStatus) {
     addText(formatTwoColumns('Payment Status:', String(data.paymentStatus).toUpperCase(), width));
@@ -739,6 +761,7 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
           <div class="divider"></div>
 
           ${data.paymentMethod ? `<div class="meta-row"><span>Payment:</span><span class="bold">${String(data.paymentMethod).toUpperCase()}</span></div>` : ''}
+          ${data.paymentReference ? `<div class="meta-row"><span>UPI/Pay Ref:</span><span class="bold">${escapeHtml(data.paymentReference)}</span></div>` : ''}
           ${data.paymentStatus ? `<div class="meta-row"><span>Status:</span><span class="bold">${String(data.paymentStatus).toUpperCase()}</span></div>` : ''}
 
           <div class="center footer">
@@ -1188,6 +1211,7 @@ export const printReceipt = async (orderDetails, options = {}) => {
       discount,
       total,
       paymentMethod: String(order.payment_method || 'CASH').toUpperCase(),
+      paymentReference: extractOrderNumbers(order).paymentReference,
       paymentStatus: String(order.payment_status || (order.status === 'completed' || order.status === 'paid' ? 'PAID' : 'PENDING')).toUpperCase(),
       storeName: options.storeName || undefined,
     };

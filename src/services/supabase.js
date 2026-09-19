@@ -1227,52 +1227,55 @@ export async function getOrders(userId, options = {}) {
       console.warn('getOrders: seller_id query exception:', err);
     }
 
-    // 2. Product-linked fallback for older orders created prior to seller_id column
-    try {
-      const { data: myProducts } = await supabase
-        .from('products')
-        .select('id')
-        .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
-
-      if (myProducts && myProducts.length > 0) {
-        const prodIds = myProducts.map((p) => p.id);
-        const { data: combinations } = await supabase
-          .from('product_variant_combinations')
+    // 2. Product-linked fallback for older legacy orders created prior to seller_id column
+    // Only query if direct seller_id match found nothing, ensuring instantaneous load times
+    if (orders.length === 0) {
+      try {
+        const { data: myProducts } = await supabase
+          .from('products')
           .select('id')
-          .in('product_id', prodIds);
+          .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
 
-        if (combinations && combinations.length > 0) {
-          const combiIds = combinations.map((c) => c.id);
-          const { data: items } = await supabase
-            .from('order_items')
-            .select('order_id')
-            .in('product_variant_combination_id', combiIds);
+        if (myProducts && myProducts.length > 0) {
+          const prodIds = myProducts.map((p) => p.id);
+          const { data: combinations } = await supabase
+            .from('product_variant_combinations')
+            .select('id')
+            .in('product_id', prodIds);
 
-          if (items && items.length > 0) {
-            const linkedOrderIds = Array.from(new Set(items.map((it) => it.order_id).filter(Boolean)));
-            if (linkedOrderIds.length > 0) {
-              const existingIds = new Set(orders.map((o) => o.id));
-              const missingIds = linkedOrderIds.filter((id) => !existingIds.has(id));
+          if (combinations && combinations.length > 0) {
+            const combiIds = combinations.map((c) => c.id);
+            const { data: items } = await supabase
+              .from('order_items')
+              .select('order_id')
+              .in('product_variant_combination_id', combiIds);
 
-              if (missingIds.length > 0) {
-                const { data: extraOrders } = await supabase
-                  .from('orders')
-                  .select(selectQuery)
-                  .in('id', missingIds)
-                  .order('created_at', { ascending: false });
+            if (items && items.length > 0) {
+              const linkedOrderIds = Array.from(new Set(items.map((it) => it.order_id).filter(Boolean)));
+              if (linkedOrderIds.length > 0) {
+                const existingIds = new Set(orders.map((o) => o.id));
+                const missingIds = linkedOrderIds.filter((id) => !existingIds.has(id));
 
-                if (extraOrders && extraOrders.length > 0) {
-                  orders = [...orders, ...extraOrders].sort(
-                    (a, b) => new Date(b.created_at) - new Date(a.created_at)
-                  );
+                if (missingIds.length > 0) {
+                  const { data: extraOrders } = await supabase
+                    .from('orders')
+                    .select(selectQuery)
+                    .in('id', missingIds)
+                    .order('created_at', { ascending: false });
+
+                  if (extraOrders && extraOrders.length > 0) {
+                    orders = [...orders, ...extraOrders].sort(
+                      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+                    );
+                  }
                 }
               }
             }
           }
         }
+      } catch (fallbackErr) {
+        console.warn('getOrders fallback product search notice:', fallbackErr);
       }
-    } catch (fallbackErr) {
-      console.warn('getOrders fallback product search notice:', fallbackErr);
     }
   } else if (isAdmin && !options.buyerOnly) {
     const { data: adminData, error: adminErr } = await supabase
@@ -1416,6 +1419,44 @@ export async function updateOrderStatus(orderId, newStatus) {
     return null;
   }
   return data ? data[0] : null;
+}
+
+export async function updateOrderPaymentStatus(orderId, paymentStatus) {
+  try {
+    let { data, error } = await supabase
+      .from('orders')
+      .update({ payment_status: paymentStatus })
+      .eq('id', orderId)
+      .select();
+
+    if (error && (error.code === 'PGRST204' || error.message?.includes('payment_status'))) {
+      // payment_status column not yet in orders table, fallback to shipping_address JSON
+      const { data: currentOrder } = await supabase
+        .from('orders')
+        .select('shipping_address')
+        .eq('id', orderId)
+        .single();
+      const currentShipping = typeof currentOrder?.shipping_address === 'object' && currentOrder?.shipping_address !== null
+        ? currentOrder.shipping_address
+        : { address: currentOrder?.shipping_address };
+      const updatedShipping = { ...currentShipping, payment_status: paymentStatus };
+      const res = await supabase
+        .from('orders')
+        .update({ shipping_address: updatedShipping })
+        .eq('id', orderId)
+        .select();
+      return res.data ? res.data[0] : null;
+    }
+
+    if (error) {
+      console.error('Error updating order payment status:', error.message);
+      return null;
+    }
+    return data ? data[0] : null;
+  } catch (err) {
+    console.error('updateOrderPaymentStatus exception:', err);
+    return null;
+  }
 }
 
 export async function getPendingOrdersCount(userId, options = {}) {

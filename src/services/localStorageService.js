@@ -170,3 +170,33 @@ export const isProductFavorite = async (productId) => {
   }
 };
 
+const GUEST_ORDERS_KEY = 'guest_order_ids';
+
+export const saveGuestOrderId = async (orderId) => {
+  try {
+    if (!orderId) return false;
+    const raw = await AsyncStorage.getItem(GUEST_ORDERS_KEY);
+    const ids = raw ? JSON.parse(raw) : [];
+    const strId = String(orderId);
+    if (!ids.includes(strId)) {
+      ids.unshift(strId);
+    }
+    await AsyncStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(ids.slice(0, 30)));
+    return true;
+  } catch (e) {
+    console.warn('Error saving guest order id:', e);
+    return false;
+  }
+};
+
+export const getGuestOrderIds = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(GUEST_ORDERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.warn('Error retrieving guest order ids:', e);
+    return [];
+  }
+};
+
+

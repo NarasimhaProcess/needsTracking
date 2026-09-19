@@ -29,7 +29,7 @@ import {
   addUserAddress,
   deleteUserAddress,
 } from '../services/supabase';
-import { getGuestCart, clearGuestCart, getPreferredStore } from '../services/localStorageService';
+import { getGuestCart, clearGuestCart, getPreferredStore, saveGuestOrderId } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
 import { getPrinterConfig } from '../services/printerService';
@@ -96,7 +96,7 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [sellerRawUpiText, setSellerRawUpiText] = useState('');
   const [loadingSellerQr, setLoadingSellerQr] = useState(false);
   // 6-digit unique payment transaction reference (strictly digits, easy to identify in UPI statements)
-  const [uniquePaymentCode] = useState(() =>
+  const [uniquePaymentCode, setUniquePaymentCode] = useState(() =>
     Math.floor(100000 + Math.random() * 900000).toString()
   );
   const [dynamicQrDataUrl, setDynamicQrDataUrl] = useState(null);
@@ -346,12 +346,15 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         const { data: profData } = await supabase
           .from('profiles')
-          .select('id, full_name, mobile, email, media_urls')
+          .select('id, full_name, mobile, email, media_urls, upi_id')
           .eq('id', targetSellerId)
           .maybeSingle();
 
         if (profData) {
           setSellerProfile(profData);
+          if (!configuredUpiId && profData.upi_id && profData.upi_id.includes('@')) {
+            configuredUpiId = profData.upi_id.trim();
+          }
         }
 
         // If seller has uploaded a profile QR code, scan it to extract UPI ID, Merchant Name & Raw URI!
@@ -1173,12 +1176,14 @@ const CheckoutScreen = ({ navigation, route }) => {
               billing: billingBreakdown,
               payment_reference: uniquePaymentCode,
               payment_note: orderNote,
+              payment_status: 'pending',
             }
           : {
               ...(typeof shippingAddress === 'object' ? shippingAddress : { address: shippingAddress }),
               billing: billingBreakdown,
               payment_reference: uniquePaymentCode,
               payment_note: orderNote,
+              payment_status: 'pending',
             };
 
         const orderPayload = {
@@ -1195,6 +1200,8 @@ const CheckoutScreen = ({ navigation, route }) => {
           service_cost_rate: serviceCostRate,
           status: orderStatus,
           payment_method: activeMethod,
+          payment_reference: uniquePaymentCode,
+          payment_status: 'pending',
           order_type: 'shop-order', // Dine-in and parcel shop orders go directly to seller
           table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
         };
@@ -1243,12 +1250,20 @@ const CheckoutScreen = ({ navigation, route }) => {
               total_amount: groupTotal,
               status: orderStatus,
               payment_method: activeMethod,
+              payment_reference: uniquePaymentCode,
               order_type: 'shop-order',
               table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
             };
+            if (orderError.message && orderError.message.includes('payment_reference')) {
+              delete fallbackPayload.payment_reference;
+            }
             let retry = await supabase.from('orders').insert(fallbackPayload).select().single();
             if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && retry.error.message.includes('seller_id')))) {
               delete fallbackPayload.seller_id;
+              retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+            }
+            if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && (retry.error.message.includes('payment_reference') || retry.error.message.includes('column'))))) {
+              delete fallbackPayload.payment_reference;
               retry = await supabase.from('orders').insert(fallbackPayload).select().single();
             }
             order = retry.data;
@@ -1290,6 +1305,9 @@ const CheckoutScreen = ({ navigation, route }) => {
         }
 
         createdOrders.push(order);
+        if (!orderUserId && order?.id) {
+          saveGuestOrderId(order.id);
+        }
 
         // Dine-in orders never assign delivery manager - orders go directly to seller only!
         if (!isDineIn && activeType === 'delivery') {
@@ -1340,13 +1358,16 @@ const CheckoutScreen = ({ navigation, route }) => {
           ]
         );
       } else if (createdOrders.length === 1) {
+        setUniquePaymentCode(Math.floor(100000 + Math.random() * 900000).toString());
         navigation.navigate('OrderConfirmation', {
           order: createdOrders[0],
+          paymentReference: uniquePaymentCode,
           sellerId: resolvedSellerId,
           sellerName: resolvedSellerName,
           customerId: resolvedCustomerId,
         });
       } else {
+        setUniquePaymentCode(Math.floor(100000 + Math.random() * 900000).toString());
         navigation.navigate('OrderList');
       }
     } catch (err) {

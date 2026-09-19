@@ -65,15 +65,17 @@ const UpiQrScreen = ({ navigation, route }) => {
         }
 
         const { data: { user } } = await supabase.auth.getUser();
-        const targetUserId = sellerId || user?.id;
+        const targetUserId = resolvedSellerId || sellerId || user?.id;
 
         if (targetUserId) {
+          let foundUpi = '';
           const qrCode = await getActiveQrCode(targetUserId);
           if (qrCode) {
             const url = qrCode.qr_image_url || qrCode.qr_code_url;
             setActiveQrImageUrl(url);
             if (qrCode.name && qrCode.name.includes('@')) {
-              setPayeeUpiId(qrCode.name);
+              foundUpi = qrCode.name.trim();
+              setPayeeUpiId(foundUpi);
             }
           }
 
@@ -85,8 +87,9 @@ const UpiQrScreen = ({ navigation, route }) => {
 
           if (prof) {
             if (prof.full_name) setPayeeName(prof.full_name);
-            if (!payeeUpiId && prof.upi_id && prof.upi_id.includes('@')) {
-              setPayeeUpiId(prof.upi_id.trim());
+            if (prof.upi_id && prof.upi_id.includes('@')) {
+              foundUpi = prof.upi_id.trim();
+              setPayeeUpiId(foundUpi);
             }
           }
         }

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { getOrderById, updateOrderStatus } from '../services/supabase';
+import { getOrderById, updateOrderStatus, updateOrderPaymentStatus } from '../services/supabase';
 import { extractOrderNumbers } from '../services/printerService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import { useCart } from '../context/CartContext';
@@ -23,6 +23,7 @@ const OrderEditScreen = ({ route, navigation }) => {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState('pending');
   const [isSaving, setIsSaving] = useState(false);
 
   const canManage = role === 'seller' || role === 'admin' || role === 'superadmin' || role === 'delivery_manager';
@@ -49,6 +50,10 @@ const OrderEditScreen = ({ route, navigation }) => {
       if (fetchedOrder) {
         setOrder(fetchedOrder);
         setStatus(fetchedOrder.status);
+        const curPayStatus = fetchedOrder.payment_status ||
+          (fetchedOrder.shipping_address && typeof fetchedOrder.shipping_address === 'object' && fetchedOrder.shipping_address.payment_status) ||
+          (fetchedOrder.status === 'completed' || fetchedOrder.status === 'paid' ? 'paid' : 'pending');
+        setPaymentStatus(curPayStatus);
       }
       setLoading(false);
     };
@@ -67,8 +72,9 @@ const OrderEditScreen = ({ route, navigation }) => {
     }
     setIsSaving(true);
     const updatedOrder = await updateOrderStatus(orderId, status);
+    await updateOrderPaymentStatus(orderId, paymentStatus);
     if (updatedOrder) {
-      Alert.alert('Success', 'Order updated successfully!');
+      Alert.alert('Success', 'Order and payment status updated successfully!');
       navigation.goBack();
     } else {
       Alert.alert('Error', 'Failed to update order.');
@@ -145,7 +151,7 @@ const OrderEditScreen = ({ route, navigation }) => {
     );
   }
 
-  const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
+  const { orderNumber, dayOrderNo, paymentReference } = extractOrderNumbers(order);
 
   return (
     <View
@@ -202,6 +208,19 @@ const OrderEditScreen = ({ route, navigation }) => {
             </>
           ) : null}
 
+          {paymentReference ? (
+            <>
+              <Text style={styles.label}>6-Digit Payment Code (Reconciliation)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.input, styles.inputDisabled, { flex: 1, color: '#4F46E5', fontWeight: 'bold' }]}
+                  value={paymentReference}
+                  editable={false}
+                />
+              </View>
+            </>
+          ) : null}
+
           <Text style={styles.label}>Total Amount</Text>
           <TextInput
             style={[styles.input, styles.inputDisabled]}
@@ -209,7 +228,7 @@ const OrderEditScreen = ({ route, navigation }) => {
             editable={false}
           />
 
-          <Text style={styles.label}>Update Status</Text>
+          <Text style={styles.label}>Fulfillment Status</Text>
           <View style={styles.pickerContainer}>
             <Picker
               selectedValue={status}
@@ -222,6 +241,18 @@ const OrderEditScreen = ({ route, navigation }) => {
               <Picker.Item label="Shipped" value="shipped" />
               <Picker.Item label="Completed" value="completed" />
               <Picker.Item label="Cancelled" value="cancelled" />
+            </Picker>
+          </View>
+
+          <Text style={styles.label}>Payment Status</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={paymentStatus}
+              onValueChange={(itemValue) => setPaymentStatus(itemValue)}
+              style={styles.picker}
+            >
+              <Picker.Item label="Payment Pending (Awaiting confirmation)" value="pending" />
+              <Picker.Item label="Payment Done (Verified & Received)" value="paid" />
             </Picker>
           </View>
 

@@ -124,19 +124,31 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
           </View>
 
           {order?.payment_method && (
-            <Text style={[styles.paymentMethod, Boolean(order?.shipping_address?.payment_reference || order?.shipping_address?.payment_note) && { marginBottom: 8 }]}>
+            <Text style={[styles.paymentMethod, { marginBottom: 8 }]}>
               Payment: {order.payment_method.toUpperCase()}
             </Text>
           )}
 
-          {Boolean(order?.shipping_address?.payment_reference || order?.shipping_address?.payment_note) && (
-            <View style={styles.paymentRefBox}>
-              <Text style={styles.paymentRefBoxLabel}>UPI Ref Code:</Text>
-              <Text style={styles.paymentRefBoxVal}>
-                {order.shipping_address.payment_note || order.shipping_address.payment_reference}
-              </Text>
-            </View>
-          )}
+          {(() => {
+            const payRef = order?.payment_reference ||
+              route?.params?.paymentReference ||
+              (typeof order?.shipping_address === 'object' ? order?.shipping_address?.payment_reference : null) ||
+              (typeof order?.shipping_address === 'object' ? order?.shipping_address?.billing?.payment_reference : null) ||
+              order?.shipping_address?.payment_note;
+            if (!payRef) return null;
+            return (
+              <View style={styles.paymentRefBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                  <Icon name="tag" size={13} color="#4F46E5" style={{ marginRight: 6 }} />
+                  <Text style={styles.paymentRefBoxLabel}>UPI / Payment Reference Code:</Text>
+                </View>
+                <Text style={styles.paymentRefBoxVal}>{payRef}</Text>
+                <Text style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>
+                  Keep this 6-digit code to easily verify payment in your bank or UPI statement.
+                </Text>
+              </View>
+            );
+          })()}
 
           <View style={styles.printActionRow}>
             <TouchableOpacity

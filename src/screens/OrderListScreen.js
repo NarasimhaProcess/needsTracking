@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, SectionList, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Linking, Platform } from 'react-native';
-import { getOrders, deleteOrder, supabase } from '../services/supabase';
+import { useFocusEffect } from '@react-navigation/native';
+import { getOrders, deleteOrder, updateOrderPaymentStatus, supabase } from '../services/supabase';
 import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
+import { getGuestOrderIds } from '../services/localStorageService';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import UniversalDateTimePicker from '../components/UniversalDateTimePicker';
 import { showAlert } from '../utils/alertUtils';
@@ -22,6 +24,7 @@ const OrderListScreen = ({ navigation, route }) => {
   const [totalAmount, setTotalAmount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   useEffect(() => {
     if (contextRole) {
@@ -31,47 +34,100 @@ const OrderListScreen = ({ navigation, route }) => {
 
   const canManageOrders = userRole === 'seller' || userRole === 'admin' || userRole === 'superadmin';
 
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
+  const fetchOrders = useCallback(async (isSilent = false) => {
+    // Only show full loading spinner on initial cold fetch when no orders are loaded yet
+    if (!isSilent && orders.length === 0) {
+      setLoading(true);
+    } else if (isSilent) {
+      setIsSyncing(true);
+    }
+
     try {
-      const { data: { user } = {} } = await supabase.auth.getUser();
+      // 1. Instant check from local session cache (0 network delay)
+      let user = null;
+      const { data: { session } = {} } = await supabase.auth.getSession();
+      if (session?.user) {
+        user = session.user;
+      } else {
+        const { data: { user: authUser } = {} } = await supabase.auth.getUser();
+        user = authUser;
+      }
+
       setCurrentUser(user || null);
 
-      if (!user) {
-        setOrders([]);
-        return;
-      }
-
-      // Fetch or confirm profile role
-      let effectiveRole = contextRole || userRole;
-      if (!effectiveRole) {
-        const { data: prof } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .maybeSingle();
-        effectiveRole = prof?.role || 'buyer';
-        setUserRole(effectiveRole);
-      }
-
-      const isSeller = effectiveRole === 'seller';
-      const isAdmin = effectiveRole === 'admin' || effectiveRole === 'superadmin';
-
       let fetchedOrders = [];
-      if (isSeller) {
-        // Seller views all orders received by their store
-        fetchedOrders = await getOrders(user.id, { role: 'seller', isSeller: true });
-      } else if (isAdmin) {
-        // Admin views store orders or all orders
-        const targetSeller = route?.params?.sellerId;
-        if (targetSeller) {
-          fetchedOrders = await getOrders(targetSeller, { role: 'seller', isSeller: true });
-        } else {
-          fetchedOrders = await getOrders(user.id, { role: 'admin' });
+
+      if (!user) {
+        // Fallback for unauthenticated guest checkouts (e.g. dine-in QR orders)
+        const guestIds = await getGuestOrderIds();
+        if (guestIds && guestIds.length > 0) {
+          const selectQuery = `
+            *,
+            order_items (
+              id,
+              quantity,
+              price,
+              product_variant_combination_id,
+              product_variant_combinations (
+                id,
+                combination_string,
+                price,
+                products (
+                  id,
+                  product_name,
+                  user_id,
+                  customer_id,
+                  product_media (media_url, media_type)
+                )
+              )
+            )
+          `;
+          const { data: guestOrders, error: guestErr } = await supabase
+            .from('orders')
+            .select(selectQuery)
+            .in('id', guestIds)
+            .order('created_at', { ascending: false });
+
+          if (!guestErr && Array.isArray(guestOrders)) {
+            fetchedOrders = guestOrders;
+          }
+        }
+
+        if (fetchedOrders.length === 0) {
+          setOrders([]);
+          return;
         }
       } else {
-        // Buyer views strictly their own orders (never seller's store orders)
-        fetchedOrders = await getOrders(user.id, { role: 'buyer', isSeller: false });
+        // Authenticated user
+        let effectiveRole = contextRole || userRole;
+        if (!effectiveRole) {
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .maybeSingle();
+          effectiveRole = prof?.role || 'buyer';
+          setUserRole(effectiveRole);
+        }
+
+        const isSeller = effectiveRole === 'seller';
+        const isAdmin = effectiveRole === 'admin' || effectiveRole === 'superadmin';
+
+        if (isSeller) {
+          // Seller views all orders received by their store
+          fetchedOrders = await getOrders(user.id, { role: 'seller', isSeller: true });
+        } else if (isAdmin) {
+          // Admin views store orders or all orders
+          const targetSeller = route?.params?.sellerId;
+          if (targetSeller) {
+            fetchedOrders = await getOrders(targetSeller, { role: 'seller', isSeller: true });
+          } else {
+            fetchedOrders = await getOrders(user.id, { role: 'admin' });
+          }
+        } else {
+          // Buyer views strictly their own orders (never seller's store orders)
+          fetchedOrders = await getOrders(user.id, { role: 'buyer', isSeller: false });
+        }
       }
 
       if (fetchedOrders && Array.isArray(fetchedOrders)) {
@@ -81,19 +137,49 @@ const OrderListScreen = ({ navigation, route }) => {
       }
     } catch (err) {
       console.warn('Error in fetchOrders:', err);
-      setOrders([]);
+      if (orders.length === 0) {
+        setOrders([]);
+      }
     } finally {
       setLoading(false);
+      setIsSyncing(false);
     }
-  }, [contextRole, userRole, route?.params]);
+  }, [contextRole, userRole, route?.params, orders.length]);
 
+  // Immediately load fresh orders on screen focus & start auto-reload interval
+  useFocusEffect(
+    useCallback(() => {
+      fetchOrders(orders.length > 0);
+
+      // Auto-reload orders every 15 seconds in the background
+      const intervalId = setInterval(() => {
+        fetchOrders(true);
+      }, 15000);
+
+      return () => {
+        clearInterval(intervalId);
+      };
+    }, [fetchOrders, orders.length])
+  );
+
+  // Realtime Supabase live update listener on orders table
   useEffect(() => {
-    fetchOrders();
+    const ordersChannel = supabase
+      .channel('orders-realtime-list-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload) => {
+          console.log('[OrderListScreen] Realtime order event received:', payload.eventType);
+          fetchOrders(true);
+        }
+      )
+      .subscribe();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         setCurrentUser(session.user);
-        fetchOrders();
+        fetchOrders(true);
       } else {
         setCurrentUser(null);
         setOrders([]);
@@ -101,6 +187,7 @@ const OrderListScreen = ({ navigation, route }) => {
     });
 
     return () => {
+      supabase.removeChannel(ordersChannel);
       authListener?.subscription?.unsubscribe?.();
     };
   }, [fetchOrders]);
@@ -110,12 +197,15 @@ const OrderListScreen = ({ navigation, route }) => {
 
     if (searchQuery) {
       filtered = filtered.filter(order => {
-        const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
+        const { orderNumber, dayOrderNo, paymentReference } = extractOrderNumbers(order);
         const query = searchQuery.toLowerCase().trim();
         return (
           (orderNumber && orderNumber.toLowerCase().includes(query)) ||
           (dayOrderNo && dayOrderNo.toLowerCase().includes(query)) ||
-          (order.id && order.id.toLowerCase().includes(query))
+          (paymentReference && paymentReference.toLowerCase().includes(query)) ||
+          (order.id && order.id.toLowerCase().includes(query)) ||
+          (order.customer_name && order.customer_name.toLowerCase().includes(query)) ||
+          (order.table_no && order.table_no.toLowerCase().includes(query))
         );
       });
     }
@@ -188,8 +278,39 @@ const OrderListScreen = ({ navigation, route }) => {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchOrders();
+    await fetchOrders(true);
     setRefreshing(false);
+  };
+
+  const handleTogglePaymentStatus = async (orderId, currentPaidStatus, payCode) => {
+    if (!canManageOrders) {
+      showAlert('Access Denied', 'Only store managers and sellers can verify payments.');
+      return;
+    }
+    const nextStatus = currentPaidStatus ? 'pending' : 'paid';
+    const codeDisplay = payCode ? ` (Code: ${payCode})` : '';
+
+    showAlert(
+      'Verify Payment',
+      `Do you want to mark Order${codeDisplay} payment as "${nextStatus === 'paid' ? 'DONE (PAID)' : 'PENDING'}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: nextStatus === 'paid' ? 'Mark Paid' : 'Mark Pending',
+          onPress: async () => {
+            // Optimistically update in local state for instant UI response
+            setOrders(prev =>
+              prev.map(o => (o.id === orderId ? { ...o, payment_status: nextStatus } : o))
+            );
+            const updated = await updateOrderPaymentStatus(orderId, nextStatus);
+            if (!updated) {
+              fetchOrders(true);
+              showAlert('Error', 'Failed to update payment status.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleDeleteOrder = async (orderId) => {
@@ -245,11 +366,14 @@ const OrderListScreen = ({ navigation, route }) => {
   };
 
   const renderOrderItem = ({ item }) => {
-    const { orderNumber, dayOrderNo } = extractOrderNumbers(item);
+    const { orderNumber, dayOrderNo, paymentReference } = extractOrderNumbers(item);
+    const isPaymentDone = (item.payment_status === 'paid' || item.status === 'completed' || item.status === 'paid');
+
     return (
       <TouchableOpacity
         style={styles.orderItem}
         onPress={() => navigation.navigate('OrderDetail', { orderId: item.id, sellerId, sellerName, customerId })}
+        activeOpacity={0.88}
       >
         <View style={styles.orderHeader}>
           <View style={{ flex: 1 }}>
@@ -260,15 +384,75 @@ const OrderListScreen = ({ navigation, route }) => {
           </View>
           <Text style={styles.orderStatus}>Status: {item.status}</Text>
         </View>
-        <Text style={styles.orderAmount}>Total: ₹{item.total_amount.toFixed(2)}</Text>
-        <Text style={styles.orderDate}>Date: {new Date(item.created_at).toLocaleDateString()}</Text>
+
+        {/* 6-Digit Payment Code & Verification Status Pill */}
+        <View style={styles.paymentMetaRow}>
+          {paymentReference ? (
+            <View style={styles.payCodeBadge}>
+              <Icon name="tag" size={12} color="#4F46E5" style={{ marginRight: 5 }} />
+              <Text style={styles.payCodeLabel}>6-Digit Pay Code:</Text>
+              <Text style={styles.payCodeValue}>{paymentReference}</Text>
+            </View>
+          ) : null}
+
+          <View style={[styles.paymentStatusBadge, isPaymentDone ? styles.paymentStatusPaid : styles.paymentStatusPending]}>
+            <Icon
+              name={isPaymentDone ? "check-circle" : "clock-o"}
+              size={11}
+              color={isPaymentDone ? "#16A34A" : "#D97706"}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.paymentStatusText, isPaymentDone ? styles.textPaid : styles.textPending]}>
+              {isPaymentDone ? 'Payment Done' : 'Payment Pending'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.orderPriceRow}>
+          <Text style={styles.orderAmount}>Total: ₹{Number(item.total_amount || 0).toFixed(2)}</Text>
+          {item.payment_method ? (
+            <Text style={styles.paymentMethodText}>
+              • {String(item.payment_method).toUpperCase()}
+            </Text>
+          ) : null}
+        </View>
+
+        <Text style={styles.orderDate}>
+          Date: {new Date(item.created_at).toLocaleDateString()} {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </Text>
         {item.table_no && <Text style={styles.orderDate}>Table No: {item.table_no}</Text>}
         {item.customer_name ? (
           <Text style={styles.orderCustomer}>
             Customer: {item.customer_name} {item.customer_mobile ? `• ${item.customer_mobile}` : ''}
           </Text>
         ) : null}
+
         <View style={styles.actionButtons}>
+          {/* Quick Payment Verification Toggle for Sellers and Admins */}
+          {canManageOrders && (
+            <TouchableOpacity
+              onPress={() => handleTogglePaymentStatus(item.id, isPaymentDone, paymentReference)}
+              style={[
+                styles.quickPayActionBtn,
+                isPaymentDone ? styles.quickPayBtnDone : styles.quickPayBtnVerify
+              ]}
+              accessibilityLabel={isPaymentDone ? "Mark payment pending" : "Verify payment done"}
+              activeOpacity={0.8}
+            >
+              <Icon
+                name={isPaymentDone ? "undo" : "check"}
+                size={12}
+                color={isPaymentDone ? "#64748B" : "#16A34A"}
+                style={{ marginRight: 5 }}
+              />
+              <Text style={[styles.quickPayActionBtnText, isPaymentDone ? styles.quickPayTextDone : styles.quickPayTextVerify]}>
+                {isPaymentDone ? 'Mark Pending' : 'Verify Paid'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          <View style={{ flex: 1 }} />
+
           <TouchableOpacity
             onPress={() => announceOrderPrint(item)}
             style={{ marginRight: 8 }}
@@ -289,6 +473,7 @@ const OrderListScreen = ({ navigation, route }) => {
               <TouchableOpacity
                 onPress={() => navigation.navigate('OrderEdit', { orderId: item.id, sellerId, sellerName, customerId })}
                 accessibilityLabel="Edit Order Status"
+                style={{ marginRight: 8 }}
               >
                 <Icon name="edit" size={20} color="#007AFF" style={styles.actionIcon} />
               </TouchableOpacity>
@@ -314,7 +499,7 @@ const OrderListScreen = ({ navigation, route }) => {
     );
   };
 
-  if (loading) {
+  if (loading && orders.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -322,7 +507,7 @@ const OrderListScreen = ({ navigation, route }) => {
     );
   }
 
-  const isGuest = !currentUser;
+  const isGuest = !currentUser && orders.length === 0;
 
   return (
     <View
@@ -345,8 +530,23 @@ const OrderListScreen = ({ navigation, route }) => {
             <Icon name="home" size={22} color="#007AFF" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{userRole === 'seller' ? 'Store Orders' : 'Your Orders'}</Text>
+          {isSyncing && (
+            <ActivityIndicator size="small" color="#007AFF" style={{ marginLeft: 8 }} />
+          )}
         </View>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={handleRefresh}
+            style={styles.refreshHeaderBtn}
+            disabled={refreshing || isSyncing}
+            accessibilityLabel="Refresh Orders"
+          >
+            {refreshing || isSyncing ? (
+              <ActivityIndicator size="small" color="#007AFF" />
+            ) : (
+              <Icon name="refresh" size={19} color="#007AFF" />
+            )}
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.navigate('Invoice')} style={{ marginRight: 15 }}>
             <Icon name="file-text" size={22} color="#007AFF" />
           </TouchableOpacity>
@@ -391,7 +591,7 @@ const OrderListScreen = ({ navigation, route }) => {
           <View style={styles.searchContainer}>
             <TextInput
               style={styles.searchInput}
-              placeholder="Search by Order No..."
+              placeholder="Search by Order No, 6-digit Pay Code..."
               placeholderTextColor="#94a3b8"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -747,11 +947,77 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'capitalize',
   },
+  paymentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginVertical: 4,
+  },
+  payCodeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  payCodeLabel: {
+    fontSize: 11,
+    color: '#4338CA',
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  payCodeValue: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#312E81',
+    letterSpacing: 0.5,
+  },
+  paymentStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  paymentStatusPaid: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  paymentStatusPending: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  paymentStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  textPaid: {
+    color: '#15803D',
+  },
+  textPending: {
+    color: '#B45309',
+  },
+  orderPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    marginBottom: 2,
+  },
   orderAmount: {
     fontSize: 15,
     fontWeight: '700',
     color: '#0F172A',
-    marginBottom: 4,
+  },
+  paymentMethodText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginLeft: 6,
   },
   orderDate: {
     fontSize: 12,
@@ -765,11 +1031,46 @@ const styles = StyleSheet.create({
   },
   actionButtons: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
     marginTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     paddingTop: 8,
+  },
+  quickPayActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  quickPayBtnVerify: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#86EFAC',
+  },
+  quickPayBtnDone: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  quickPayActionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  quickPayTextVerify: {
+    color: '#15803D',
+  },
+  quickPayTextDone: {
+    color: '#64748B',
+  },
+  refreshHeaderBtn: {
+    padding: 6,
+    marginRight: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 32,
+    minHeight: 32,
   },
   actionIcon: {
     marginLeft: 18,
