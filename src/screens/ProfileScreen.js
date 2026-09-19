@@ -28,6 +28,8 @@ import {
   setAllStoresActiveStatus,
   extractStoreSettings,
   embedStoreSettings,
+  extractMerchantUpi,
+  embedMerchantUpi,
 } from '../services/supabase';
 import {
   schedulePushNotification,
@@ -56,7 +58,7 @@ import {
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { useTheme } from '../context/ThemeContext';
-import { decodeQrFromImage, parseUpiString, normalizeUpiId } from '../services/qrScanService';
+import { decodeQrFromImage, parseUpiString, normalizeUpiId, isGenericQrName } from '../services/qrScanService';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
@@ -604,29 +606,39 @@ const ProfileScreen = ({ navigation, route }) => {
         }
 
         const activeQr = await getActiveQrCode(user.id);
-        let currentUpiId = user.user_metadata?.upi_id || data?.upi_id || '';
+        const embeddedUpi = extractMerchantUpi(data?.media_urls);
+        let currentUpiId =
+          normalizeUpiId(data?.upi_id) ||
+          normalizeUpiId(embeddedUpi) ||
+          normalizeUpiId(user.user_metadata?.upi_id) ||
+          '';
+
         if (activeQr) {
           setUpiQrCodeUrl(activeQr.qr_image_url);
-          if (!currentUpiId && activeQr.name) {
-            currentUpiId = normalizeUpiId(activeQr.name) || activeQr.name.trim();
+          if (!currentUpiId && activeQr.name && !isGenericQrName(activeQr.name)) {
+            currentUpiId = normalizeUpiId(activeQr.name) || '';
           }
           // If UPI ID is missing, scan active QR image in background to recover it
           if (!currentUpiId && activeQr.qr_image_url) {
             decodeQrFromImage(activeQr.qr_image_url)
               .then((scan) => {
                 if (scan?.success && scan.upiId) {
-                  const detected = normalizeUpiId(scan.upiId) || scan.upiId.trim();
-                  setUpiId(detected);
-                  updateQrCode(activeQr.id, detected, true).catch(() => {});
-                  supabase.from('profiles').update({ upi_id: detected }).eq('id', user.id).catch(() => {});
-                  supabase.auth.updateUser({ data: { upi_id: detected } }).catch(() => {});
+                  const detected = normalizeUpiId(scan.upiId);
+                  if (detected && !isGenericQrName(detected)) {
+                    setUpiId(detected);
+                    setProfile((prev) => ({ ...(prev || {}), upi_id: detected }));
+                    updateQrCode(activeQr.id, detected, true).catch(() => {});
+                    supabase.from('profiles').update({ upi_id: detected }).eq('id', user.id).catch(() => {});
+                    supabase.auth.updateUser({ data: { upi_id: detected } }).catch(() => {});
+                  }
                 }
               })
               .catch(() => {});
           }
         }
-        if (currentUpiId) {
-          setUpiId(normalizeUpiId(currentUpiId) || currentUpiId);
+        if (currentUpiId && !isGenericQrName(currentUpiId)) {
+          setUpiId(currentUpiId);
+          setProfile((prev) => ({ ...(prev || {}), upi_id: currentUpiId }));
         }
       }
     } catch (err) {
@@ -1013,6 +1025,14 @@ const ProfileScreen = ({ navigation, route }) => {
       const parsedLat = latitude != null && !isNaN(Number(latitude)) ? Number(latitude) : null;
       const parsedLon = longitude != null && !isNaN(Number(longitude)) ? Number(longitude) : null;
 
+      // Auto-normalize Merchant UPI ID (e.g. 9876543210 -> 9876543210@upi, storename -> storename@upi)
+      const rawUpi = (upiId || '').trim();
+      const normalizedUpi = normalizeUpiId(rawUpi);
+      if (normalizedUpi && !isGenericQrName(normalizedUpi)) {
+        setUpiId(normalizedUpi);
+        setProfile((prev) => ({ ...(prev || {}), upi_id: normalizedUpi }));
+      }
+
       const updates = {
         id: user.id,
         full_name: trimmedName,
@@ -1026,6 +1046,7 @@ const ProfileScreen = ({ navigation, route }) => {
         zip_code: (zipCode || '').trim(),
         latitude: parsedLat,
         longitude: parsedLon,
+        upi_id: normalizedUpi && !isGenericQrName(normalizedUpi) ? normalizedUpi : (profile?.upi_id || null),
         enable_tax: printerConfig?.enableTax === true,
         cgst_rate: printerConfig?.cgstRate !== undefined ? Number(printerConfig.cgstRate) : 2.5,
         sgst_rate: printerConfig?.sgstRate !== undefined ? Number(printerConfig.sgstRate) : 2.5,
@@ -1052,7 +1073,7 @@ const ProfileScreen = ({ navigation, route }) => {
         .maybeSingle();
 
       if (profileError && (profileError.code === 'PGRST204' || profileError.message?.includes('column'))) {
-        console.warn('Retrying profile upsert without tax or theme columns:', profileError.message);
+        console.warn('Retrying profile upsert without tax, theme, or upi_id columns:', profileError.message);
         const fallbackUpdates = { ...updates };
         delete fallbackUpdates.enable_tax;
         delete fallbackUpdates.cgst_rate;
@@ -1061,6 +1082,7 @@ const ProfileScreen = ({ navigation, route }) => {
         delete fallbackUpdates.service_cost_rate;
         delete fallbackUpdates.print_tax_breakdown;
         delete fallbackUpdates.theme_preference;
+        delete fallbackUpdates.upi_id;
         const retryResult = await supabase.from('profiles').upsert(fallbackUpdates, { onConflict: 'id' }).select().maybeSingle();
         updatedData = retryResult.data;
         profileError = retryResult.error;
@@ -1073,9 +1095,15 @@ const ProfileScreen = ({ navigation, route }) => {
         return;
       }
 
+      // Embed merchant UPI ID into media_urls as persistent backup
+      let mediaListWithUpi = finalMediaList;
+      if (normalizedUpi && !isGenericQrName(normalizedUpi)) {
+        mediaListWithUpi = embedMerchantUpi(finalMediaList, normalizedUpi);
+      }
+
       if (isSeller) {
         // Embed store settings into final media array for profiles
-        const finalMediaWithSettings = embedStoreSettings(finalMediaList, {
+        const finalMediaWithSettings = embedStoreSettings(mediaListWithUpi, {
           is_store_active: isStoreActive,
           is_map_active: isMapActive,
           is_product_active: isProductViewActive,
@@ -1107,14 +1135,12 @@ const ProfileScreen = ({ navigation, route }) => {
         try {
           await supabase
             .from('profiles')
-            .update({ media_urls: finalMediaList })
+            .update({ media_urls: mediaListWithUpi })
             .eq('id', user.id);
         } catch (colErr) {
           console.warn('Notice: media_urls column update:', colErr);
         }
       }
-
-      const normalizedUpi = normalizeUpiId(upiId);
 
       // 2. Update auth user metadata (name/full_name/profile_media/store_settings/upi_id) and email if changed
       const authUpdates = {
@@ -1123,7 +1149,7 @@ const ProfileScreen = ({ navigation, route }) => {
           full_name: trimmedName,
           avatar_url: avatarUrl,
           profile_media: finalMediaList,
-          upi_id: normalizedUpi || (upiId || '').trim(),
+          upi_id: normalizedUpi && !isGenericQrName(normalizedUpi) ? normalizedUpi : (profile?.upi_id || ''),
           mobile: trimmedMobile,
           address_line_1: (addressLine1 || '').trim(),
           address_line_2: (addressLine2 || '').trim(),
@@ -1153,7 +1179,7 @@ const ProfileScreen = ({ navigation, route }) => {
         },
       };
 
-      if (normalizedUpi) {
+      if (normalizedUpi && !isGenericQrName(normalizedUpi)) {
         try {
           await supabase
             .from('profiles')
@@ -1491,16 +1517,18 @@ const ProfileScreen = ({ navigation, route }) => {
   };
 
   const handleSaveUpiId = async () => {
-    const normalized = normalizeUpiId(upiId);
-    if (!normalized) {
+    const raw = (upiId || '').trim();
+    const normalized = normalizeUpiId(raw);
+    if (!normalized || isGenericQrName(normalized)) {
       showAlert(
         'Enter UPI ID / Mobile',
-        'Please enter your UPI ID, 10-digit mobile number, or Merchant ID (e.g. 9876543210@upi, store@okaxis, or 9876543210).'
+        'Please enter your UPI ID, 10-digit mobile number, or Merchant ID (e.g. 9876543210@upi, store@okaxis, or 9876543210). The @upi handle is added automatically if not specified.'
       );
       return;
     }
 
     setUpiId(normalized);
+    setProfile((prev) => ({ ...(prev || {}), upi_id: normalized }));
 
     try {
       setSavingUpiId(true);
@@ -1515,7 +1543,7 @@ const ProfileScreen = ({ navigation, route }) => {
         data: { upi_id: normalized },
       });
 
-      // Try updating profiles table if column exists
+      // Try updating profiles table upi_id column
       try {
         await supabase
           .from('profiles')
@@ -1524,6 +1552,20 @@ const ProfileScreen = ({ navigation, route }) => {
       } catch (err) {
         // column may not exist in profiles table
       }
+
+      // Persistent backup in media_urls
+      try {
+        const { data: curProf } = await supabase
+          .from('profiles')
+          .select('media_urls')
+          .eq('id', user.id)
+          .maybeSingle();
+        const updatedMedia = embedMerchantUpi(curProf?.media_urls || mediaList, normalized);
+        await supabase
+          .from('profiles')
+          .update({ media_urls: updatedMedia })
+          .eq('id', user.id);
+      } catch (_) {}
 
       // Sync with active QR code in user_qr_codes
       const activeQr = await getActiveQrCode(user.id);
@@ -2181,6 +2223,12 @@ const ProfileScreen = ({ navigation, route }) => {
             placeholder="e.g. store@okaxis, 9876543210@upi, or 9876543210"
             value={upiId}
             onChangeText={setUpiId}
+            onBlur={() => {
+              if (upiId && upiId.trim()) {
+                const norm = normalizeUpiId(upiId);
+                if (norm && !isGenericQrName(norm)) setUpiId(norm);
+              }
+            }}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -2261,7 +2309,7 @@ const ProfileScreen = ({ navigation, route }) => {
               />
               <View style={styles.previewInfo}>
                 <Text style={styles.previewPayee}>{name.trim() || 'Your Store'}</Text>
-                <Text style={styles.previewUpiId}>{upiId.trim()}</Text>
+                <Text style={styles.previewUpiId}>{normalizeUpiId(upiId) || upiId.trim()}</Text>
                 <Text style={styles.previewDesc}>
                   At checkout, QR code automatically fills customer's exact bill total. (Tap to view full screen)
                 </Text>
@@ -2277,12 +2325,13 @@ const ProfileScreen = ({ navigation, route }) => {
             <TouchableOpacity
               activeOpacity={0.88}
               onPress={() => {
+                const activeCleanUpi = normalizeUpiId(upiId) || upiId.trim();
                 const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
-                  `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                  `upi://pay?pa=${encodeURIComponent(activeCleanUpi)}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
                 )}`;
                 const combined = [
                   { id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Code` },
-                  ...(upiId.trim() ? [{ id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` }] : []),
+                  ...(activeCleanUpi ? [{ id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` }] : []),
                   ...mediaList.filter((m) => m && m.type !== 'store_settings'),
                 ];
                 setViewerCustomMedia(combined);
@@ -2346,6 +2395,12 @@ const ProfileScreen = ({ navigation, route }) => {
           placeholder="e.g. storename@okaxis, 9876543210@upi, or 9876543210"
           value={upiId}
           onChangeText={setUpiId}
+          onBlur={() => {
+            if (upiId && upiId.trim()) {
+              const norm = normalizeUpiId(upiId);
+              if (norm && !isGenericQrName(norm)) setUpiId(norm);
+            }
+          }}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -2372,7 +2427,7 @@ const ProfileScreen = ({ navigation, route }) => {
           ))}
         </View>
         <Text style={styles.upiInputHelper}>
-          💡 Enter your UPI ID, 10-digit mobile number, or Merchant ID. Saved automatically when you tap 'Save Profile'.
+          💡 Enter your UPI ID, 10-digit mobile number, or Merchant ID. The '@upi' handle is added automatically when saving or tapping outside. Saved when you tap 'Update Profile'.
         </Text>
 
         <Text style={styles.inputLabel}>Address Line 1</Text>

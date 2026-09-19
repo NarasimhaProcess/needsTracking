@@ -13,10 +13,10 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Clipboard from 'expo-clipboard';
-import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
+import { supabase, getActiveQrCode, updateOrderStatus, extractMerchantUpi } from '../services/supabase';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
 import FullScreenImageViewer from '../components/FullScreenImageViewer';
-import { normalizeUpiId } from '../services/qrScanService';
+import { normalizeUpiId, isGenericQrName } from '../services/qrScanService';
 
 const UpiQrScreen = ({ navigation, route }) => {
   const { cart, totalAmount: passedAmount, shippingAddress, order, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
@@ -70,28 +70,58 @@ const UpiQrScreen = ({ navigation, route }) => {
 
         if (targetUserId) {
           let foundUpi = '';
-          const qrCode = await getActiveQrCode(targetUserId);
-          if (qrCode) {
-            const url = qrCode.qr_image_url || qrCode.qr_code_url;
-            setActiveQrImageUrl(url);
-            const normQr = normalizeUpiId(qrCode.name);
-            if (normQr) {
-              foundUpi = normQr;
+
+          // 1. Primary source of truth: Seller Profile
+          let prof = null;
+          try {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('id, full_name, mobile, media_urls, upi_id')
+              .eq('id', targetUserId)
+              .maybeSingle();
+
+            if (data) {
+              prof = data;
+            } else if (error && error.message?.includes('upi_id')) {
+              const { data: fallbackData } = await supabase
+                .from('profiles')
+                .select('id, full_name, mobile, media_urls')
+                .eq('id', targetUserId)
+                .maybeSingle();
+              prof = fallbackData;
+            }
+          } catch (_) {}
+
+          if (prof) {
+            if (prof.full_name) setPayeeName(prof.full_name);
+            const normProf =
+              normalizeUpiId(prof.upi_id) ||
+              normalizeUpiId(extractMerchantUpi(prof.media_urls));
+            if (normProf && !isGenericQrName(normProf)) {
+              foundUpi = normProf;
               setPayeeUpiId(foundUpi);
             }
           }
 
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('id, full_name, mobile, upi_id')
-            .eq('id', targetUserId)
-            .maybeSingle();
+          // 2. Active QR code record
+          const qrCode = await getActiveQrCode(targetUserId);
+          if (qrCode) {
+            const url = qrCode.qr_image_url || qrCode.qr_code_url;
+            setActiveQrImageUrl(url);
+            if (!foundUpi && qrCode.name && !isGenericQrName(qrCode.name)) {
+              const normQr = normalizeUpiId(qrCode.name);
+              if (normQr && !isGenericQrName(normQr)) {
+                foundUpi = normQr;
+                setPayeeUpiId(foundUpi);
+              }
+            }
+          }
 
-          if (prof) {
-            if (prof.full_name) setPayeeName(prof.full_name);
-            const normProf = normalizeUpiId(prof.upi_id);
-            if (normProf) {
-              foundUpi = normProf;
+          // 3. Current user metadata fallback
+          if (!foundUpi && user?.id === targetUserId && user?.user_metadata?.upi_id) {
+            const metaUpi = normalizeUpiId(user.user_metadata.upi_id);
+            if (metaUpi && !isGenericQrName(metaUpi)) {
+              foundUpi = metaUpi;
               setPayeeUpiId(foundUpi);
             }
           }

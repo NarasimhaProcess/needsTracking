@@ -182,19 +182,70 @@ export function parseUpiString(text) {
 }
 
 /**
+ * Checks if a string is a generic QR name/label or placeholder rather than an actual UPI ID.
+ */
+export function isGenericQrName(text) {
+  if (!text || typeof text !== 'string') return true;
+  const clean = text.trim().toLowerCase().replace(/\s+/g, '');
+  if (!clean) return true;
+  const genericLabels = [
+    'myupiqr',
+    'myupiqr@upi',
+    'myqr',
+    'myupi',
+    'upiqr',
+    'qrcode',
+    'qr_code',
+    'activeqr',
+    'staticqr',
+    'dynamicqr',
+    'storeqr',
+    'sellerqr',
+    'default',
+    'storemerchant',
+    'store',
+    'null',
+    'undefined',
+    'vpa',
+    'merchantid',
+    'qr',
+    'image',
+    'scanqr',
+    'myaccount',
+  ];
+  if (genericLabels.includes(clean)) return true;
+  if (
+    clean.startsWith('myupiqr') ||
+    clean.startsWith('storeqr') ||
+    clean.startsWith('qrcode') ||
+    clean.startsWith('staticqr')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Normalizes any UPI ID, 10-digit mobile number, or Merchant ID into a valid standard UPI VPA (Virtual Payment Address).
+ * If the user inputs a plain Merchant ID (e.g. "storename" or "9876543210"), automatically appends the "@upi" handler!
  * Supports:
  * - Full UPI URI: upi://pay?pa=store@okaxis -> store@okaxis
  * - Query string: pa=store@okaxis -> store@okaxis
  * - Plain VPA: store@okaxis -> store@okaxis
  * - 10-digit Mobile: 9876543210 -> 9876543210@upi
  * - With Country Code: +919876543210 / 919876543210 -> 9876543210@upi
- * - Alphanumeric Merchant ID: storename / merchant123 -> merchant123@upi
+ * - Alphanumeric Merchant ID: storename / merchant123 / reddy_store -> storename@upi
+ * - Partial handle: storename@ -> storename@upi
  */
 export function normalizeUpiId(text) {
   if (!text || typeof text !== 'string') return '';
   let trimmed = text.trim();
   if (!trimmed) return '';
+
+  // Filter out generic labels/placeholders (e.g. "My UPI QR")
+  if (isGenericQrName(trimmed)) {
+    return '';
+  }
 
   // 1. If full URI or query with pa=
   if (trimmed.toLowerCase().includes('upi://pay')) {
@@ -209,7 +260,7 @@ export function normalizeUpiId(text) {
     }
   }
 
-  // 2. Remove all spaces
+  // 2. Remove all whitespace
   trimmed = trimmed.replace(/\s+/g, '');
 
   // 3. If already has @
@@ -217,8 +268,13 @@ export function normalizeUpiId(text) {
     if (trimmed.endsWith('@')) {
       trimmed = `${trimmed}upi`;
     }
+    const parts = trimmed.split('@');
+    if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0) {
+      if (isGenericQrName(parts[0])) return '';
+      return trimmed.toLowerCase();
+    }
     if (!trimmed.startsWith('@')) {
-      return trimmed;
+      return trimmed.toLowerCase();
     }
     return '';
   }
@@ -235,12 +291,14 @@ export function normalizeUpiId(text) {
     return `${digits.slice(1)}@upi`;
   }
 
-  // 5. Alphanumeric Merchant ID / Store ID (e.g. merchant123, storeid)
-  if (/^[a-zA-Z0-9.\-_]{2,64}$/.test(trimmed)) {
-    return `${trimmed}@upi`;
+  // 5. Alphanumeric Merchant ID / Store ID (e.g. merchant123, storeid, reddy_store)
+  // Automatically append the standard @upi handler
+  const sanitized = trimmed.replace(/[^a-zA-Z0-9.\-_]/g, '');
+  if (sanitized.length >= 2 && !isGenericQrName(sanitized)) {
+    return `${sanitized.toLowerCase()}@upi`;
   }
 
-  return trimmed;
+  return '';
 }
 
 /**

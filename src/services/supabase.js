@@ -2190,7 +2190,10 @@ export function embedStoreSettings(existingMediaList, storeSettings) {
     list = existingMediaList;
   }
   const cleanMedia = (list || []).filter(
-    (m) => m && m.type !== 'store_settings' && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0
+    (m) =>
+      m &&
+      m.type !== 'store_settings' &&
+      (m.type === 'merchant_upi' || (m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0))
   );
   cleanMedia.push({
     type: 'store_settings',
@@ -2199,6 +2202,55 @@ export function embedStoreSettings(existingMediaList, storeSettings) {
     product_active: storeSettings?.is_product_active !== false,
     updated_at: new Date().toISOString(),
   });
+  return cleanMedia;
+}
+
+/**
+ * Extracts merchant UPI ID saved in media_urls array (fallback for when upi_id column is not in profiles table)
+ */
+export function extractMerchantUpi(mediaUrls) {
+  if (!mediaUrls) return '';
+  let list = [];
+  if (typeof mediaUrls === 'string') {
+    try {
+      list = JSON.parse(mediaUrls);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(mediaUrls)) {
+    list = mediaUrls;
+  }
+  const item = (list || []).find((m) => m && (m.type === 'merchant_upi' || m.type === 'upi_settings'));
+  if (item && item.upi_id && typeof item.upi_id === 'string') {
+    return item.upi_id.trim();
+  }
+  return '';
+}
+
+/**
+ * Embeds merchant UPI ID into media_urls array without losing existing photos or store settings
+ */
+export function embedMerchantUpi(existingMediaList, upiId) {
+  let list = [];
+  if (typeof existingMediaList === 'string') {
+    try {
+      list = JSON.parse(existingMediaList);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(existingMediaList)) {
+    list = existingMediaList;
+  }
+  const cleanMedia = (list || []).filter(
+    (m) => m && m.type !== 'merchant_upi' && m.type !== 'upi_settings'
+  );
+  if (upiId && typeof upiId === 'string' && upiId.trim().length > 0) {
+    cleanMedia.push({
+      type: 'merchant_upi',
+      upi_id: upiId.trim(),
+      updated_at: new Date().toISOString(),
+    });
+  }
   return cleanMedia;
 }
 

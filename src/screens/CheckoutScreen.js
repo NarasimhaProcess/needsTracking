@@ -28,6 +28,7 @@ import {
   getUserAddresses,
   addUserAddress,
   deleteUserAddress,
+  extractMerchantUpi,
 } from '../services/supabase';
 import { getGuestCart, clearGuestCart, getPreferredStore, saveGuestOrderId } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
@@ -41,6 +42,7 @@ import {
   buildUpiPaymentUri,
   parseUpiString,
   normalizeUpiId,
+  isGenericQrName,
 } from '../services/qrScanService';
 
 const CheckoutScreen = ({ navigation, route }) => {
@@ -101,6 +103,7 @@ const CheckoutScreen = ({ navigation, route }) => {
     Math.floor(100000 + Math.random() * 900000).toString()
   );
   const [dynamicQrDataUrl, setDynamicQrDataUrl] = useState(null);
+  const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' | 'profile'
   const [qrImageLoading, setQrImageLoading] = useState(false);
   const [qrImageError, setQrImageError] = useState(false);
   const [isScanningProfileQr, setIsScanningProfileQr] = useState(false);
@@ -336,35 +339,55 @@ const CheckoutScreen = ({ navigation, route }) => {
       let configuredQr = null;
 
       if (targetSellerId) {
+        // 1. Primary source of truth: Seller's profile in 'profiles' table
+        let profData = null;
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, mobile, email, media_urls, upi_id')
+            .eq('id', targetSellerId)
+            .maybeSingle();
+
+          if (data) {
+            profData = data;
+          } else if (error && error.message?.includes('upi_id')) {
+            const { data: fallbackData } = await supabase
+              .from('profiles')
+              .select('id, full_name, mobile, email, media_urls')
+              .eq('id', targetSellerId)
+              .maybeSingle();
+            profData = fallbackData;
+          }
+        } catch (e) {
+          console.warn('Notice fetching seller profile in checkout:', e);
+        }
+
+        if (profData) {
+          setSellerProfile(profData);
+          const profUpi =
+            normalizeUpiId(profData.upi_id) ||
+            normalizeUpiId(extractMerchantUpi(profData.media_urls));
+          if (profUpi && !isGenericQrName(profUpi)) {
+            configuredUpiId = profUpi;
+          }
+        }
+
+        // 2. Active QR code record from 'user_qr_codes'
         const qrData = await getActiveQrCode(targetSellerId);
         if (qrData) {
           configuredQr = qrData;
           setSellerQr(qrData);
-          const normQr = normalizeUpiId(qrData.name);
-          if (normQr) {
-            configuredUpiId = normQr;
-          }
-        }
-
-        const { data: profData } = await supabase
-          .from('profiles')
-          .select('id, full_name, mobile, email, media_urls, upi_id')
-          .eq('id', targetSellerId)
-          .maybeSingle();
-
-        if (profData) {
-          setSellerProfile(profData);
-          if (!configuredUpiId && profData.upi_id) {
-            const normProf = normalizeUpiId(profData.upi_id);
-            if (normProf) {
-              configuredUpiId = normProf;
+          if (!configuredUpiId && qrData.name && !isGenericQrName(qrData.name)) {
+            const normQr = normalizeUpiId(qrData.name);
+            if (normQr && !isGenericQrName(normQr)) {
+              configuredUpiId = normQr;
             }
           }
         }
 
-        // If seller has uploaded a profile QR code, scan it to extract UPI ID, Merchant Name & Raw URI!
+        // 3. Scan QR image if UPI ID is not yet resolved
         const profileQrUrl = configuredQr?.qr_image_url || configuredQr?.qr_code_url;
-        if (profileQrUrl) {
+        if (!configuredUpiId && profileQrUrl) {
           try {
             setIsScanningProfileQr(true);
             const scan = await decodeQrFromImage(profileQrUrl);
@@ -373,12 +396,9 @@ const CheckoutScreen = ({ navigation, route }) => {
                 setSellerRawUpiText(scan.rawText);
               }
               if (scan.upiId) {
-                configuredUpiId = normalizeUpiId(scan.upiId) || scan.upiId.trim();
-                // Sync back to database for future instant loads
-                if (configuredQr?.id && configuredQr.name !== configuredUpiId) {
-                  try {
-                    updateQrCode(configuredQr.id, configuredUpiId, true).catch(() => {});
-                  } catch (_) {}
+                const scannedUpi = normalizeUpiId(scan.upiId);
+                if (scannedUpi && !isGenericQrName(scannedUpi)) {
+                  configuredUpiId = scannedUpi;
                 }
               }
               if (scan.payeeName && !profData?.full_name) {
@@ -392,31 +412,50 @@ const CheckoutScreen = ({ navigation, route }) => {
           }
         }
       } else if (currentUser?.id) {
+        let userProf = null;
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, mobile, email, media_urls, upi_id')
+            .eq('id', currentUser.id)
+            .maybeSingle();
+          if (data) {
+            userProf = data;
+          } else if (error && error.message?.includes('upi_id')) {
+            const { data: fallbackData } = await supabase
+              .from('profiles')
+              .select('id, full_name, mobile, email, media_urls')
+              .eq('id', currentUser.id)
+              .maybeSingle();
+            userProf = fallbackData;
+          }
+        } catch (_) {}
+
+        if (userProf) {
+          setSellerProfile(userProf);
+          const profUpi =
+            normalizeUpiId(userProf.upi_id) ||
+            normalizeUpiId(extractMerchantUpi(userProf.media_urls));
+          if (profUpi && !isGenericQrName(profUpi)) {
+            configuredUpiId = profUpi;
+          }
+        }
+
+        if (!configuredUpiId && currentUser.user_metadata?.upi_id) {
+          const metaUpi = normalizeUpiId(currentUser.user_metadata.upi_id);
+          if (metaUpi && !isGenericQrName(metaUpi)) {
+            configuredUpiId = metaUpi;
+          }
+        }
+
         const qrData = await getActiveQrCode(currentUser.id);
         if (qrData) {
           configuredQr = qrData;
           setSellerQr(qrData);
-          const normQr = normalizeUpiId(qrData.name);
-          if (normQr) {
-            configuredUpiId = normQr;
-          }
-          if (qrData.qr_image_url || qrData.qr_code_url) {
-            try {
-              setIsScanningProfileQr(true);
-              const scan = await decodeQrFromImage(qrData.qr_image_url || qrData.qr_code_url);
-              if (scan?.success) {
-                if (scan.rawText) {
-                  setSellerRawUpiText(scan.rawText);
-                }
-                if (scan.upiId) {
-                  configuredUpiId = normalizeUpiId(scan.upiId) || scan.upiId.trim();
-                  if (qrData.id && qrData.name !== configuredUpiId) {
-                    updateQrCode(qrData.id, configuredUpiId, true).catch(() => {});
-                  }
-                }
-              }
-            } catch (_) {} finally {
-              setIsScanningProfileQr(false);
+          if (!configuredUpiId && qrData.name && !isGenericQrName(qrData.name)) {
+            const normQr = normalizeUpiId(qrData.name);
+            if (normQr && !isGenericQrName(normQr)) {
+              configuredUpiId = normQr;
             }
           }
         }
@@ -429,8 +468,10 @@ const CheckoutScreen = ({ navigation, route }) => {
         (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url || configuredQr.name))
       );
 
-      // Prioritize uploaded seller profile QR if available
-      if (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url)) {
+      // Prioritize dynamic bill QR if UPI ID is configured, otherwise show uploaded standee
+      if (configuredUpiId) {
+        setQrTab('dynamic');
+      } else if (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url)) {
         setQrTab('profile');
       } else {
         setQrTab('dynamic');
@@ -455,8 +496,12 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   // Derive active UPI parameters strictly from seller profile
   const activeUpiId =
-    normalizeUpiId(sellerUpiId) ||
-    normalizeUpiId(sellerQr?.name) ||
+    (sellerUpiId && !isGenericQrName(sellerUpiId) ? normalizeUpiId(sellerUpiId) : '') ||
+    (sellerProfile?.upi_id && !isGenericQrName(sellerProfile.upi_id) ? normalizeUpiId(sellerProfile.upi_id) : '') ||
+    normalizeUpiId(extractMerchantUpi(sellerProfile?.media_urls)) ||
+    (profile?.upi_id && !isGenericQrName(profile.upi_id) ? normalizeUpiId(profile.upi_id) : '') ||
+    normalizeUpiId(extractMerchantUpi(profile?.media_urls)) ||
+    (currentUser?.user_metadata?.upi_id && !isGenericQrName(currentUser.user_metadata.upi_id) ? normalizeUpiId(currentUser.user_metadata.upi_id) : '') ||
     '';
 
   const isUpiConfigured = Boolean(
@@ -506,8 +551,11 @@ const CheckoutScreen = ({ navigation, route }) => {
   // Profile-uploaded QR image URL (from user_qr_codes table)
   const profileQrImageUrl = sellerQr?.qr_image_url || sellerQr?.qr_code_url || null;
 
-  // Unified QR code image URL to display: Strictly use Seller's Profile QR code (with fallback to dynamic QR if profile QR is not yet uploaded)
-  const displayedQrUri = profileQrImageUrl || dynamicQrDataUrl || fallbackDynamicQrUrl;
+  // Unified QR code image URL to display: If qrTab is 'profile' and profileQrImageUrl exists, use it. Otherwise use dynamic QR with exact order bill amount.
+  const displayedQrUri =
+    qrTab === 'profile' && profileQrImageUrl
+      ? profileQrImageUrl
+      : (dynamicQrDataUrl || fallbackDynamicQrUrl || profileQrImageUrl);
 
   // Prompt Order Type when Pay with UPI is clicked
   const handlePayWithUpiPress = (action = 'select_upi') => {
@@ -2001,7 +2049,44 @@ const CheckoutScreen = ({ navigation, route }) => {
               </View>
             </View>
 
-            {/* QR Code Container - Displays Profile QR Code */}
+            {/* QR Mode Switcher (Dynamic Bill QR vs Store Standee QR) */}
+            {profileQrImageUrl && dynamicQrUri ? (
+              <View style={styles.qrTabContainer}>
+                <TouchableOpacity
+                  style={[styles.qrTabButton, qrTab === 'dynamic' && styles.qrTabButtonActive]}
+                  onPress={() => setQrTab('dynamic')}
+                  activeOpacity={0.8}
+                >
+                  <Icon
+                    name="qrcode"
+                    size={14}
+                    color={qrTab === 'dynamic' ? '#007AFF' : '#64748B'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.qrTabText, qrTab === 'dynamic' && styles.qrTabTextActive]}>
+                    ⚡ Dynamic Bill QR (₹{totalAmount.toFixed(2)})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.qrTabButton, qrTab === 'profile' && styles.qrTabButtonActive]}
+                  onPress={() => setQrTab('profile')}
+                  activeOpacity={0.8}
+                >
+                  <Icon
+                    name="image"
+                    size={14}
+                    color={qrTab === 'profile' ? '#007AFF' : '#64748B'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.qrTabText, qrTab === 'profile' && styles.qrTabTextActive]}>
+                    🏪 Store Standee QR
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {/* QR Code Container - Displays Dynamic or Profile QR Code */}
             <View style={styles.qrBox}>
               {loadingSellerQr ? (
                 <View style={styles.qrLoadingBox}>
@@ -2032,9 +2117,9 @@ const CheckoutScreen = ({ navigation, route }) => {
             </View>
 
             <Text style={styles.qrScanInstruction}>
-              {profileQrImageUrl
-                ? `Scan Seller's Profile QR code with Google Pay, PhonePe, Paytm or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
-                : `Scan with Google Pay, PhonePe, Paytm or any UPI app to pay ₹${totalAmount.toFixed(2)}.`}
+              {qrTab === 'profile' && profileQrImageUrl
+                ? `Scan Seller's Store Standee QR code with Google Pay, PhonePe, Paytm or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+                : `Scan with Google Pay, PhonePe, Paytm or any UPI app. Bill amount (₹${totalAmount.toFixed(2)}) and payee are pre-filled automatically!`}
             </Text>
 
             {/* Direct 1-Tap Pay via UPI App (GPay / PhonePe / Paytm) */}
