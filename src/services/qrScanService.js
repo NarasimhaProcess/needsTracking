@@ -180,7 +180,9 @@ export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount
         params.set('am', Number(amount).toFixed(2));
       }
       if (note) {
-        params.set('tn', note.trim());
+        // Strip # and special characters that cause UPI transaction failures (UPI standard allows alphanumeric and spaces/hyphens only)
+        const cleanNoteParam = String(note).replace(/[^a-zA-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim();
+        params.set('tn', cleanNoteParam);
       }
       if (payeeName && payeeName !== 'Store Merchant' && !params.has('pn')) {
         params.set('pn', payeeName.trim());
@@ -194,7 +196,8 @@ export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount
   if (!upiId || !upiId.includes('@')) return '';
   const cleanUpi = upiId.trim();
   const cleanName = payeeName.trim() || 'Store Merchant';
-  const cleanNote = note.trim() || 'Order Payment';
+  // Strip # and any character that is not alphanumeric, space, or hyphen
+  const cleanNote = String(note || 'Order Payment').replace(/[^a-zA-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim() || 'Order Payment';
 
   let uri = `upi://pay?pa=${encodeURIComponent(cleanUpi)}&pn=${encodeURIComponent(cleanName)}&cu=INR&tn=${encodeURIComponent(cleanNote)}`;
   if (amount !== undefined && amount !== null && !isNaN(Number(amount)) && Number(amount) > 0) {

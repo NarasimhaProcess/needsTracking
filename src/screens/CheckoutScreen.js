@@ -95,7 +95,10 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [sellerUpiId, setSellerUpiId] = useState('');
   const [sellerRawUpiText, setSellerRawUpiText] = useState('');
   const [loadingSellerQr, setLoadingSellerQr] = useState(false);
-  const [qrTab, setQrTab] = useState('profile'); // 'profile' (uploaded QR from profile) | 'dynamic' (with bill amount)
+  // 6-digit unique payment transaction reference (strictly digits, easy to identify in UPI statements)
+  const [uniquePaymentCode] = useState(() =>
+    Math.floor(100000 + Math.random() * 900000).toString()
+  );
   const [dynamicQrDataUrl, setDynamicQrDataUrl] = useState(null);
   const [qrImageLoading, setQrImageLoading] = useState(false);
   const [qrImageError, setQrImageError] = useState(false);
@@ -456,7 +459,11 @@ const CheckoutScreen = ({ navigation, route }) => {
     profile?.full_name ||
     'Store Merchant';
 
-  const orderNote = `Bill #${(cart?.id || 'Order').toString().slice(-6)}`;
+  // Alphanumeric with spaces only - strictly NO '#' character so UPI apps (GPay, PhonePe, Paytm) never fail
+  const cleanCartRef = (cart?.id || '').toString().replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
+  const orderNote = cleanCartRef
+    ? `Order ${cleanCartRef} ${uniquePaymentCode}`
+    : `Order ${uniquePaymentCode}`;
 
   // Official UPI Payment URI format (supported across all Indian UPI apps)
   const dynamicUpiUri = activeUpiId
@@ -489,11 +496,8 @@ const CheckoutScreen = ({ navigation, route }) => {
   // Profile-uploaded QR image URL (from user_qr_codes table)
   const profileQrImageUrl = sellerQr?.qr_image_url || sellerQr?.qr_code_url || null;
 
-  // Unified QR code image URL to display
-  const displayedQrUri =
-    qrTab === 'profile'
-      ? (profileQrImageUrl || dynamicQrDataUrl || fallbackDynamicQrUrl)
-      : (dynamicQrDataUrl || fallbackDynamicQrUrl || profileQrImageUrl);
+  // Unified QR code image URL to display: Strictly use Seller's Profile QR code (with fallback to dynamic QR if profile QR is not yet uploaded)
+  const displayedQrUri = profileQrImageUrl || dynamicQrDataUrl || fallbackDynamicQrUrl;
 
   // Prompt Order Type when Pay with UPI is clicked
   const handlePayWithUpiPress = (action = 'select_upi') => {
@@ -1167,10 +1171,14 @@ const CheckoutScreen = ({ navigation, route }) => {
               city: city || '',
               postalCode: postalCode || '',
               billing: billingBreakdown,
+              payment_reference: uniquePaymentCode,
+              payment_note: orderNote,
             }
           : {
               ...(typeof shippingAddress === 'object' ? shippingAddress : { address: shippingAddress }),
               billing: billingBreakdown,
+              payment_reference: uniquePaymentCode,
+              payment_note: orderNote,
             };
 
         const orderPayload = {
@@ -1358,6 +1366,15 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   const openQrImageViewer = () => {
     const list = [];
+    if (profileQrImageUrl) {
+      list.push({
+        id: 'checkout-profile-qr',
+        uri: profileQrImageUrl,
+        type: 'image',
+        title: `Seller Profile QR Code - ${resolvedSellerName || 'Store'}`,
+        subtitle: `UPI ID: ${activeUpiId || 'Store QR'}`,
+      });
+    }
     const activeDynamicUrl = dynamicQrDataUrl || fallbackDynamicQrUrl;
     if (activeDynamicUrl) {
       list.push({
@@ -1366,15 +1383,6 @@ const CheckoutScreen = ({ navigation, route }) => {
         type: 'image',
         title: `Dynamic UPI QR Code (₹${totalAmount.toFixed(2)})`,
         subtitle: `Scan to pay ₹${totalAmount.toFixed(2)} to ${resolvedSellerName || 'Store'}`,
-      });
-    }
-    if (profileQrImageUrl) {
-      list.push({
-        id: 'checkout-profile-qr',
-        uri: profileQrImageUrl,
-        type: 'image',
-        title: `Seller Profile QR Code - ${resolvedSellerName || 'Store'}`,
-        subtitle: `UPI ID: ${activeUpiId || 'Store QR'}`,
       });
     }
     (cartItems || []).forEach((ci) => {
@@ -1404,9 +1412,8 @@ const CheckoutScreen = ({ navigation, route }) => {
     });
 
     if (list.length > 0) {
-      const targetIdx = qrTab === 'profile' && profileQrImageUrl ? Math.max(0, list.findIndex((i) => i.id === 'checkout-profile-qr')) : 0;
       setQrViewerMedia(list);
-      setQrViewerIndex(targetIdx);
+      setQrViewerIndex(0);
       setIsQrViewerVisible(true);
     }
   };
@@ -1950,49 +1957,23 @@ const CheckoutScreen = ({ navigation, route }) => {
             <View style={styles.upiAmountPill}>
               <View>
                 <Text style={styles.upiAmountLabel}>Order Bill Amount:</Text>
-                <Text style={styles.upiAmountSub}>Pre-filled in QR code</Text>
+                <Text style={styles.upiAmountSub}>Scan Profile QR or tap 'Pay in UPI App' below</Text>
               </View>
               <Text style={styles.upiAmountValue}>₹{totalAmount.toFixed(2)}</Text>
             </View>
 
-            {/* Tab Switcher if Profile QR is uploaded */}
-            {profileQrImageUrl && (
-              <View style={styles.qrTabContainer}>
-                <TouchableOpacity
-                  style={[styles.qrTabButton, qrTab === 'dynamic' && styles.qrTabButtonActive]}
-                  onPress={() => setQrTab('dynamic')}
-                  activeOpacity={0.8}
-                >
-                  <Icon
-                    name="bolt"
-                    size={12}
-                    color={qrTab === 'dynamic' ? '#007AFF' : '#64748B'}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text style={[styles.qrTabText, qrTab === 'dynamic' && styles.qrTabTextActive]}>
-                    QR with Bill Amount
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.qrTabButton, qrTab === 'profile' && styles.qrTabButtonActive]}
-                  onPress={() => setQrTab('profile')}
-                  activeOpacity={0.8}
-                >
-                  <Icon
-                    name="image"
-                    size={12}
-                    color={qrTab === 'profile' ? '#007AFF' : '#64748B'}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text style={[styles.qrTabText, qrTab === 'profile' && styles.qrTabTextActive]}>
-                    Profile QR Code
-                  </Text>
-                </TouchableOpacity>
+            {/* UPI Payment Reference Code Pill (Unique 6-digit reference for bank/UPI reconciliation) */}
+            <View style={styles.paymentRefPill}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.paymentRefLabel}>UPI Transaction Note / Ref:</Text>
+                <Text style={styles.paymentRefValue}>{orderNote}</Text>
               </View>
-            )}
+              <View style={styles.paymentRefCodeBadge}>
+                <Text style={styles.paymentRefCodeText}>{uniquePaymentCode}</Text>
+              </View>
+            </View>
 
-            {/* QR Code Container */}
+            {/* QR Code Container - Displays Profile QR Code */}
             <View style={styles.qrBox}>
               {loadingSellerQr ? (
                 <View style={styles.qrLoadingBox}>
@@ -2008,10 +1989,7 @@ const CheckoutScreen = ({ navigation, route }) => {
                 >
                   <Image
                     source={{
-                      uri:
-                        qrTab === 'profile' && profileQrImageUrl
-                          ? profileQrImageUrl
-                          : dynamicQrImageUrl,
+                      uri: displayedQrUri,
                     }}
                     style={styles.qrImage}
                     resizeMode="contain"
@@ -2026,9 +2004,9 @@ const CheckoutScreen = ({ navigation, route }) => {
             </View>
 
             <Text style={styles.qrScanInstruction}>
-              {qrTab === 'profile'
-                ? `Scan with GPay / PhonePe / Paytm and enter ₹${totalAmount.toFixed(2)}.`
-                : `✨ Amount ₹${totalAmount.toFixed(2)} is automatically pre-filled when scanned!`}
+              {profileQrImageUrl
+                ? `Scan Seller's Profile QR code with Google Pay, PhonePe, Paytm or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+                : `Scan with Google Pay, PhonePe, Paytm or any UPI app to pay ₹${totalAmount.toFixed(2)}.`}
             </Text>
 
             {/* Direct 1-Tap Pay via UPI App (GPay / PhonePe / Paytm) */}
@@ -2729,6 +2707,44 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '900',
     color: '#0284C7',
+  },
+  paymentRefPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  paymentRefLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  paymentRefValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  paymentRefCodeBadge: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  paymentRefCodeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
   },
   qrTabContainer: {
     flexDirection: 'row',

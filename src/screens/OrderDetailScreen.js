@@ -719,6 +719,11 @@ const OrderDetailScreen = ({ navigation, route }) => {
               <Text style={styles.paymentMethodText}>
                 Payment Method: {(order.payment_method || 'Cash on Delivery').toUpperCase()}
               </Text>
+              {Boolean(shipping?.payment_note || shipping?.payment_reference) && (
+                <Text style={[styles.paymentMethodText, { color: '#007AFF', marginTop: 4, fontWeight: '700' }]}>
+                  Payment Ref: {shipping.payment_note || shipping.payment_reference}
+                </Text>
+              )}
             </View>
           );
         })()}

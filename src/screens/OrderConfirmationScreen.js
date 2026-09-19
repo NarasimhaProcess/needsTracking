@@ -124,9 +124,18 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
           </View>
 
           {order?.payment_method && (
-            <Text style={styles.paymentMethod}>
+            <Text style={[styles.paymentMethod, Boolean(order?.shipping_address?.payment_reference || order?.shipping_address?.payment_note) && { marginBottom: 8 }]}>
               Payment: {order.payment_method.toUpperCase()}
             </Text>
+          )}
+
+          {Boolean(order?.shipping_address?.payment_reference || order?.shipping_address?.payment_note) && (
+            <View style={styles.paymentRefBox}>
+              <Text style={styles.paymentRefBoxLabel}>UPI Ref Code:</Text>
+              <Text style={styles.paymentRefBoxVal}>
+                {order.shipping_address.payment_note || order.shipping_address.payment_reference}
+              </Text>
+            </View>
           )}
 
           <View style={styles.printActionRow}>
@@ -342,6 +351,29 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '600',
     marginBottom: 20,
+  },
+  paymentRefBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  paymentRefBoxLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    marginRight: 6,
+  },
+  paymentRefBoxVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#007AFF',
+    letterSpacing: 0.5,
   },
   printActionRow: {
     flexDirection: 'row',
