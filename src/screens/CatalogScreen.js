@@ -998,6 +998,7 @@ const CatalogScreen = ({ navigation, route }) => {
           }
           allMedia.push({
             id: `p-${p.id}-m-${mIdx}`,
+            productId: p.id,
             uri: m.media_url || m.uri,
             type: 'image',
             title: pMedia.length > 1 ? `${p.product_name} (${mIdx + 1}/${pMedia.length})` : p.product_name,
@@ -1011,6 +1012,7 @@ const CatalogScreen = ({ navigation, route }) => {
         }
         allMedia.push({
           id: `p-${p.id}-img`,
+          productId: p.id,
           uri: p.image_url,
           type: 'image',
           title: p.product_name,
@@ -1024,6 +1026,7 @@ const CatalogScreen = ({ navigation, route }) => {
       if (pMedia.length > 0) {
         allMedia = pMedia.map((m, mIdx) => ({
           id: `p-${product.id}-m-${mIdx}`,
+          productId: product.id,
           uri: m.media_url || m.uri,
           type: 'image',
           title: pMedia.length > 1 ? `${product.product_name} (${mIdx + 1}/${pMedia.length})` : product.product_name,
@@ -1032,6 +1035,7 @@ const CatalogScreen = ({ navigation, route }) => {
       } else if (product.image_url) {
         allMedia = [{
           id: `p-${product.id}-img`,
+          productId: product.id,
           uri: product.image_url,
           type: 'image',
           title: product.product_name,
@@ -2495,6 +2499,13 @@ const CatalogScreen = ({ navigation, route }) => {
           initialIndex={viewerInitialIndex}
           onClose={() => setIsImageViewerVisible(false)}
           title={viewerTitle || 'Product Images'}
+          onToggleFavorite={(target) => {
+            const prodId = (typeof target === 'object' && target) ? (target.productId || target.id) : target;
+            if (prodId) {
+              handleToggleFavorite(prodId);
+            }
+          }}
+          favoriteProductIds={favoriteProductIds}
         />
 
         {/* Individual Store QR Code Modal */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import {
@@ -40,6 +40,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
   const [initialMediaIndex, setInitialMediaIndex] = useState(0);
   const [otherProducts, setOtherProducts] = useState(route?.params?.allProducts || []);
   const [isFav, setIsFav] = useState(false);
+  const [favoriteProductIds, setFavoriteProductIds] = useState([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -48,6 +49,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
         try {
           const favs = await getFavoriteProductIds();
           if (isMounted) {
+            setFavoriteProductIds(favs || []);
             setIsFav(favs.some((id) => String(id) === String(product.id)));
           }
         } catch (e) {
@@ -60,11 +62,14 @@ const ProductDetailScreen = ({ navigation, route }) => {
     };
   }, [product?.id]);
 
-  const handleToggleFav = async () => {
-    if (!product?.id) return;
+  const handleToggleFav = async (targetId = product?.id) => {
+    if (!targetId) return;
     try {
-      const updated = await toggleFavoriteProductId(product.id);
-      setIsFav(updated.some((id) => String(id) === String(product.id)));
+      const updated = await toggleFavoriteProductId(targetId);
+      setFavoriteProductIds(updated || []);
+      if (product?.id) {
+        setIsFav(updated.some((id) => String(id) === String(product.id)));
+      }
     } catch (e) {
       console.warn('Error toggling favorite:', e);
     }
@@ -221,6 +226,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
       mediaList.forEach((m, idx) => {
         list.push({
           id: `this-prod-${m.id || idx}`,
+          productId: product?.id,
           uri: m.media_url || m.uri,
           type: m.media_type || 'image',
           title: mediaList.length > 1 ? `${product.product_name} (${idx + 1}/${mediaList.length})` : product.product_name,
@@ -230,6 +236,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
     } else if (product?.image_url) {
       list.push({
         id: `this-prod-img`,
+        productId: product?.id,
         uri: product.image_url,
         type: 'image',
         title: product.product_name,
@@ -243,6 +250,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
         pMedia.forEach((m, mIdx) => {
           list.push({
             id: `other-${p.id}-${m.id || mIdx}`,
+            productId: p.id,
             uri: m.media_url || m.uri,
             type: m.media_type || 'image',
             title: pMedia.length > 1 ? `${p.product_name} (${mIdx + 1}/${pMedia.length})` : p.product_name,
@@ -252,6 +260,7 @@ const ProductDetailScreen = ({ navigation, route }) => {
       } else if (p.image_url) {
         list.push({
           id: `other-${p.id}-img`,
+          productId: p.id,
           uri: p.image_url,
           type: 'image',
           title: p.product_name,
@@ -416,6 +425,12 @@ const ProductDetailScreen = ({ navigation, route }) => {
         initialIndex={initialMediaIndex}
         onClose={() => setIsModalVisible(false)}
         title={product?.product_name || 'Product Media'}
+        onToggleFavorite={(target) => {
+          const tId = typeof target === 'object' ? (target.productId || target.id) : target;
+          handleToggleFav(tId || product?.id);
+        }}
+        favoriteProductIds={favoriteProductIds}
+        isFavorite={isFav}
       />
     </ScrollView>
   </View>

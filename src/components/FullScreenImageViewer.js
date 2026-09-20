@@ -42,6 +42,9 @@ const FullScreenImageViewer = ({
   initialIndex = 0,
   onClose,
   title,
+  onToggleFavorite,
+  favoriteProductIds = [],
+  isFavorite,
 }) => {
   const windowDims = useWindowDimensions();
   const screenWidth = windowDims.width || Dimensions.get('window').width || 360;
@@ -87,6 +90,7 @@ const FullScreenImageViewer = ({
         const isVid = type.includes('video') || !!cleanUri.match(/\.(mp4|mov|webm|m4v|avi)($|\?)/i);
         return {
           id: item.id ? `${String(item.id)}-${idx}` : `media-obj-${idx}-${cleanUri}`,
+          productId: item.productId || item.product_id || null,
           uri: cleanUri,
           type: isVid ? 'video' : 'image',
           title: item.title || item.name || item.product_name || item.label || null,
@@ -373,6 +377,26 @@ const FullScreenImageViewer = ({
   const hasError = !!imageErrorMap[mediaId];
   const activeTitle = currentMedia?.title || title || 'Full Screen View';
   const activeSubtitle = currentMedia?.subtitle || null;
+  const currentProductId = currentMedia?.productId;
+
+  const isCurrentFav = useMemo(() => {
+    if (typeof isFavorite === 'function') {
+      return isFavorite(currentMedia, currentIndex);
+    }
+    if (typeof isFavorite === 'boolean') {
+      return isFavorite;
+    }
+    if (currentProductId && Array.isArray(favoriteProductIds)) {
+      return favoriteProductIds.some((id) => String(id) === String(currentProductId));
+    }
+    return false;
+  }, [isFavorite, currentMedia, currentIndex, currentProductId, favoriteProductIds]);
+
+  const handleFavoritePress = () => {
+    if (onToggleFavorite && currentMedia) {
+      onToggleFavorite(currentMedia.productId || currentMedia, currentIndex);
+    }
+  };
 
   // Adjacent items for instant background preloading
   const nextMedia = totalCount > 1 ? normalizedMedia[(currentIndex + 1) % totalCount] : null;
@@ -421,6 +445,23 @@ const FullScreenImageViewer = ({
             </View>
 
             <View style={styles.headerActions}>
+              {/* Favorite Button (when onToggleFavorite is provided) */}
+              {onToggleFavorite ? (
+                <TouchableOpacity
+                  style={[styles.favButton, isCurrentFav && styles.favButtonActive]}
+                  onPress={handleFavoritePress}
+                  activeOpacity={0.75}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  accessibilityLabel={isCurrentFav ? "Remove from favorites" : "Add to favorites"}
+                >
+                  <Icon
+                    name={isCurrentFav ? "heart" : "heart-o"}
+                    size={17}
+                    color={isCurrentFav ? "#EF4444" : "#FFFFFF"}
+                  />
+                </TouchableOpacity>
+              ) : null}
+
               {/* Zoom Button (for images) */}
               {!isVideo && (
                 <TouchableOpacity
@@ -697,6 +738,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  favButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  favButtonActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    borderWidth: 1.5,
+    borderColor: '#EF4444',
   },
   closeButton: {
     width: 38,

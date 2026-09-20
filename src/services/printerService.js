@@ -116,6 +116,19 @@ export const safeFormatNumber = (val, decimals = 2) => {
 };
 
 /**
+ * Escapes special HTML characters to prevent XSS or broken receipt rendering.
+ */
+export const escapeHtml = (str) => {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+/**
  * Sanitizes text specifically for ESC/POS thermal receipt printers.
  * Thermal POS printers use 8-bit ASCII / Code Pages (PC437) and do not support Unicode ₹ (U+20B9).
  * Multi-byte UTF-8 ₹ (0xE2 0x82 0xB9) causes Chinese-mode firmware to print Chinese glyphs

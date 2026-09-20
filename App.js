@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Text,
   Linking,
+  TouchableOpacity,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { registerRootComponent } from 'expo';
@@ -576,11 +577,52 @@ function AppInner() {
   );
 }
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('App ErrorBoundary caught error:', error, errorInfo);
+  }
+
+  handleReload = () => {
+    this.setState({ hasError: false, error: null });
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorSubtitle}>
+            {this.state.error?.message || 'An unexpected error occurred.'}
+          </Text>
+          <TouchableOpacity style={styles.retryButton} onPress={this.handleReload}>
+            <Text style={styles.retryButtonText}>Reload App</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <ThemeProvider>
-      <AppInner />
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AppInner />
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 
@@ -600,6 +642,37 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 18,
     color: '#007AFF',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#F8FAFC',
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 15,
   },
 });
 

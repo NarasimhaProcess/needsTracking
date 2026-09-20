@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -51,6 +51,12 @@ import {
 const CheckoutScreen = ({ navigation, route }) => {
   const { cart: initialCart, customerId } = route?.params || {};
   const [cart, setCart] = useState(initialCart || null);
+
+  useEffect(() => {
+    if (route?.params?.cart) {
+      setCart(route.params.cart);
+    }
+  }, [route?.params?.cart]);
   const [currentUser, setCurrentUser] = useState(null);
   const [isQrViewerVisible, setIsQrViewerVisible] = useState(false);
   const [qrViewerMedia, setQrViewerMedia] = useState([]);
@@ -2059,7 +2065,7 @@ const CheckoutScreen = ({ navigation, route }) => {
             </View>
 
             {/* QR Mode Switcher (Dynamic Bill QR vs Store Standee QR) */}
-            {profileQrImageUrl && dynamicQrUri ? (
+            {profileQrImageUrl && (dynamicUpiUri || dynamicQrDataUrl) ? (
               <View style={styles.qrTabContainer}>
                 <TouchableOpacity
                   style={[styles.qrTabButton, qrTab === 'dynamic' && styles.qrTabButtonActive]}

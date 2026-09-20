@@ -32,7 +32,7 @@ const isImageMedia = (media) => {
 };
 
 const ProductScreen = ({ route, navigation }) => {
-  const { session: initialSession } = route?.params || {};
+  const { session: initialSession, customerId } = route?.params || {};
   const [session, setSession] = useState(initialSession || null);
   const [userId, setUserId] = useState(null);
 
