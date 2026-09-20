@@ -1,5 +1,5 @@
 /* Needs Tracker PWA Service Worker */
-const CACHE_NAME = 'needs-tracker-pwa-v6';
+const CACHE_NAME = 'needs-tracker-pwa-v7';
 
 const STATIC_ASSETS = [
   './',
@@ -98,9 +98,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Network-first with cache fallback for HTML, JS and styles
+  // 3. Network-first with cache fallback for HTML, JS and styles (no-cache fetch to ensure fresh bundles)
+  const fetchOptions = (req.mode === 'navigate' || req.destination === 'document')
+    ? { cache: 'no-cache' }
+    : undefined;
+
   event.respondWith(
-    fetch(effectiveReq).then((response) => {
+    fetch(effectiveReq, fetchOptions).then((response) => {
       if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(effectiveReq, clone));

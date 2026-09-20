@@ -66,14 +66,28 @@
       }
     </style>
 
+    <!-- Cache-control meta tags to prevent stale HTML caching -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
     <!-- Security: Automatically upgrade any insecure http:// requests to https:// -->
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests" />
 
-    <!-- PWA Service Worker Registration -->
+    <!-- PWA Service Worker Registration with Auto-Reload on New Version -->
     <script>
       if ('serviceWorker' in navigator) {
+        var isReloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function() {
+          if (!isReloading) {
+            isReloading = true;
+            console.log('[PWA] New service worker active, reloading to apply latest updates...');
+            window.location.reload();
+          }
+        });
+
         window.addEventListener('load', function() {
-          var swUrl = './sw.js';
+          var swUrl = './sw.js?v=7';
           navigator.serviceWorker.register(swUrl)
             .then(function(reg) {
               console.log('[PWA] Service Worker registered with scope:', reg.scope);

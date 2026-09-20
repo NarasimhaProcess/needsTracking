@@ -1334,12 +1334,14 @@ const styles = StyleSheet.create({
   sellersList: {
     display: 'flex',
     flexDirection: 'column',
+    width: '100%',
     gap: 12,
   },
   sellerCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
+    width: '100%',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#0F172A',

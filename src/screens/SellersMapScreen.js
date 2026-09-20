@@ -931,7 +931,7 @@ export default function SellersMapScreen({ route }) {
   const initialLon = userLocation?.longitude || (mapActiveSellers.length > 0 ? mapActiveSellers[0].longitude : DEFAULT_LON);
   const initialZoom = userLocation ? 13 : (mapActiveSellers.length > 0 ? 12 : 5);
 
-  const htmlContent = `
+  const htmlContent = useMemo(() => `
     <!DOCTYPE html>
     <html>
     <head>
@@ -1479,7 +1479,7 @@ export default function SellersMapScreen({ route }) {
         </script>
     </body>
     </html>
-  `;
+  `, [initialLat, initialLon, initialZoom, mapActiveSellers, userLocation]);
 
   const calculatedDistance =
     selectedSeller && userLocation
@@ -2436,6 +2436,7 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "100%",
     backgroundColor: "#F8FAFC",
+    ...(Platform.OS === "web" ? { minHeight: "100vh", width: "100%" } : {}),
   },
   fullMapPanel: {
     flex: 1,
@@ -2446,26 +2447,7 @@ const styles = StyleSheet.create({
   mobileDirectoryContainer: {
     flex: 1,
     width: "100%",
-    backgroundColor: "#F8FAFC",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    minHeight: 0,
-  },
-  splitMainContent: {
-    flex: 1,
-    width: "100%",
-    flexDirection: "row",
-    overflow: "hidden",
-    minHeight: 0,
-  },
-  sideDirectoryPanel: {
-    width: "40%",
-    minWidth: 360,
-    maxWidth: 500,
     height: "100%",
-    borderRightWidth: 1,
-    borderRightColor: "#E2E8F0",
     backgroundColor: "#F8FAFC",
     display: "flex",
     flexDirection: "column",
@@ -2475,12 +2457,6 @@ const styles = StyleSheet.create({
   directoryFlatList: {
     flex: 1,
     width: "100%",
-  },
-  sideMapPanel: {
-    flex: 1,
-    height: "100%",
-    position: "relative",
-    backgroundColor: "#E2E8F0",
   },
   sideFilterHeader: {
     paddingHorizontal: 16,
@@ -2786,9 +2762,13 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     position: "relative",
+    width: "100%",
+    height: "100%",
   },
   webview: {
     flex: 1,
+    width: "100%",
+    height: "100%",
   },
   mapLoadingBadge: {
     position: "absolute",
