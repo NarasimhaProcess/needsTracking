@@ -986,20 +986,27 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: '100%',
+    minWidth: '100%',
     backgroundColor: '#F8FAFC',
     height: Platform.OS === 'web' ? '100%' : undefined,
+    ...(Platform.OS === 'web' ? { minHeight: '100vh', width: '100%' } : {}),
   },
   scrollView: {
     flex: 1,
     width: '100%',
+    minWidth: '100%',
     ...(Platform.OS === 'web' ? { overflowY: 'auto' } : {}),
   },
   scrollContent: {
     flexGrow: 1,
+    width: '100%',
+    minWidth: '100%',
     paddingBottom: 90,
   },
   brandContainer: {
     alignItems: 'center',
+    width: '100%',
     paddingHorizontal: 24,
     marginTop: Platform.OS === 'ios' ? 24 : 36,
   },
@@ -1498,6 +1505,7 @@ const styles = StyleSheet.create({
 
   footer: {
     alignItems: 'center',
+    width: '100%',
     paddingBottom: 24,
     paddingHorizontal: 20,
     marginTop: 10,

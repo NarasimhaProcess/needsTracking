@@ -1632,9 +1632,7 @@ export default function SellersMapScreen({ route }) {
             activeOpacity={0.8}
             onPress={() => {
               setSelectedSeller(item);
-              if (!isWideScreen) {
-                setShowDirectory(false);
-              }
+              setShowDirectory(false);
               sendMapMessage({
                 type: "SET_VIEW",
                 latitude: item.latitude,
@@ -1990,65 +1988,30 @@ export default function SellersMapScreen({ route }) {
         </View>
       )}
 
-      {/* MAIN CONTENT AREA: Full Map by default, or Side-by-Side (Desktop) / Directory View (Mobile) when opened */}
-      {isWideScreen ? (
-        showDirectory ? (
-          <View style={styles.splitMainContent}>
-            {/* Left Column (40%): Store Directory */}
-            <View style={styles.sideDirectoryPanel}>
-              <View style={styles.sideFilterHeader}>
-                <View style={styles.sideHeaderTopRow}>
-                  <Text style={styles.sideFilterTitle}>
-                    Store Directory ({displayedSellers.length})
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setShowDirectory(false)}
-                    style={styles.closeDirectoryBtn}
-                    accessibilityLabel="Close Directory"
-                  >
-                    <Icon name="times" size={15} color="#64748B" />
-                  </TouchableOpacity>
-                </View>
-                {renderFilterChips()}
-              </View>
-              {renderDirectoryList()}
+      {/* MAIN CONTENT AREA: Full Map by default, or Full Store Directory when toggled (Full Screen across all devices, never 50%/50% split) */}
+      {showDirectory ? (
+        <View style={styles.mobileDirectoryContainer}>
+          <View style={styles.sideFilterHeader}>
+            <View style={styles.sideHeaderTopRow}>
+              <Text style={styles.sideFilterTitle}>
+                Store Directory ({displayedSellers.length})
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowDirectory(false)}
+                style={styles.closeDirectoryBtn}
+                accessibilityLabel="Close Directory"
+              >
+                <Icon name="times" size={15} color="#64748B" />
+              </TouchableOpacity>
             </View>
-
-            {/* Right Column (60%): Interactive Map */}
-            <View style={styles.sideMapPanel}>
-              {renderInteractiveMap()}
-            </View>
+            {renderFilterChips()}
           </View>
-        ) : (
-          /* Wide Screen: Full Map by Default */
-          <View style={styles.fullMapPanel}>
-            {renderInteractiveMap()}
-          </View>
-        )
+          {renderDirectoryList()}
+        </View>
       ) : (
-        /* Mobile Screen: Full Map by Default, Directory when toggled */
-        showDirectory ? (
-          <View style={styles.mobileDirectoryContainer}>
-            <View style={styles.sideFilterHeader}>
-              <View style={styles.sideHeaderTopRow}>
-                <Text style={styles.sideFilterTitle}>
-                  Store Directory ({displayedSellers.length})
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setShowDirectory(false)}
-                  style={styles.closeDirectoryBtn}
-                  accessibilityLabel="Close Directory"
-                >
-                  <Icon name="times" size={15} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-              {renderFilterChips()}
-            </View>
-            {renderDirectoryList()}
-          </View>
-        ) : (
-          renderInteractiveMap()
-        )
+        <View style={styles.fullMapPanel}>
+          {renderInteractiveMap()}
+        </View>
       )}
 
       {/* 3 Horizontal Dots Menu Modal (Buyer, Seller, Delivery Portals) */}
