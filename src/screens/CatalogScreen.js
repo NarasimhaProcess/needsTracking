@@ -229,7 +229,6 @@ const CatalogScreen = ({ navigation, route }) => {
   const [updatingCart, setUpdatingCart] = useState(false);
   const [variantSearch, setVariantSearch] = useState({});
   const [isProductModalVisible, setIsProductModalVisible] = useState(false);
-  const [lastProductForModal, setLastProductForModal] = useState(null);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [selectedVariantFilter, setSelectedVariantFilter] = useState(null);
@@ -713,7 +712,6 @@ const CatalogScreen = ({ navigation, route }) => {
     setSelectedVariants({});
     setSelectedVariantFilter(null);
     setIsProductModalVisible(false);
-    setLastProductForModal(null);
   };
 
   const getSelectedCombination = useCallback(() => {
@@ -985,11 +983,6 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const openImageViewer = (product, initialIndex = 0) => {
-    if (isProductModalVisible) {
-      setLastProductForModal(selectedProduct || product);
-      setIsProductModalVisible(false);
-    }
-
     const catalogList = (filteredProducts && filteredProducts.length > 0) ? filteredProducts : (products || []);
     let allMedia = [];
     let targetIdx = 0;
@@ -2141,13 +2134,13 @@ const CatalogScreen = ({ navigation, route }) => {
         </>
       )}
 
-      {selectedProduct && (
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={isProductModalVisible}
-          onRequestClose={closeProductModal}
-        >
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={Boolean(isProductModalVisible && selectedProduct)}
+        onRequestClose={closeProductModal}
+      >
+        {selectedProduct ? (
           <View style={styles.modalContainer}>
             <View style={styles.swiggyModalContent}>
               <TouchableOpacity
@@ -2185,7 +2178,7 @@ const CatalogScreen = ({ navigation, route }) => {
                         {selectedProduct.product_media
                           .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
                           .map((media, index) => (
-                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct, index)} activeOpacity={0.9} style={{ width: 340, height: 250, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
+                            <TouchableOpacity key={`modal-media-${selectedProduct?.id || 'prod'}-${media.id || index}`} onPress={() => openImageViewer(selectedProduct, index)} activeOpacity={0.9} style={{ width: 340, height: 250, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
                               <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
                             </TouchableOpacity>
                           ))}
@@ -2195,7 +2188,7 @@ const CatalogScreen = ({ navigation, route }) => {
                         {selectedProduct.product_media
                           .filter(m => isImageMedia(m) && (m?.media_url || m?.uri))
                           .map((media, index) => (
-                            <TouchableOpacity key={index} onPress={() => openImageViewer(selectedProduct, index)} activeOpacity={0.9}>
+                            <TouchableOpacity key={`modal-media-${selectedProduct?.id || 'prod'}-${media.id || index}`} onPress={() => openImageViewer(selectedProduct, index)} activeOpacity={0.9}>
                               <Image source={{ uri: media.media_url || media.uri }} style={styles.modalProductImage} resizeMode="contain" />
                             </TouchableOpacity>
                           ))}
@@ -2272,13 +2265,13 @@ const CatalogScreen = ({ navigation, route }) => {
                                 All ({combos.length})
                               </Text>
                             </TouchableOpacity>
-                            {selectedProduct.product_variants.map(v => (
+                            {selectedProduct.product_variants.flatMap((v, vIdx) => (
                               (v.variant_options || []).map((opt, oIdx) => {
                                 const optVal = typeof opt === 'string' ? opt : (opt?.value || opt?.name || '');
                                 const isChipActive = selectedVariantFilter === optVal;
                                 return (
                                   <TouchableOpacity
-                                    key={`${v.id}-${oIdx}`}
+                                    key={`filter-chip-${v.id || vIdx}-${oIdx}-${optVal}`}
                                     style={[styles.swiggyFilterChip, isChipActive && styles.swiggyFilterChipActive]}
                                     onPress={() => setSelectedVariantFilter(isChipActive ? null : optVal)}
                                   >
@@ -2332,8 +2325,8 @@ const CatalogScreen = ({ navigation, route }) => {
                                       const vName = colonIdx > -1 ? part.substring(0, colonIdx).trim() : '';
                                       const vVal = colonIdx > -1 ? part.substring(colonIdx + 1).trim() : part.trim();
                                       return (
-                                        <View key={pIdx} style={styles.swiggyBadge}>
-                                          {vName ? <Text style={styles.swiggyBadgeName}>{vName}: </Text> : null}
+                                        <View key={`part-${combo.id || index}-${pIdx}`} style={styles.swiggyBadge}>
+                                          {vName ? <Text style={styles.swiggyBadgeName}>{`${vName}: `}</Text> : null}
                                           <Text style={styles.swiggyBadgeVal}>{vVal}</Text>
                                         </View>
                                       );
@@ -2342,7 +2335,7 @@ const CatalogScreen = ({ navigation, route }) => {
                                 )}
 
                                 <View style={styles.swiggyPriceStockRow}>
-                                  <Text style={styles.swiggyOptionPriceText}>₹{comboPrice}</Text>
+                                  <Text style={styles.swiggyOptionPriceText}>{`₹${comboPrice}`}</Text>
                                   <Text style={[styles.swiggyStockText, isOutOfStock && styles.swiggyStockOutText]}>
                                     {isOutOfStock ? '• Out of Stock' : `• In Stock: ${stockQty} ${selectedProduct.unit || 'units'}`}
                                   </Text>
@@ -2396,10 +2389,10 @@ const CatalogScreen = ({ navigation, route }) => {
               <View style={styles.swiggyModalFooter}>
                 <View style={styles.swiggyFooterInfo}>
                   <Text style={styles.swiggyFooterItemsCount}>
-                    {productTotalQuantityInCart[selectedProduct?.id] || 0} {(productTotalQuantityInCart[selectedProduct?.id] || 0) === 1 ? 'item' : 'items'} added
+                    {`${productTotalQuantityInCart[selectedProduct?.id] || 0} ${(productTotalQuantityInCart[selectedProduct?.id] || 0) === 1 ? 'item' : 'items'} added`}
                   </Text>
                   <Text style={styles.swiggyFooterTotalPrice}>
-                    ₹{(productTotalPriceInCart[selectedProduct?.id] || 0).toFixed(2)}
+                    {`₹${(productTotalPriceInCart[selectedProduct?.id] || 0).toFixed(2)}`}
                   </Text>
                 </View>
                 <View style={styles.swiggyFooterActionsRow}>
@@ -2427,8 +2420,8 @@ const CatalogScreen = ({ navigation, route }) => {
               </View>
             </View>
           </View>
-        </Modal>
-      )}
+        ) : null}
+      </Modal>
 
       <Modal
         animationType="slide"
@@ -2528,14 +2521,7 @@ const CatalogScreen = ({ navigation, route }) => {
           mediaList={viewerImages}
           initialIndex={viewerInitialIndex}
           title={viewerTitle || 'Product Images'}
-          onClose={() => {
-            setIsImageViewerVisible(false);
-            if (lastProductForModal) {
-              setSelectedProduct(lastProductForModal);
-              setIsProductModalVisible(true);
-              setLastProductForModal(null);
-            }
-          }}
+          onClose={() => setIsImageViewerVisible(false)}
           onToggleFavorite={(target) => {
             const prodId = (typeof target === 'object' && target) ? (target.productId || target.id) : target;
             if (prodId) {

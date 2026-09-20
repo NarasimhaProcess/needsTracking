@@ -1,9 +1,36 @@
 <!DOCTYPE html>
-<html lang="%LANG_ISO_CODE%">
+<html lang="%LANG_ISO_CODE%" class="notranslate" translate="no">
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <meta name="google" content="notranslate" />
+    <script>
+      (function() {
+        if (typeof Node === 'function' && Node.prototype) {
+          var origRemove = Node.prototype.removeChild;
+          Node.prototype.removeChild = function(child) {
+            if (!child || child.parentNode !== this) {
+              if (typeof console !== 'undefined' && console.warn) {
+                console.warn('Cannot removeChild: not a child of this node. Safely bypassed.', child, this);
+              }
+              return child;
+            }
+            return origRemove.apply(this, arguments);
+          };
+          var origInsert = Node.prototype.insertBefore;
+          Node.prototype.insertBefore = function(newNode, refNode) {
+            if (refNode && refNode.parentNode !== this) {
+              if (typeof console !== 'undefined' && console.warn) {
+                console.warn('Cannot insertBefore: refNode is not a child of this node. Appending instead.', newNode, refNode, this);
+              }
+              return this.appendChild(newNode);
+            }
+            return origInsert.apply(this, arguments);
+          };
+        }
+      })();
+    </script>
     <title>%WEB_TITLE%</title>
 
     <!-- PWA & Mobile Web Meta Tags -->

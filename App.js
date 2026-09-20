@@ -1,4 +1,31 @@
 import 'react-native-get-random-values'; // Polyfill for crypto.getRandomValues
+import { Platform } from 'react-native';
+
+// Defensive safeguard against browser translation / extension DOM mutations and React portal removeChild errors
+if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof Node === 'function' && Node.prototype) {
+  const origRemove = Node.prototype.removeChild;
+  Node.prototype.removeChild = function (child) {
+    if (!child || child.parentNode !== this) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Node.removeChild safely caught unparented child:', child);
+      }
+      return child;
+    }
+    return origRemove.apply(this, arguments);
+  };
+
+  const origInsert = Node.prototype.insertBefore;
+  Node.prototype.insertBefore = function (newNode, refNode) {
+    if (refNode && refNode.parentNode !== this) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Node.insertBefore safely appending unparented refNode:', newNode, refNode);
+      }
+      return this.appendChild(newNode);
+    }
+    return origInsert.apply(this, arguments);
+  };
+}
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Location from 'expo-location';
@@ -18,7 +45,6 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { registerRootComponent } from 'expo';
-import { Platform } from 'react-native';
 
 // React Navigation imports
 import { NavigationContainer, useNavigationContainerRef, DefaultTheme, DarkTheme } from '@react-navigation/native';
