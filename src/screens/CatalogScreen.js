@@ -17,6 +17,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Swiper from 'react-native-swiper';
@@ -2136,34 +2137,65 @@ const CatalogScreen = ({ navigation, route }) => {
 
       <Modal
         animationType="slide"
-        transparent={true}
+        transparent={false}
         visible={Boolean(isProductModalVisible && selectedProduct)}
         onRequestClose={closeProductModal}
       >
         {selectedProduct ? (
-          <View style={styles.modalContainer}>
-            <View style={styles.swiggyModalContent}>
-              <TouchableOpacity
-                style={styles.modalFavoriteBtn}
-                onPress={(e) => {
-                  e?.stopPropagation?.();
-                  selectedProduct?.id && handleToggleFavorite(selectedProduct.id);
-                }}
-                activeOpacity={0.8}
-                accessibilityLabel="Toggle favorite"
-              >
-                <Icon
-                  name={favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) ? 'heart' : 'heart-o'}
-                  size={18}
-                  color={favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) ? '#EF4444' : '#64748B'}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={closeProductModal}
-              >
-                <Icon name="times-circle" size={30} color="#333" />
-              </TouchableOpacity>
+          <SafeAreaView style={styles.fullProductModalSafeArea}>
+            <View style={styles.fullProductModalContainer}>
+              {/* Full Screen Modal Top Bar */}
+              <View style={styles.fullProductModalHeader}>
+                <TouchableOpacity
+                  style={styles.modalBackBtn}
+                  onPress={closeProductModal}
+                  accessibilityLabel="Back to catalog"
+                  activeOpacity={0.7}
+                >
+                  <Icon name="arrow-left" size={18} color="#0F172A" />
+                </TouchableOpacity>
+
+                <View style={styles.modalHeaderTitleWrap}>
+                  <Text style={styles.modalHeaderTitle} numberOfLines={1}>
+                    {selectedProduct?.product_name || 'Product Details'}
+                  </Text>
+                  {selectedProduct?.product_type ? (
+                    <Text style={styles.modalHeaderSubTitle} numberOfLines={1}>
+                      {getCategoryLabel(selectedProduct.product_type)}
+                      {selectedProduct?.subcategory ? ` • ${selectedProduct.subcategory}` : ''}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <View style={styles.modalHeaderRightActions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalHeaderFavBtn,
+                      favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) && styles.modalHeaderFavBtnActive,
+                    ]}
+                    onPress={(e) => {
+                      e?.stopPropagation?.();
+                      selectedProduct?.id && handleToggleFavorite(selectedProduct.id);
+                    }}
+                    activeOpacity={0.8}
+                    accessibilityLabel="Toggle favorite"
+                  >
+                    <Icon
+                      name={favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) ? 'heart' : 'heart-o'}
+                      size={18}
+                      color={favoriteProductIds.some((id) => String(id) === String(selectedProduct?.id)) ? '#EF4444' : '#64748B'}
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.modalHeaderCloseBtn}
+                    onPress={closeProductModal}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Close"
+                  >
+                    <Icon name="times" size={18} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+              </View>
               
               <ScrollView
                 style={{ flex: 1, width: '100%' }}
@@ -2385,11 +2417,11 @@ const CatalogScreen = ({ navigation, route }) => {
                 })()}
               </ScrollView>
 
-              {/* Swiggy/Zomato style Sticky Footer Bar */}
-              <View style={styles.swiggyModalFooter}>
+              {/* Full Screen Modal Docked Footer */}
+              <View style={styles.fullProductModalFooter}>
                 <View style={styles.swiggyFooterInfo}>
                   <Text style={styles.swiggyFooterItemsCount}>
-                    {`${productTotalQuantityInCart[selectedProduct?.id] || 0} ${(productTotalQuantityInCart[selectedProduct?.id] || 0) === 1 ? 'item' : 'items'} added`}
+                    {`${productTotalQuantityInCart[selectedProduct?.id] || 0} ${(productTotalQuantityInCart[selectedProduct?.id] || 0) === 1 ? 'item' : 'items'} in cart`}
                   </Text>
                   <Text style={styles.swiggyFooterTotalPrice}>
                     {`₹${(productTotalPriceInCart[selectedProduct?.id] || 0).toFixed(2)}`}
@@ -2401,25 +2433,27 @@ const CatalogScreen = ({ navigation, route }) => {
                     onPress={closeProductModal}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.swiggyDoneBtnText}>Done</Text>
+                    <Text style={styles.swiggyDoneBtnText}>Continue</Text>
                   </TouchableOpacity>
-                  {cartTotals.totalItems > 0 && (
-                    <TouchableOpacity
-                      style={styles.swiggyViewCartBtn}
-                      onPress={() => {
-                        closeProductModal();
-                        setIsCartModalVisible(true);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.swiggyViewCartBtnText}>View Cart</Text>
-                      <Icon name="arrow-right" size={12} color="#ffffff" style={{ marginLeft: 6 }} />
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={styles.swiggyViewCartBtn}
+                    onPress={() => {
+                      closeProductModal();
+                      navigation.navigate('Cart', {
+                        sellerId: activeSellerId,
+                        sellerName: activeStoreName,
+                        customerId: paramCustomerId,
+                      });
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.swiggyViewCartBtnText}>View Cart ({cartTotals.totalItems})</Text>
+                    <Icon name="arrow-right" size={12} color="#ffffff" style={{ marginLeft: 6 }} />
+                  </TouchableOpacity>
                 </View>
               </View>
             </View>
-          </View>
+          </SafeAreaView>
         ) : null}
       </Modal>
 
@@ -2939,15 +2973,104 @@ const styles = StyleSheet.create({
     height: 250,
     resizeMode: 'contain',
   },
+  fullProductModalSafeArea: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    width: '100%',
+    height: '100%',
+  },
+  fullProductModalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    width: '100%',
+    height: '100%',
+    minHeight: 0,
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    position: 'relative',
+  },
+  fullProductModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    zIndex: 10,
+    flexShrink: 0,
+  },
+  modalBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  modalHeaderTitleWrap: {
+    flex: 1,
+    marginRight: 10,
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  modalHeaderSubTitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  modalHeaderRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalHeaderFavBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalHeaderFavBtnActive: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  modalHeaderCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fullProductModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 8,
+    flexShrink: 0,
+  },
   swiggyModalContent: {
     backgroundColor: '#ffffff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderRadius: Platform.OS === 'web' ? 20 : 0,
     width: '100%',
-    maxWidth: 720,
-    height: Platform.OS === 'web' ? '90%' : '92%',
-    maxHeight: Platform.OS === 'web' ? '90%' : '92%',
+    height: '100%',
     paddingTop: 16,
     overflow: 'hidden',
     display: 'flex',

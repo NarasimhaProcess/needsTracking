@@ -519,9 +519,13 @@ const CheckoutScreen = ({ navigation, route }) => {
   );
 
   const payeeName =
+    route?.params?.sellerName ||
+    sellerProfile?.store_name ||
     sellerProfile?.full_name ||
+    sellerProfile?.name ||
+    profile?.store_name ||
     profile?.full_name ||
-    'Store Merchant';
+    '';
 
   // Alphanumeric with spaces only - strictly NO '#' character so UPI apps (GPay, PhonePe, Paytm) never fail
   const cleanCartRef = (cart?.id || '').toString().replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
@@ -531,7 +535,14 @@ const CheckoutScreen = ({ navigation, route }) => {
 
   // Official UPI Payment URI format (supported across all Indian UPI apps)
   const dynamicUpiUri = activeUpiId
-    ? `upi://pay?pa=${encodeURIComponent(activeUpiId)}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(orderNote)}`
+    ? buildUpiPaymentUri({
+        upiId: activeUpiId,
+        payeeName,
+        amount: totalAmount,
+        note: orderNote,
+        rawText: sellerRawUpiText,
+        tr: uniquePaymentCode,
+      })
     : '';
 
   // Local instant high-resolution QR code generator (no external API delay)
@@ -565,8 +576,9 @@ const CheckoutScreen = ({ navigation, route }) => {
       amount: totalAmount,
       note: orderNote,
       rawText: sellerRawUpiText,
+      tr: uniquePaymentCode,
     });
-  }, [activeUpiId, sellerUpiId, payeeName, totalAmount, orderNote, sellerRawUpiText]);
+  }, [activeUpiId, sellerUpiId, payeeName, totalAmount, orderNote, sellerRawUpiText, uniquePaymentCode]);
 
   const getAppWebHref = (app) => {
     if (!app || Platform.OS !== 'web' || typeof navigator === 'undefined') return undefined;
@@ -708,6 +720,7 @@ const CheckoutScreen = ({ navigation, route }) => {
       amount: totalAmount,
       note: orderNote,
       rawText: sellerRawUpiText,
+      tr: uniquePaymentCode,
       LinkingInstance: Linking,
     });
 
@@ -2199,6 +2212,17 @@ const CheckoutScreen = ({ navigation, route }) => {
               })()}
             </View>
 
+            {/* Google Pay / UPI Security Guidance */}
+            <View style={styles.upiSecurityTipCard}>
+              <Icon name="shield" size={15} color="#0D9488" style={{ marginTop: 2, marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.upiSecurityTipTitle}>Smooth UPI Checkout Tip</Text>
+                <Text style={styles.upiSecurityTipText}>
+                  If Google Pay displays a &quot;Transaction may be risky&quot; warning when tapping a link to an individual seller, simply scan the QR code above with your Google Pay camera, or choose PhonePe / Paytm / Any UPI App for 1-tap payment!
+                </Text>
+              </View>
+            </View>
+
             {/* Payee UPI ID & 1-Tap Copy */}
             <View style={styles.upiIdRow}>
               <View style={{ flex: 1 }}>
@@ -3085,6 +3109,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  upiSecurityTipCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  upiSecurityTipTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F766E',
+    marginBottom: 2,
+  },
+  upiSecurityTipText: {
+    fontSize: 11,
+    color: '#115E59',
+    lineHeight: 16,
   },
   upiIdRow: {
     flexDirection: 'row',

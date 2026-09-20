@@ -11,6 +11,7 @@ import {
   Button,
   Alert,
   ScrollView,
+  SafeAreaView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -361,13 +362,13 @@ const TopProductsScreen = ({ navigation, route }) => {
       {selectedProduct && (
         <Modal
           animationType="slide"
-          transparent={true}
+          transparent={false}
           visible={isProductDetailModalVisible}
           onRequestClose={() => {
             setIsProductDetailModalVisible(!isProductDetailModalVisible);
           }}
         >
-          <View style={styles.modalContainer}>
+          <SafeAreaView style={styles.modalContainer}>
             <View style={styles.modalContent}>
               <TouchableOpacity
                 style={styles.closeButton}
@@ -482,20 +483,20 @@ const TopProductsScreen = ({ navigation, route }) => {
                 </View>
               </ScrollView>
             </View>
-          </View>
+          </SafeAreaView>
         </Modal>
       )}
 
       {/* Cart Modal */}
       <Modal
         animationType="slide"
-        transparent={true}
+        transparent={false}
         visible={isCartModalVisible}
         onRequestClose={() => {
           setIsCartModalVisible(!isCartModalVisible);
         }}
       >
-        <View style={styles.modalContainer}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <TouchableOpacity
               style={styles.closeButton}
@@ -518,7 +519,7 @@ const TopProductsScreen = ({ navigation, route }) => {
               navigation.navigate('Checkout', { cart: cart, customerId: customerId });
             }} />
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
       {/* Full Screen Image Viewer Modal */}
       <FullScreenImageViewer
@@ -582,15 +583,16 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: '#FFFFFF',
+    width: '100%',
+    height: '100%',
   },
   modalContent: {
-    backgroundColor: 'white',
-    padding: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: '80%',
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    width: '100%',
+    height: '100%',
   },
   modalTitle: {
     fontSize: 20,

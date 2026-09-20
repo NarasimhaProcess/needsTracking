@@ -316,24 +316,56 @@ export function normalizeUpiId(text) {
 /**
  * Builds standard UPI Payment URI
  */
-export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount, note = 'Order Payment', rawText }) {
+export function buildUpiPaymentUri({ upiId, payeeName = '', amount, note = 'Order Payment', rawText, tr }) {
   if (rawText && typeof rawText === 'string' && rawText.includes('upi://pay?')) {
     try {
       const upiUrl = rawText.match(/upi:\/\/pay\?[^\s"'>]+/i)?.[0] || rawText;
       const base = upiUrl.split('?')[0];
       const queryPart = upiUrl.includes('?') ? upiUrl.split('?')[1] : '';
       const params = new URLSearchParams(queryPart);
+
+      let modified = false;
+
       if (amount !== undefined && amount !== null && !isNaN(Number(amount)) && Number(amount) > 0) {
         params.set('am', Number(amount).toFixed(2));
+        modified = true;
       }
       if (note) {
         // Strip # and special characters that cause UPI transaction failures (UPI standard allows alphanumeric and spaces/hyphens only)
         const cleanNoteParam = String(note).replace(/[^a-zA-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim();
         params.set('tn', cleanNoteParam);
+        modified = true;
       }
-      if (payeeName && payeeName !== 'Store Merchant' && !params.has('pn')) {
-        params.set('pn', payeeName.trim());
+
+      // CRITICAL FOR GOOGLE PAY:
+      // If amount or note is modified, the static digital signature (sign parameter) from
+      // merchant standee QR (PhonePe / Paytm / BharatPe / GPay) is no longer valid.
+      // Google Pay verifies signatures: an invalid signature causes "This transaction may be risky"
+      // or outright blocks the transaction. Remove signature/checksum parameters!
+      if (modified) {
+        params.delete('sign');
+        params.delete('sign_algo');
+        params.delete('signature');
+        params.delete('checksum');
       }
+
+      // Handle payee name (pn)
+      const cleanPayee = (payeeName || '').trim();
+      if (cleanPayee && !isGenericQrName(cleanPayee) && cleanPayee !== 'Store Merchant' && cleanPayee !== 'Merchant') {
+        if (!params.has('pn') || isGenericQrName(params.get('pn')) || params.get('pn') === 'Store Merchant') {
+          params.set('pn', cleanPayee);
+        }
+      } else if (params.has('pn') && (isGenericQrName(params.get('pn')) || params.get('pn') === 'Store Merchant')) {
+        // Delete generic dummy name so UPI apps (especially GPay) resolve the actual bank-registered name without throwing mismatch warning
+        params.delete('pn');
+      }
+
+      // Add clean Transaction Reference (tr) if provided and not present
+      if (tr && !params.has('tr')) {
+        const cleanTr = String(tr).replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
+        if (cleanTr) params.set('tr', cleanTr);
+      }
+
       return `${base}?${params.toString()}`;
     } catch (e) {
       console.warn('Error preserving scanned UPI parameters in buildUpiPaymentUri:', e);
@@ -342,14 +374,33 @@ export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount
 
   const cleanUpi = normalizeUpiId(upiId);
   if (!cleanUpi) return '';
-  const cleanName = payeeName.trim() || 'Store Merchant';
+  const cleanName = (payeeName || '').trim();
   // Strip # and any character that is not alphanumeric, space, or hyphen
   const cleanNote = String(note || 'Order Payment').replace(/[^a-zA-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim() || 'Order Payment';
 
-  let uri = `upi://pay?pa=${encodeURIComponent(cleanUpi)}&pn=${encodeURIComponent(cleanName)}&cu=INR&tn=${encodeURIComponent(cleanNote)}`;
+  // Base UPI URI with payee address and currency
+  let uri = `upi://pay?pa=${encodeURIComponent(cleanUpi)}&cu=INR`;
+
+  // Only include pn if it's a real, non-generic name.
+  // When omitted, Google Pay & NPCI resolve the verified bank name automatically,
+  // preventing "Name mismatch / Transaction may be risky" errors!
+  if (cleanName && !isGenericQrName(cleanName) && cleanName !== 'Store Merchant' && cleanName !== 'Merchant') {
+    uri += `&pn=${encodeURIComponent(cleanName)}`;
+  }
+
+  if (cleanNote) {
+    uri += `&tn=${encodeURIComponent(cleanNote)}`;
+  }
+
   if (amount !== undefined && amount !== null && !isNaN(Number(amount)) && Number(amount) > 0) {
     uri += `&am=${Number(amount).toFixed(2)}`;
   }
+
+  if (tr) {
+    const cleanTr = String(tr).replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
+    if (cleanTr) uri += `&tr=${encodeURIComponent(cleanTr)}`;
+  }
+
   return uri;
 }
 
@@ -358,8 +409,8 @@ export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount
  * Format: `intent://pay?{params}#Intent;scheme=upi;package={pkg};end;`
  * When package is not specified, opens Android's native UPI app chooser.
  */
-export function buildAndroidIntentUri({ upiId, payeeName = 'Store Merchant', amount, note = 'Order Payment', packageName = null, rawText }) {
-  const standardUri = buildUpiPaymentUri({ upiId, payeeName, amount, note, rawText });
+export function buildAndroidIntentUri({ upiId, payeeName = '', amount, note = 'Order Payment', packageName = null, rawText, tr }) {
+  const standardUri = buildUpiPaymentUri({ upiId, payeeName, amount, note, rawText, tr });
   if (!standardUri) return '';
 
   const queryPart = standardUri.includes('?') ? standardUri.split('?')[1] : '';
@@ -370,8 +421,8 @@ export function buildAndroidIntentUri({ upiId, payeeName = 'Store Merchant', amo
 /**
  * Returns supported UPI apps with their specific Android Intent, iOS, and Universal URIs.
  */
-export function buildUpiAppLinks({ upiId, payeeName = 'Store Merchant', amount, note = 'Order Payment', rawText }) {
-  const standardUri = buildUpiPaymentUri({ upiId, payeeName, amount, note, rawText });
+export function buildUpiAppLinks({ upiId, payeeName = '', amount, note = 'Order Payment', rawText, tr }) {
+  const standardUri = buildUpiPaymentUri({ upiId, payeeName, amount, note, rawText, tr });
   if (!standardUri) return [];
 
   const queryPart = standardUri.includes('?') ? standardUri.split('?')[1] : '';
@@ -456,13 +507,14 @@ export function buildUpiAppLinks({ upiId, payeeName = 'Store Merchant', amount, 
 export async function openUpiAppIntent({
   appId = 'any',
   upiId,
-  payeeName = 'Store Merchant',
+  payeeName = '',
   amount,
   note = 'Order Payment',
   rawText,
+  tr,
   LinkingInstance,
 }) {
-  const apps = buildUpiAppLinks({ upiId, payeeName, amount, note, rawText });
+  const apps = buildUpiAppLinks({ upiId, payeeName, amount, note, rawText, tr });
   const app = apps.find((a) => a.id === appId) || apps.find((a) => a.id === 'any') || apps[0];
   if (!app) return { success: false, reason: 'no_app' };
 
