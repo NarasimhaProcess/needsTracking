@@ -88,6 +88,9 @@ const ProfileScreen = ({ navigation, route }) => {
   const [upiQrCodeUrl, setUpiQrCodeUrl] = useState(null);
   const [upiId, setUpiId] = useState('');
   const [savingUpiId, setSavingUpiId] = useState(false);
+  const [scanningQr, setScanningQr] = useState(false);
+  const [qrSourceInfo, setQrSourceInfo] = useState('');
+  const [showManualUpiEdit, setShowManualUpiEdit] = useState(false);
 
   // Map Area Search & Location Picker State
   const mapRef = useRef(null);
@@ -626,6 +629,7 @@ const ProfileScreen = ({ navigation, route }) => {
                   const detected = normalizeUpiId(scan.upiId);
                   if (detected && !isGenericQrName(detected)) {
                     setUpiId(detected);
+                    setQrSourceInfo('Scanned from QR Code');
                     setProfile((prev) => ({ ...(prev || {}), upi_id: detected }));
                     updateQrCode(activeQr.id, detected, true).catch(() => {});
                     supabase.from('profiles').update({ upi_id: detected }).eq('id', user.id).catch(() => {});
@@ -1459,44 +1463,141 @@ const ProfileScreen = ({ navigation, route }) => {
     }
   };
 
-  const handleUpiQrUpload = async () => {
+  const handleUpiQrUpload = async (mode = 'gallery') => {
     try {
       if (Platform.OS !== 'web') {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-          showAlert('Permission Denied', 'Camera roll permissions are required to upload QR code.');
-          return;
+        if (mode === 'camera') {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            showAlert('Permission Denied', 'Camera permission is required to photograph your QR code standee.');
+            return;
+          }
+        } else {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            showAlert('Permission Denied', 'Photo library permission is required to upload QR code.');
+            return;
+          }
         }
       }
 
-      let result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: Platform.OS !== 'web',
-        aspect: [4, 3],
-        quality: 1,
-      });
+      let result;
+      if (mode === 'camera' && Platform.OS !== 'web') {
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 1,
+        });
+      } else {
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: Platform.OS !== 'web',
+          aspect: [1, 1],
+          quality: 1,
+        });
+      }
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setSaving(true);
+        setScanningQr(true);
         const imageUrl = result.assets[0].uri;
         const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const uploadedUrl = await uploadQrImage(user.id, imageUrl);
-          if (uploadedUrl) {
-            const qrName = upiId.trim() || 'My UPI QR';
-            await addQrCode(user.id, uploadedUrl, qrName, true);
-            setUpiQrCodeUrl(uploadedUrl);
-            showAlert('Success', 'UPI QR Code uploaded successfully.');
-          } else {
-            showAlert('Error', 'Failed to upload QR code. Please try again.');
+        if (!user) {
+          showAlert('Error', 'User not authenticated.');
+          setScanningQr(false);
+          return;
+        }
+
+        // 1. Immediately scan/decode the local image to extract UPI details
+        let scan = null;
+        try {
+          scan = await decodeQrFromImage(imageUrl);
+        } catch (scanErr) {
+          console.warn('Initial QR scan error from local image:', scanErr);
+        }
+
+        // 2. Upload QR image to Supabase storage
+        const uploadedUrl = await uploadQrImage(user.id, imageUrl);
+
+        // 3. Fallback scan on uploaded URL if initial scan didn't find UPI
+        if ((!scan || !scan.success || !scan.upiId) && uploadedUrl) {
+          try {
+            const retryScan = await decodeQrFromImage(uploadedUrl);
+            if (retryScan?.success && retryScan.upiId) {
+              scan = retryScan;
+            }
+          } catch (_) {}
+        }
+
+        const targetQrUrl = uploadedUrl || imageUrl;
+
+        // 4. If UPI ID / payment URI detected, auto-save to profile, user_qr_codes, and auth metadata!
+        if (scan?.success && scan.upiId) {
+          const detectedUpi = normalizeUpiId(scan.upiId);
+          if (detectedUpi && !isGenericQrName(detectedUpi)) {
+            setUpiId(detectedUpi);
+            setUpiQrCodeUrl(targetQrUrl);
+            setQrSourceInfo('Auto-detected from QR Code');
+            setProfile((prev) => ({ ...(prev || {}), upi_id: detectedUpi }));
+
+            // Save active QR record with detected UPI ID
+            await addQrCode(user.id, targetQrUrl, detectedUpi, true);
+
+            // Update profiles table upi_id column
+            try {
+              await supabase.from('profiles').update({ upi_id: detectedUpi }).eq('id', user.id);
+            } catch (_) {}
+
+            // Update auth user metadata
+            try {
+              await supabase.auth.updateUser({ data: { upi_id: detectedUpi } });
+            } catch (_) {}
+
+            // Embed into media_urls backup
+            try {
+              const { data: curProf } = await supabase
+                .from('profiles')
+                .select('media_urls')
+                .eq('id', user.id)
+                .maybeSingle();
+              const updatedMedia = embedMerchantUpi(curProf?.media_urls || mediaList, detectedUpi);
+              await supabase.from('profiles').update({ media_urls: updatedMedia }).eq('id', user.id);
+            } catch (_) {}
+
+            // Auto-fill store name from QR payeeName if current name is empty
+            if (scan.payeeName && !name.trim()) {
+              setName(scan.payeeName);
+              try {
+                await supabase.from('profiles').update({ full_name: scan.payeeName }).eq('id', user.id);
+              } catch (_) {}
+            }
+
+            showAlert(
+              '🎉 UPI QR Configured Successfully!',
+              `Detected UPI ID: "${detectedUpi}"${scan.payeeName ? `\nStore / Payee: "${scan.payeeName}"` : ''}\n\nYour UPI ID and QR code have been saved automatically! Customers can now scan your QR code or pay their exact bill amount directly in Google Pay, PhonePe, or Paytm.`
+            );
+            setScanningQr(false);
+            return;
           }
         }
-        setSaving(false);
+
+        // 5. If QR was uploaded but UPI ID couldn't be decoded
+        if (targetQrUrl) {
+          const qrName = upiId.trim() || 'Store Standee QR';
+          await addQrCode(user.id, targetQrUrl, qrName, true);
+          setUpiQrCodeUrl(targetQrUrl);
+          showAlert(
+            'QR Code Uploaded',
+            'Your QR standee image was uploaded successfully!\n\nNote: We could not automatically detect the UPI ID from this image. If you would like dynamic bill QR codes at checkout, please verify or enter your UPI ID in the text field below.'
+          );
+        } else {
+          showAlert('Upload Failed', 'Failed to upload QR code image. Please try again.');
+        }
+        setScanningQr(false);
       }
     } catch (err) {
       console.error('Error during UPI QR upload:', err);
       showAlert('Upload Failed', err.message || 'Could not pick or upload image.');
-      setSaving(false);
+      setScanningQr(false);
     }
   };
 
@@ -1579,6 +1680,7 @@ const ProfileScreen = ({ navigation, route }) => {
         await addQrCode(user.id, dynamicQrUrl, normalized, true);
         setUpiQrCodeUrl(dynamicQrUrl);
       }
+      setQrSourceInfo('Manually Entered');
 
       showAlert(
         'UPI ID Saved',
@@ -2213,42 +2315,70 @@ const ProfileScreen = ({ navigation, route }) => {
         <Text style={styles.sectionSubtitle}>
           {isDelivery
             ? 'Set your UPI ID (VPA) for receiving direct tips and delivery payouts.'
-            : 'Set your Merchant UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.'}
+            : 'Set your Merchant UPI QR code so customers can scan and pay with exact order bill amounts — zero confusion, no manual typing needed!'}
         </Text>
 
-        <Text style={styles.inputLabel}>Merchant ID / UPI ID (e.g. mystore, 9876543210, or store@okaxis)</Text>
-        <View style={styles.upiInputRow}>
-          <TextInput
-            style={[styles.input, styles.upiInputFlex]}
-            placeholder="e.g. mystore, 9876543210, or store@okaxis"
-            value={upiId}
-            onChangeText={setUpiId}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TouchableOpacity
-            style={[styles.saveUpiBtn, savingUpiId && styles.buttonDisabled]}
-            onPress={handleSaveUpiId}
-            disabled={savingUpiId}
-          >
-            {savingUpiId ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.saveUpiBtnText}>Save</Text>
-            )}
-          </TouchableOpacity>
+        {/* PRIMARY SETUP: UPLOAD OR SCAN QR CODE */}
+        <View style={styles.qrUploadHeroCard}>
+          <View style={styles.qrHeroHeader}>
+            <View style={styles.qrHeroIconWrap}>
+              <Icon name="qrcode" size={24} color="#007AFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.qrHeroTitle}>Set UPI from QR Code (Recommended)</Text>
+              <Text style={styles.qrHeroSubtitle}>
+                Every customer has a scanner in Google Pay, PhonePe, and Paytm. Upload or snap your shop QR standee to auto-configure your UPI payment without typing!
+              </Text>
+            </View>
+          </View>
+
+          {scanningQr ? (
+            <View style={styles.qrScanningBox}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.qrScanningText}>Scanning QR code & extracting UPI ID...</Text>
+            </View>
+          ) : (
+            <View style={styles.qrActionButtonsRow}>
+              <TouchableOpacity
+                style={styles.qrActionBtnPrimary}
+                onPress={() => handleUpiQrUpload('gallery')}
+                disabled={scanningQr || saving}
+                activeOpacity={0.85}
+              >
+                <Icon name="image" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.qrActionBtnPrimaryText}>
+                  {upiQrCodeUrl ? 'Update QR from Gallery' : 'Upload QR from Gallery'}
+                </Text>
+              </TouchableOpacity>
+
+              {Platform.OS !== 'web' && (
+                <TouchableOpacity
+                  style={styles.qrActionBtnSecondary}
+                  onPress={() => handleUpiQrUpload('camera')}
+                  disabled={scanningQr || saving}
+                  activeOpacity={0.85}
+                >
+                  <Icon name="camera" size={16} color="#007AFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.qrActionBtnSecondaryText}>Take Photo</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
-        <Text style={styles.upiInputHelper}>
-          💡 Enter your Merchant ID, 10-digit mobile number, or full UPI VPA. Customers will pay directly with their exact order bill amount at Checkout.
-        </Text>
 
+        {/* ACTIVE UPI BANNER & DYNAMIC AMOUNT PREVIEW */}
         {upiId.trim() ? (
           <View style={styles.dynamicPreviewContainer}>
             <View style={styles.badgeRow}>
               <View style={styles.dynamicBadge}>
-                <Text style={styles.dynamicBadgeText}>✓ Dynamic Amount QR Active</Text>
+                <Icon name="check-circle" size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={styles.dynamicBadgeText}>UPI Active: {normalizeUpiId(upiId) || upiId.trim()}</Text>
               </View>
-              <Text style={styles.previewHint}>Generates QR with buyer's bill amount</Text>
+              {qrSourceInfo ? (
+                <Text style={styles.previewHint}>({qrSourceInfo})</Text>
+              ) : (
+                <Text style={styles.previewHint}>Generates QR with buyer's bill amount</Text>
+              )}
             </View>
 
             <TouchableOpacity
@@ -2260,7 +2390,7 @@ const ProfileScreen = ({ navigation, route }) => {
                 )}`;
                 const combined = [
                   { id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` },
-                  ...(upiQrCodeUrl ? [{ id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Code` }] : []),
+                  ...(upiQrCodeUrl ? [{ id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Standee` }] : []),
                   ...mediaList.filter((m) => m && m.type !== 'store_settings'),
                 ];
                 setViewerCustomMedia(combined);
@@ -2281,17 +2411,17 @@ const ProfileScreen = ({ navigation, route }) => {
                 <Text style={styles.previewPayee}>{name.trim() || 'Your Store'}</Text>
                 <Text style={styles.previewUpiId}>{normalizeUpiId(upiId) || upiId.trim()}</Text>
                 <Text style={styles.previewDesc}>
-                  At checkout, QR code automatically fills customer's exact bill total. (Tap to view full screen)
+                  ⚡ Dynamic Bill QR ready! Customers scan this code with Google Pay, PhonePe, or Paytm with their exact bill total pre-filled. (Tap to view full screen)
                 </Text>
               </View>
             </TouchableOpacity>
           </View>
         ) : null}
 
-        {/* Custom Uploaded QR Code (Optional) */}
-        <View style={styles.customQrSection}>
-          <Text style={styles.customQrTitle}>Custom Uploaded QR Code (Optional)</Text>
-          {upiQrCodeUrl && (
+        {/* Uploaded Store Standee QR Preview */}
+        {upiQrCodeUrl && (
+          <View style={styles.customQrSection}>
+            <Text style={styles.customQrTitle}>Uploaded Store Standee QR</Text>
             <TouchableOpacity
               activeOpacity={0.88}
               onPress={() => {
@@ -2300,7 +2430,7 @@ const ProfileScreen = ({ navigation, route }) => {
                   `upi://pay?pa=${encodeURIComponent(activeCleanUpi)}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
                 )}`;
                 const combined = [
-                  { id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Code` },
+                  { id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Standee` },
                   ...(activeCleanUpi ? [{ id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` }] : []),
                   ...mediaList.filter((m) => m && m.type !== 'store_settings'),
                 ];
@@ -2311,23 +2441,77 @@ const ProfileScreen = ({ navigation, route }) => {
               style={styles.qrCodeContainer}
             >
               <Image source={{ uri: upiQrCodeUrl }} style={styles.upiQrImage} />
+              <Text style={styles.previewDesc}>Tap to view full screen</Text>
             </TouchableOpacity>
-          )}
+          </View>
+        )}
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={handleUpiQrUpload}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator size="small" color="#007AFF" />
-            ) : (
-              <Text style={styles.secondaryButtonText}>
-                {upiQrCodeUrl ? '📷 Update Uploaded QR Code' : '📷 Upload Custom QR Code'}
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        {/* OPTIONAL MANUAL UPI ID ENTRY / EDIT */}
+        <TouchableOpacity
+          style={styles.manualToggleBtn}
+          onPress={() => setShowManualUpiEdit(!showManualUpiEdit)}
+          activeOpacity={0.8}
+        >
+          <Icon
+            name={showManualUpiEdit ? 'chevron-down' : 'chevron-right'}
+            size={12}
+            color="#64748B"
+            style={{ marginRight: 6 }}
+          />
+          <Text style={styles.manualToggleBtnText}>
+            {showManualUpiEdit ? 'Hide Manual UPI ID Input' : '✏️ Or edit / enter UPI ID manually'}
+          </Text>
+        </TouchableOpacity>
+
+        {showManualUpiEdit && (
+          <View style={styles.manualEditSection}>
+            <Text style={styles.inputLabel}>Merchant ID / UPI ID</Text>
+            <View style={styles.upiInputRow}>
+              <TextInput
+                style={[styles.input, styles.upiInputFlex]}
+                placeholder="e.g. mystore, 9876543210, or store@okaxis"
+                value={upiId}
+                onChangeText={setUpiId}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={[styles.saveUpiBtn, savingUpiId && styles.buttonDisabled]}
+                onPress={handleSaveUpiId}
+                disabled={savingUpiId}
+              >
+                {savingUpiId ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveUpiBtnText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Suffix Chips */}
+            <View style={styles.upiChipsRow}>
+              <Text style={styles.upiChipsLabel}>Quick Handles:</Text>
+              {['@upi', '@okaxis', '@okhdfcbank', '@ybl', '@paytm'].map((suffix) => {
+                const active = upiId.toLowerCase().endsWith(suffix.toLowerCase());
+                return (
+                  <TouchableOpacity
+                    key={suffix}
+                    style={[styles.upiChip, active && styles.upiChipActive]}
+                    onPress={() => handleSelectUpiSuffix(suffix)}
+                  >
+                    <Text style={[styles.upiChipText, active && styles.upiChipTextActive]}>
+                      {suffix}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.upiInputHelper}>
+              💡 Enter your Merchant ID, 10-digit mobile number, or full UPI VPA. Customers will pay directly with their exact order bill amount at Checkout.
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Input Fields */}
@@ -3283,6 +3467,109 @@ const styles = StyleSheet.create({
   },
   upiHeaderRow: {
     marginBottom: 4,
+  },
+  qrUploadHeroCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  qrHeroHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 12,
+  },
+  qrHeroIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#e0f2fe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrHeroTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  qrHeroSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  qrActionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  qrActionBtnPrimary: {
+    flex: 1,
+    minWidth: 160,
+    backgroundColor: '#007AFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  qrActionBtnPrimaryText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  qrActionBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  qrActionBtnSecondaryText: {
+    color: '#007AFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  qrScanningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    backgroundColor: '#f0f9ff',
+    borderRadius: 8,
+  },
+  qrScanningText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0284c7',
+  },
+  manualToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  manualToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  manualEditSection: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
   },
   upiInputRow: {
     flexDirection: 'row',

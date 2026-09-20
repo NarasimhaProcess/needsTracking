@@ -29,10 +29,15 @@ export function parseUpiString(text) {
 
   const trimmed = text.trim();
 
-  // 1. Standard UPI URI: upi://pay?...
-  if (trimmed.toLowerCase().includes('upi://pay')) {
+  // 1. Standard or App-specific UPI URI: upi://pay?... or phonepe://pay?... or tez://upi/pay?...
+  if (
+    trimmed.toLowerCase().includes('upi://pay') ||
+    trimmed.toLowerCase().includes('://pay?') ||
+    trimmed.toLowerCase().includes('://upi/pay?') ||
+    (trimmed.includes('pa=') && (trimmed.includes('pn=') || trimmed.includes('am=') || trimmed.includes('cu=')))
+  ) {
     try {
-      const upiUrl = trimmed.match(/upi:\/\/pay\?[^\s"'>]+/i)?.[0] || trimmed;
+      const upiUrl = trimmed.match(/[a-zA-Z0-9._-]+:\/\/[^\s"'>]+/i)?.[0] || trimmed;
       const queryPart = upiUrl.includes('?') ? upiUrl.split('?')[1] : upiUrl;
       const params = new URLSearchParams(queryPart);
       const pa = params.get('pa') || '';
@@ -42,7 +47,13 @@ export function parseUpiString(text) {
       const mc = params.get('mc') || '';
       const tn = params.get('tn') || '';
 
-      const cleanUpiId = pa ? decodeURIComponent(pa).trim() : '';
+      let cleanUpiId = pa ? decodeURIComponent(pa).trim() : '';
+      if (cleanUpiId && !cleanUpiId.includes('@')) {
+        const normalized = normalizeUpiId(cleanUpiId);
+        if (normalized && normalized.includes('@')) {
+          cleanUpiId = normalized;
+        }
+      }
       const cleanPayeeName = pn ? decodeURIComponent(pn).trim() : '';
 
       return {
@@ -53,10 +64,10 @@ export function parseUpiString(text) {
         currency: cu,
         merchantCode: mc,
         note: tn ? decodeURIComponent(tn).trim() : '',
-        isUpi: Boolean(cleanUpiId && cleanUpiId.includes('@')),
+        isUpi: Boolean(cleanUpiId && (cleanUpiId.includes('@') || /^\d{10}$/.test(cleanUpiId))),
       };
     } catch (err) {
-      console.warn('Error parsing upi://pay URI params:', err);
+      console.warn('Error parsing UPI URI params:', err);
     }
   }
 
@@ -537,11 +548,12 @@ export async function decodeQrFromImage(imageUri) {
   // -------------------------------------------------------------
   try {
     if (ImageManipulator && ImageManipulator.manipulateAsync) {
-      const sizesToTry = [800, 500, 1000];
+      const sizesToTry = [800, 500, 1000, null];
       for (const targetW of sizesToTry) {
+        const actions = targetW ? [{ resize: { width: targetW } }] : [];
         const manipResult = await ImageManipulator.manipulateAsync(
           imageUri,
-          [{ resize: { width: targetW } }],
+          actions,
           { format: ImageManipulator.SaveFormat.JPEG, base64: true }
         );
 
