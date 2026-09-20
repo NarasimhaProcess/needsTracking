@@ -229,6 +229,7 @@ const CatalogScreen = ({ navigation, route }) => {
   const [updatingCart, setUpdatingCart] = useState(false);
   const [variantSearch, setVariantSearch] = useState({});
   const [isProductModalVisible, setIsProductModalVisible] = useState(false);
+  const [lastProductForModal, setLastProductForModal] = useState(null);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedVariants, setSelectedVariants] = useState({});
   const [selectedVariantFilter, setSelectedVariantFilter] = useState(null);
@@ -712,6 +713,7 @@ const CatalogScreen = ({ navigation, route }) => {
     setSelectedVariants({});
     setSelectedVariantFilter(null);
     setIsProductModalVisible(false);
+    setLastProductForModal(null);
   };
 
   const getSelectedCombination = useCallback(() => {
@@ -983,6 +985,11 @@ const CatalogScreen = ({ navigation, route }) => {
   };
 
   const openImageViewer = (product, initialIndex = 0) => {
+    if (isProductModalVisible) {
+      setLastProductForModal(selectedProduct || product);
+      setIsProductModalVisible(false);
+    }
+
     const catalogList = (filteredProducts && filteredProducts.length > 0) ? filteredProducts : (products || []);
     let allMedia = [];
     let targetIdx = 0;
@@ -1021,28 +1028,35 @@ const CatalogScreen = ({ navigation, route }) => {
       }
     });
 
-    if (allMedia.length === 0 && product) {
+    if (!foundTarget && product) {
       const pMedia = (product?.product_media || []).filter(m => isImageMedia(m) && (m.media_url || m.uri));
       if (pMedia.length > 0) {
-        allMedia = pMedia.map((m, mIdx) => ({
-          id: `p-${product.id}-m-${mIdx}`,
-          productId: product.id,
-          uri: m.media_url || m.uri,
-          type: 'image',
-          title: pMedia.length > 1 ? `${product.product_name} (${mIdx + 1}/${pMedia.length})` : product.product_name,
-          subtitle: product.amount ? `₹${product.amount}` : null,
-        }));
+        pMedia.forEach((m, mIdx) => {
+          if (!foundTarget && mIdx === initialIndex) {
+            targetIdx = allMedia.length;
+            foundTarget = true;
+          }
+          allMedia.push({
+            id: `p-${product.id}-m-${mIdx}`,
+            productId: product.id,
+            uri: m.media_url || m.uri,
+            type: 'image',
+            title: pMedia.length > 1 ? `${product.product_name} (${mIdx + 1}/${pMedia.length})` : product.product_name,
+            subtitle: product.amount ? `₹${product.amount}` : null,
+          });
+        });
       } else if (product.image_url) {
-        allMedia = [{
+        targetIdx = allMedia.length;
+        foundTarget = true;
+        allMedia.push({
           id: `p-${product.id}-img`,
           productId: product.id,
           uri: product.image_url,
           type: 'image',
           title: product.product_name,
           subtitle: product.amount ? `₹${product.amount}` : null,
-        }];
+        });
       }
-      targetIdx = Math.min(Math.max(0, initialIndex), Math.max(0, allMedia.length - 1));
     }
 
     if (allMedia.length > 0) {
@@ -1108,9 +1122,11 @@ const CatalogScreen = ({ navigation, route }) => {
           {/* Favorite Heart Button */}
           <TouchableOpacity
             style={[styles.cardFavoriteBtn, isFav && styles.cardFavoriteBtnActive]}
-            onPress={() => handleToggleFavorite(item.id)}
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              handleToggleFavorite(item.id);
+            }}
             activeOpacity={0.7}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel={isFav ? "Remove from favorites" : "Add to favorites"}
           >
             <Icon
@@ -1123,7 +1139,10 @@ const CatalogScreen = ({ navigation, route }) => {
           {imageUrl && (
             <TouchableOpacity
               style={styles.cardZoomBtn}
-              onPress={() => openImageViewer(item, 0)}
+              onPress={(e) => {
+                e?.stopPropagation?.();
+                openImageViewer(item, 0);
+              }}
               activeOpacity={0.8}
               accessibilityLabel="View full image"
             >
@@ -2133,7 +2152,10 @@ const CatalogScreen = ({ navigation, route }) => {
             <View style={styles.swiggyModalContent}>
               <TouchableOpacity
                 style={styles.modalFavoriteBtn}
-                onPress={() => selectedProduct?.id && handleToggleFavorite(selectedProduct.id)}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  selectedProduct?.id && handleToggleFavorite(selectedProduct.id);
+                }}
                 activeOpacity={0.8}
                 accessibilityLabel="Toggle favorite"
               >
@@ -2179,6 +2201,14 @@ const CatalogScreen = ({ navigation, route }) => {
                           ))}
                       </Swiper>
                     )
+                  ) : selectedProduct?.image_url ? (
+                    <TouchableOpacity
+                      onPress={() => openImageViewer(selectedProduct, 0)}
+                      activeOpacity={0.9}
+                      style={{ width: '100%', height: 250, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}
+                    >
+                      <Image source={{ uri: selectedProduct.image_url }} style={styles.modalProductImage} resizeMode="contain" />
+                    </TouchableOpacity>
                   ) : (
                     <View style={styles.modalProductImagePlaceholder}>
                       <Icon name="shopping-bag" size={48} color="#94a3b8" />
@@ -2497,8 +2527,15 @@ const CatalogScreen = ({ navigation, route }) => {
           visible={isImageViewerVisible}
           mediaList={viewerImages}
           initialIndex={viewerInitialIndex}
-          onClose={() => setIsImageViewerVisible(false)}
           title={viewerTitle || 'Product Images'}
+          onClose={() => {
+            setIsImageViewerVisible(false);
+            if (lastProductForModal) {
+              setSelectedProduct(lastProductForModal);
+              setIsProductModalVisible(true);
+              setLastProductForModal(null);
+            }
+          }}
           onToggleFavorite={(target) => {
             const prodId = (typeof target === 'object' && target) ? (target.productId || target.id) : target;
             if (prodId) {

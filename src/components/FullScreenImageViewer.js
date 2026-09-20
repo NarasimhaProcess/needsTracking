@@ -368,8 +368,6 @@ const FullScreenImageViewer = ({
     }
   }, [visible, handlePrev, handleNext, onClose]);
 
-  if (!visible) return null;
-
   const isVideo = currentMedia?.type === 'video';
   const mediaId = currentMedia?.id || `media-${currentIndex}`;
   const isLoaded = !!loadedMapRef.current[mediaId];
@@ -380,34 +378,36 @@ const FullScreenImageViewer = ({
   const currentProductId = currentMedia?.productId;
 
   const isCurrentFav = useMemo(() => {
+    if (currentProductId && Array.isArray(favoriteProductIds)) {
+      return favoriteProductIds.some((id) => String(id) === String(currentProductId));
+    }
     if (typeof isFavorite === 'function') {
       return isFavorite(currentMedia, currentIndex);
     }
     if (typeof isFavorite === 'boolean') {
       return isFavorite;
     }
-    if (currentProductId && Array.isArray(favoriteProductIds)) {
-      return favoriteProductIds.some((id) => String(id) === String(currentProductId));
-    }
     return false;
   }, [isFavorite, currentMedia, currentIndex, currentProductId, favoriteProductIds]);
 
-  const handleFavoritePress = () => {
+  const handleFavoritePress = useCallback(() => {
     if (onToggleFavorite && currentMedia) {
       onToggleFavorite(currentMedia.productId || currentMedia, currentIndex);
     }
-  };
+  }, [onToggleFavorite, currentMedia, currentIndex]);
 
   // Adjacent items for instant background preloading
   const nextMedia = totalCount > 1 ? normalizedMedia[(currentIndex + 1) % totalCount] : null;
   const prevMedia = totalCount > 1 ? normalizedMedia[(currentIndex - 1 + totalCount) % totalCount] : null;
 
-  const handleRetry = () => {
+  const handleRetry = useCallback(() => {
     if (!currentMedia) return;
     delete loadedMapRef.current[mediaId];
     setImageErrorMap((prev) => ({ ...prev, [mediaId]: false }));
     setImageLoadingMap((prev) => ({ ...prev, [mediaId]: true }));
-  };
+  }, [currentMedia, mediaId]);
+
+  if (!visible) return null;
 
   return (
     <Modal
@@ -451,7 +451,6 @@ const FullScreenImageViewer = ({
                   style={[styles.favButton, isCurrentFav && styles.favButtonActive]}
                   onPress={handleFavoritePress}
                   activeOpacity={0.75}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   accessibilityLabel={isCurrentFav ? "Remove from favorites" : "Add to favorites"}
                 >
                   <Icon
@@ -484,7 +483,6 @@ const FullScreenImageViewer = ({
                 style={styles.closeButton}
                 onPress={onClose}
                 activeOpacity={0.8}
-                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 accessibilityLabel="Close full screen view"
               >
                 <Icon name="times" size={20} color="#FFFFFF" />
