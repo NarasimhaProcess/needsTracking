@@ -281,7 +281,8 @@ export function normalizeUpiId(text) {
     }
     const parts = trimmed.split('@');
     if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0) {
-      if (isGenericQrName(parts[0])) return '';
+      const placeholderPrefixes = ['myupiqr', 'qrcode', 'qr_code', 'staticqr', 'dynamicqr'];
+      if (placeholderPrefixes.includes(parts[0].toLowerCase())) return '';
       return trimmed.toLowerCase();
     }
     if (!trimmed.startsWith('@')) {
@@ -350,6 +351,191 @@ export function buildUpiPaymentUri({ upiId, payeeName = 'Store Merchant', amount
     uri += `&am=${Number(amount).toFixed(2)}`;
   }
   return uri;
+}
+
+/**
+ * Builds an Android Intent URI for Chrome and Android mobile browsers.
+ * Format: `intent://pay?{params}#Intent;scheme=upi;package={pkg};end;`
+ * When package is not specified, opens Android's native UPI app chooser.
+ */
+export function buildAndroidIntentUri({ upiId, payeeName = 'Store Merchant', amount, note = 'Order Payment', packageName = null, rawText }) {
+  const standardUri = buildUpiPaymentUri({ upiId, payeeName, amount, note, rawText });
+  if (!standardUri) return '';
+
+  const queryPart = standardUri.includes('?') ? standardUri.split('?')[1] : '';
+  const packagePart = packageName ? `package=${packageName};` : '';
+  return `intent://pay?${queryPart}#Intent;scheme=upi;${packagePart}end;`;
+}
+
+/**
+ * Returns supported UPI apps with their specific Android Intent, iOS, and Universal URIs.
+ */
+export function buildUpiAppLinks({ upiId, payeeName = 'Store Merchant', amount, note = 'Order Payment', rawText }) {
+  const standardUri = buildUpiPaymentUri({ upiId, payeeName, amount, note, rawText });
+  if (!standardUri) return [];
+
+  const queryPart = standardUri.includes('?') ? standardUri.split('?')[1] : '';
+
+  return [
+    {
+      id: 'gpay',
+      name: 'Google Pay',
+      shortName: 'GPay',
+      packageName: 'com.google.android.apps.nbu.paisa.user',
+      androidIntent: `intent://pay?${queryPart}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end;`,
+      iosUri: `tez://upi/pay?${queryPart}`,
+      standardUri,
+      color: '#0F9D58',
+      bgColor: '#E6F4EA',
+      borderColor: '#34A853',
+      icon: 'google',
+      tag: 'Google Pay',
+    },
+    {
+      id: 'phonepe',
+      name: 'PhonePe',
+      shortName: 'PhonePe',
+      packageName: 'com.phonepe.app',
+      androidIntent: `intent://pay?${queryPart}#Intent;scheme=upi;package=com.phonepe.app;end;`,
+      iosUri: `phonepe://pay?${queryPart}`,
+      standardUri: `phonepe://pay?${queryPart}`,
+      color: '#5F259F',
+      bgColor: '#F3E8FF',
+      borderColor: '#9333EA',
+      icon: 'mobile',
+      tag: 'PhonePe',
+    },
+    {
+      id: 'paytm',
+      name: 'Paytm',
+      shortName: 'Paytm',
+      packageName: 'net.one97.paytm',
+      androidIntent: `intent://pay?${queryPart}#Intent;scheme=upi;package=net.one97.paytm;end;`,
+      iosUri: `paytmmp://pay?${queryPart}`,
+      standardUri: `paytmmp://pay?${queryPart}`,
+      color: '#00B9F1',
+      bgColor: '#E0F7FE',
+      borderColor: '#0284C7',
+      icon: 'credit-card',
+      tag: 'Paytm',
+    },
+    {
+      id: 'bhim',
+      name: 'BHIM UPI',
+      shortName: 'BHIM',
+      packageName: 'in.org.npci.upiapp',
+      androidIntent: `intent://pay?${queryPart}#Intent;scheme=upi;package=in.org.npci.upiapp;end;`,
+      iosUri: `upi://pay?${queryPart}`,
+      standardUri,
+      color: '#0070BA',
+      bgColor: '#E6F0FA',
+      borderColor: '#0284C7',
+      icon: 'shield',
+      tag: 'BHIM',
+    },
+    {
+      id: 'any',
+      name: 'All UPI Apps',
+      shortName: 'Chooser',
+      packageName: null,
+      androidIntent: `intent://pay?${queryPart}#Intent;scheme=upi;end;`,
+      iosUri: standardUri,
+      standardUri,
+      color: '#2563EB',
+      bgColor: '#EFF6FF',
+      borderColor: '#3B82F6',
+      icon: 'external-link',
+      tag: 'Any App',
+    },
+  ];
+}
+
+/**
+ * Safely launches a UPI payment intent in Web browsers (Android Chrome, iOS Safari) and React Native.
+ */
+export async function openUpiAppIntent({
+  appId = 'any',
+  upiId,
+  payeeName = 'Store Merchant',
+  amount,
+  note = 'Order Payment',
+  rawText,
+  LinkingInstance,
+}) {
+  const apps = buildUpiAppLinks({ upiId, payeeName, amount, note, rawText });
+  const app = apps.find((a) => a.id === appId) || apps.find((a) => a.id === 'any') || apps[0];
+  if (!app) return { success: false, reason: 'no_app' };
+
+  const isWeb = Platform.OS === 'web' || typeof window !== 'undefined';
+  const ua = typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '';
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isMobileBrowser = isAndroid || isIOS || /webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+
+  if (isWeb && !isMobileBrowser) {
+    return { success: false, reason: 'desktop', app };
+  }
+
+  // On Android Chrome/browser: use Android Intent URL (prevents ERR_UNKNOWN_URL_SCHEME in Chrome)
+  // On iOS Safari: use iOS scheme (tez://, phonepe://, paytmmp://, or upi://)
+  let targetUrl = app.standardUri;
+  if (isWeb) {
+    if (isAndroid) {
+      targetUrl = app.androidIntent;
+    } else if (isIOS) {
+      targetUrl = app.iosUri || app.standardUri;
+    }
+  }
+
+  // Web environment: trigger dispatch using native DOM link click (user-initiated gesture)
+  if (isWeb && typeof document !== 'undefined') {
+    try {
+      const a = document.createElement('a');
+      a.href = targetUrl;
+      a.target = '_top';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        try {
+          document.body.removeChild(a);
+        } catch (_) {}
+      }, 500);
+      return { success: true, targetUrl, app };
+    } catch (e) {
+      console.warn('DOM link click failed, trying window.location:', e);
+      try {
+        window.location.href = targetUrl;
+        return { success: true, targetUrl, app };
+      } catch (locErr) {
+        console.warn('window.location failed:', locErr);
+      }
+    }
+  }
+
+  // React Native environment
+  if (LinkingInstance && LinkingInstance.openURL) {
+    try {
+      const canOpen = await LinkingInstance.canOpenURL(targetUrl).catch(() => false);
+      if (canOpen) {
+        await LinkingInstance.openURL(targetUrl);
+        return { success: true, targetUrl, app };
+      }
+      // Try standard upi URI as fallback
+      const canOpenStd = await LinkingInstance.canOpenURL(app.standardUri).catch(() => false);
+      if (canOpenStd) {
+        await LinkingInstance.openURL(app.standardUri);
+        return { success: true, targetUrl: app.standardUri, app };
+      }
+      // Direct open targetUrl
+      await LinkingInstance.openURL(targetUrl);
+      return { success: true, targetUrl, app };
+    } catch (nativeErr) {
+      console.warn('Native Linking.openURL error:', nativeErr);
+    }
+  }
+
+  return { success: false, reason: 'unsupported', app };
 }
 
 /**

@@ -40,6 +40,9 @@ import {
   decodeQrFromImage,
   generateQrDataUrl,
   buildUpiPaymentUri,
+  buildAndroidIntentUri,
+  buildUpiAppLinks,
+  openUpiAppIntent,
   parseUpiString,
   normalizeUpiId,
   isGenericQrName,
@@ -548,6 +551,29 @@ const CheckoutScreen = ({ navigation, route }) => {
     ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`
     : null;
 
+  // Available UPI App Intent links (Google Pay, PhonePe, Paytm, BHIM, All Apps)
+  const upiAppList = useMemo(() => {
+    return buildUpiAppLinks({
+      upiId: activeUpiId || sellerUpiId,
+      payeeName,
+      amount: totalAmount,
+      note: orderNote,
+      rawText: sellerRawUpiText,
+    });
+  }, [activeUpiId, sellerUpiId, payeeName, totalAmount, orderNote, sellerRawUpiText]);
+
+  const getAppWebHref = (app) => {
+    if (!app || Platform.OS !== 'web' || typeof navigator === 'undefined') return undefined;
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) {
+      return app.androidIntent;
+    }
+    if (/iPhone|iPad|iPod/i.test(ua)) {
+      return app.iosUri || app.standardUri;
+    }
+    return app.standardUri;
+  };
+
   // Profile-uploaded QR image URL (from user_qr_codes table)
   const profileQrImageUrl = sellerQr?.qr_image_url || sellerQr?.qr_code_url || null;
 
@@ -628,41 +654,18 @@ const CheckoutScreen = ({ navigation, route }) => {
     } catch (_) {}
   };
 
-  const handleOpenDirectUpiPay = async () => {
-    let targetUpiUri = dynamicUpiUri;
-
-    // If dynamicUpiUri is missing, build with activeUpiId
-    if (!targetUpiUri && activeUpiId) {
-      targetUpiUri = buildUpiPaymentUri({
-        upiId: activeUpiId,
-        payeeName,
-        amount: totalAmount,
-        note: orderNote,
-      });
-    }
+  const handleOpenDirectUpiPay = async (appId = 'any') => {
+    let resolvedUpi = activeUpiId || sellerUpiId;
 
     // If still missing, try decoding profile QR image immediately
-    if (!targetUpiUri && profileQrImageUrl) {
+    if (!resolvedUpi && profileQrImageUrl) {
       try {
         const scan = await decodeQrFromImage(profileQrImageUrl);
         if (scan?.success && scan.upiId) {
+          resolvedUpi = scan.upiId;
           setSellerUpiId(scan.upiId);
-          targetUpiUri = buildUpiPaymentUri({
-            upiId: scan.upiId,
-            payeeName,
-            amount: totalAmount,
-            note: orderNote,
-          });
         }
       } catch (_) {}
-    }
-
-    if (!targetUpiUri) {
-      showAlert(
-        'Scan Store QR Code',
-        `Please scan the Seller's QR code displayed on screen with Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
-      );
-      return;
     }
 
     // Check if on Desktop Web browser where UPI handler apps don't exist
@@ -672,37 +675,43 @@ const CheckoutScreen = ({ navigation, route }) => {
       !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     if (isDesktopWeb) {
-      if (activeUpiId) {
+      if (resolvedUpi) {
         handleCopyUpiId();
       }
       showAlert(
-        'Mobile UPI Payment',
-        `UPI payment apps (Google Pay, PhonePe, Paytm) are mobile apps.\n\n` +
+        'Scan QR Code with Phone',
+        `UPI payment apps (Google Pay, PhonePe, Paytm) run on mobile devices.\n\n` +
         `1. Scan the QR code displayed on screen using your mobile phone's camera or UPI app.\n` +
-        (activeUpiId ? `2. Or pay ₹${totalAmount.toFixed(2)} directly to UPI ID: ${activeUpiId} (copied to clipboard!).` : '')
+        (resolvedUpi ? `2. Or pay ₹${totalAmount.toFixed(2)} directly to UPI ID: ${resolvedUpi} (copied to clipboard!).` : '')
       );
       return;
     }
 
-    // Launch on mobile device or mobile browser
-    try {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.location.href = targetUpiUri;
-      } else {
-        const canOpen = await Linking.canOpenURL(targetUpiUri).catch(() => false);
-        if (canOpen) {
-          await Linking.openURL(targetUpiUri);
-        } else {
-          await Linking.openURL(targetUpiUri);
-        }
-      }
-    } catch (err) {
-      if (activeUpiId) {
+    if (!resolvedUpi && !profileQrImageUrl) {
+      showAlert(
+        'Scan Store QR Code',
+        `Please scan the Seller's QR code displayed on screen with Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+      );
+      return;
+    }
+
+    const launchResult = await openUpiAppIntent({
+      appId,
+      upiId: resolvedUpi,
+      payeeName,
+      amount: totalAmount,
+      note: orderNote,
+      rawText: sellerRawUpiText,
+      LinkingInstance: Linking,
+    });
+
+    if (!launchResult?.success) {
+      if (resolvedUpi) {
         handleCopyUpiId();
       }
       showAlert(
         'Open UPI App',
-        `Could not open UPI app automatically. Please scan the QR code on screen using Google Pay, PhonePe, or Paytm, or pay to:\n\n${activeUpiId || 'Merchant'}\n(Copied to clipboard!)`
+        `Could not open ${launchResult?.app?.name || 'UPI app'} directly. Please scan the QR code on screen using Google Pay, PhonePe, or Paytm, or pay to:\n\n${resolvedUpi || 'Merchant'}\n(Copied to clipboard!)`
       );
     }
   };
@@ -2122,17 +2131,67 @@ const CheckoutScreen = ({ navigation, route }) => {
                 : `Scan with Google Pay, PhonePe, Paytm or any UPI app. Bill amount (₹${totalAmount.toFixed(2)}) and payee are pre-filled automatically!`}
             </Text>
 
-            {/* Direct 1-Tap Pay via UPI App (GPay / PhonePe / Paytm) */}
-            <TouchableOpacity
-              style={styles.directUpiPayButton}
-              onPress={handleOpenDirectUpiPay}
-              activeOpacity={0.85}
-            >
-              <Icon name="mobile-phone" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.directUpiPayButtonText}>
-                Pay ₹{totalAmount.toFixed(2)} in UPI App
-              </Text>
-            </TouchableOpacity>
+            {/* Direct 1-Tap UPI Apps & Intent Links */}
+            <View style={styles.upiAppsSection}>
+              <View style={styles.upiAppsSectionHeader}>
+                <Text style={styles.upiAppsSectionTitle}>🚀 Instant 1-Tap Pay via UPI App</Text>
+                <Text style={styles.upiAppsSectionSub}>Tap your app to pay ₹{totalAmount.toFixed(2)} with pre-filled bill total</Text>
+              </View>
+
+              <View style={styles.upiAppsGrid}>
+                {upiAppList
+                  .filter((a) => a.id !== 'any')
+                  .map((app) => {
+                    const webHref = getAppWebHref(app);
+                    return (
+                      <TouchableOpacity
+                        key={app.id}
+                        style={[
+                          styles.upiAppCard,
+                          { borderColor: app.borderColor, backgroundColor: app.bgColor },
+                        ]}
+                        onPress={() => handleOpenDirectUpiPay(app.id)}
+                        accessibilityRole={Platform.OS === 'web' && webHref ? 'link' : 'button'}
+                        href={webHref}
+                        target="_top"
+                        rel="noopener noreferrer"
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.upiAppIconCircle, { backgroundColor: '#FFFFFF' }]}>
+                          <Icon name={app.icon} size={15} color={app.color} />
+                        </View>
+                        <View style={styles.upiAppTextCol}>
+                          <Text style={[styles.upiAppName, { color: app.color }]}>{app.name}</Text>
+                          <Text style={styles.upiAppActionText}>Pay ₹{totalAmount.toFixed(2)}</Text>
+                        </View>
+                        <Icon name="chevron-right" size={11} color={app.color} style={{ opacity: 0.6 }} />
+                      </TouchableOpacity>
+                    );
+                  })}
+              </View>
+
+              {/* All Apps / System Chooser Intent Button */}
+              {(() => {
+                const anyApp = upiAppList.find((a) => a.id === 'any') || upiAppList[0];
+                const anyHref = anyApp ? getAppWebHref(anyApp) : undefined;
+                return (
+                  <TouchableOpacity
+                    style={styles.directUpiPayButton}
+                    onPress={() => handleOpenDirectUpiPay('any')}
+                    accessibilityRole={Platform.OS === 'web' && anyHref ? 'link' : 'button'}
+                    href={anyHref}
+                    target="_top"
+                    rel="noopener noreferrer"
+                    activeOpacity={0.85}
+                  >
+                    <Icon name="mobile-phone" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Text style={styles.directUpiPayButtonText}>
+                      Pay ₹{totalAmount.toFixed(2)} in Any UPI App
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })()}
+            </View>
 
             {/* Payee UPI ID & 1-Tap Copy */}
             <View style={styles.upiIdRow}>
@@ -2943,6 +3002,64 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 14,
     paddingHorizontal: 8,
+  },
+  upiAppsSection: {
+    marginBottom: 14,
+  },
+  upiAppsSectionHeader: {
+    marginBottom: 8,
+  },
+  upiAppsSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  upiAppsSectionSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  upiAppsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  upiAppCard: {
+    flex: 1,
+    minWidth: '47%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    borderWidth: 1,
+    gap: 8,
+  },
+  upiAppIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  upiAppTextCol: {
+    flex: 1,
+  },
+  upiAppName: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  upiAppActionText: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+    fontWeight: '500',
   },
   directUpiPayButton: {
     flexDirection: 'row',
