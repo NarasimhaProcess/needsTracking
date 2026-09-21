@@ -79,12 +79,11 @@
       if ('serviceWorker' in navigator) {
         var isReloading = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
-          if (!isReloading) {
-            isReloading = true;
-            console.log('[PWA] New service worker active, reloading to apply latest updates...');
-            window.location.reload();
-          }
-        });
+  if (!isReloading) {
+    isReloading = true;
+    console.log('[PWA] New service worker active.');
+  }
+});
 
         window.addEventListener('load', function() {
           var swUrl = './sw.js?v=7';
