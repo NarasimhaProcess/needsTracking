@@ -44,7 +44,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { registerRootComponent } from 'expo';
+
 
 // React Navigation imports
 import { NavigationContainer, useNavigationContainerRef, DefaultTheme, DarkTheme } from '@react-navigation/native';
@@ -163,12 +163,12 @@ function AppInner() {
 
     fetchAndSetSession(); // Initial fetch
 
-    // Fallback safety timeout: Never keep the user stuck on the loading spinner for more than 2.5s
+    // Fallback safety timeout: Never keep the user stuck on the loading spinner for more than 800ms
     const timeoutTimer = setTimeout(() => {
       if (isMounted) {
         setLoading(false);
       }
-    }, 2500);
+    }, 800);
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       if (isMounted) {
@@ -702,4 +702,3 @@ const styles = StyleSheet.create({
   },
 });
 
-registerRootComponent(App);
