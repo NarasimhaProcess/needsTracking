@@ -1,10 +1,10 @@
-name: Supabase Complete Migration
+name: Supabase Schema Migration
 
 on:
   workflow_dispatch:
 
 jobs:
-  migrate:
+  migrate-schema:
     runs-on: ubuntu-latest
 
     env:
@@ -13,332 +13,357 @@ jobs:
 
     steps:
 
-      # ============================================================
+      # ==========================================================
       # 1. CHECKOUT
-      # ============================================================
-
+      # ==========================================================
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
-      # ============================================================
-      # 2. SUPABASE CLI
-      # ============================================================
-
+      # ==========================================================
+      # 2. SETUP SUPABASE CLI
+      # ==========================================================
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: "2.116.0"
 
-      # ============================================================
-      # 3. POSTGRES CLIENT
-      # ============================================================
-
+      # ==========================================================
+      # 3. INSTALL POSTGRESQL CLIENT
+      # ==========================================================
       - name: Install PostgreSQL Client
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
-      # ============================================================
+      # ==========================================================
       # 4. SHOW CONFIGURATION
-      # ============================================================
-
-      - name: Show Migration Configuration
+      # ==========================================================
+      - name: Show Configuration
         run: |
           echo "=========================================="
-          echo "SUPABASE MIGRATION"
+          echo "SUPABASE SCHEMA MIGRATION"
           echo "=========================================="
           echo "SOURCE : $SOURCE_PROJECT_REF"
           echo "TARGET : $TARGET_PROJECT_REF"
           echo "=========================================="
 
-      # ============================================================
-      # 5. LOGIN SOURCE
-      # ============================================================
-
+      # ==========================================================
+      # 5. LOGIN TO SOURCE
+      # ==========================================================
       - name: Login to SOURCE
         env:
           SOURCE_SUPABASE_ACCESS_TOKEN: ${{ secrets.SOURCE_SUPABASE_ACCESS_TOKEN }}
         run: |
           set -e
 
-          echo "Logging into SOURCE..."
+          echo "=========================================="
+          echo "LOGIN SOURCE"
+          echo "=========================================="
 
           supabase login \
             --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
 
-      # ============================================================
-      # 6. LINK SOURCE
-      # ============================================================
-
-      - name: Link SOURCE Project
+      # ==========================================================
+      # 6. BUILD SOURCE DATABASE URL
+      # ==========================================================
+      - name: Build SOURCE Database URL
         env:
           SOURCE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
         run: |
           set -e
 
-          rm -rf .supabase
+          echo "Creating SOURCE database connection..."
 
-          supabase link \
-            --project-ref "$SOURCE_PROJECT_REF" \
-            --password "$SOURCE_DB_PASSWORD"
+          echo "SOURCE_DB_URL=postgresql://postgres:${SOURCE_DB_PASSWORD}@db.${SOURCE_PROJECT_REF}.supabase.co:5432/postgres" >> "$GITHUB_ENV"
 
-          echo "SOURCE linked successfully."
-
-      # ============================================================
-      # 7. SOURCE MIGRATION HISTORY
-      # ============================================================
-
-      - name: Check SOURCE Migration History
-        run: |
-          set -e
-
-          echo "SOURCE migration history:"
-
-          supabase migration list
-
-      # ============================================================
-      # 8. PULL SOURCE SCHEMA
-      # ============================================================
-
-      - name: Pull SOURCE Schema
+      # ==========================================================
+      # 7. EXPORT SOURCE SCHEMA
+      #
+      # IMPORTANT:
+      # This uses db dump instead of db pull.
+      # Therefore local migration history is NOT checked.
+      #
+      # Schema only:
+      # - Tables
+      # - Columns
+      # - Indexes
+      # - Functions
+      # - Triggers
+      # - Views
+      # - RLS policies
+      # - Extensions
+      #
+      # NO TABLE DATA IS COPIED.
+      # ==========================================================
+      - name: Export SOURCE Schema
         run: |
           set -e
 
           echo "=========================================="
-          echo "PULLING SOURCE SCHEMA"
+          echo "EXPORTING SOURCE SCHEMA"
           echo "=========================================="
 
-          mkdir -p supabase/migrations
+          mkdir -p migration
 
-          supabase db pull
+          supabase db dump \
+            --db-url "$SOURCE_DB_URL" \
+            -f migration/schema.sql
 
           echo ""
-          echo "Generated migration files:"
+          echo "=========================================="
+          echo "SOURCE SCHEMA EXPORT COMPLETED"
+          echo "=========================================="
 
-          find supabase/migrations \
-            -maxdepth 1 \
-            -type f \
-            -printf "%f\n" \
-            | sort
+          ls -lh migration/schema.sql
 
-      # ============================================================
-      # 9. DISPLAY SCHEMA OBJECTS
-      # ============================================================
-
-      - name: Inspect SOURCE Schema
+      # ==========================================================
+      # 8. INSPECT EXPORTED SCHEMA
+      # ==========================================================
+      - name: Inspect Exported Schema
         run: |
           set -e
 
           echo "=========================================="
-          echo "TABLES"
+          echo "SCHEMA STATISTICS"
           echo "=========================================="
 
+          echo ""
+          echo "Total SQL lines:"
+          wc -l migration/schema.sql
+
+          echo ""
+          echo "TABLES:"
           grep -iE 'CREATE TABLE' \
-            supabase/migrations/*.sql || true
+            migration/schema.sql || true
 
           echo ""
-          echo "=========================================="
-          echo "FUNCTIONS"
-          echo "=========================================="
-
+          echo "FUNCTIONS:"
           grep -iE 'CREATE (OR REPLACE )?FUNCTION' \
-            supabase/migrations/*.sql || true
+            migration/schema.sql || true
 
           echo ""
-          echo "=========================================="
-          echo "TRIGGERS"
-          echo "=========================================="
-
+          echo "TRIGGERS:"
           grep -iE 'CREATE TRIGGER' \
-            supabase/migrations/*.sql || true
+            migration/schema.sql || true
 
           echo ""
-          echo "=========================================="
-          echo "POLICIES"
-          echo "=========================================="
-
+          echo "POLICIES:"
           grep -iE 'CREATE POLICY' \
-            supabase/migrations/*.sql || true
+            migration/schema.sql || true
 
           echo ""
-          echo "=========================================="
-          echo "VIEWS"
-          echo "=========================================="
-
+          echo "VIEWS:"
           grep -iE 'CREATE (OR REPLACE )?VIEW' \
-            supabase/migrations/*.sql || true
+            migration/schema.sql || true
 
-      # ============================================================
-      # 10. LOGIN TARGET
-      # ============================================================
+          echo ""
+          echo "INDEXES:"
+          grep -iE 'CREATE (UNIQUE )?INDEX' \
+            migration/schema.sql || true
 
+      # ==========================================================
+      # 9. LOGIN TO TARGET
+      # ==========================================================
       - name: Login to TARGET
         env:
           TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
         run: |
           set -e
 
+          echo "=========================================="
+          echo "LOGIN TARGET"
+          echo "=========================================="
+
           supabase login \
             --token "$TARGET_SUPABASE_ACCESS_TOKEN"
 
-          echo "TARGET login successful."
-
-      # ============================================================
-      # 11. LINK TARGET
-      # ============================================================
-
-      - name: Link TARGET Project
+      # ==========================================================
+      # 10. BUILD TARGET DATABASE URL
+      # ==========================================================
+      - name: Build TARGET Database URL
         env:
           TARGET_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
         run: |
           set -e
 
-          rm -rf .supabase
+          echo "Creating TARGET database connection..."
 
-          supabase link \
-            --project-ref "$TARGET_PROJECT_REF" \
-            --password "$TARGET_DB_PASSWORD"
+          echo "TARGET_DB_URL=postgresql://postgres:${TARGET_DB_PASSWORD}@db.${TARGET_PROJECT_REF}.supabase.co:5432/postgres" >> "$GITHUB_ENV"
 
-          echo "TARGET linked successfully."
-
-      # ============================================================
-      # 12. TARGET MIGRATION HISTORY
-      # ============================================================
-
-      - name: Check TARGET Migration History
-        run: |
-          set -e
-
-          echo "TARGET migration history:"
-
-          supabase migration list
-
-      # ============================================================
-      # 13. PUSH DATABASE SCHEMA
-      # ============================================================
-
-      - name: Push Database Schema to TARGET
+      # ==========================================================
+      # 11. TEST TARGET CONNECTION
+      # ==========================================================
+      - name: Test TARGET Connection
         run: |
           set -e
 
           echo "=========================================="
-          echo "PUSHING DATABASE SCHEMA"
+          echo "TESTING TARGET DATABASE CONNECTION"
           echo "=========================================="
 
-          supabase db push
+          psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT current_database(), current_user;"
 
-          echo "Database schema migration completed."
+          echo ""
+          echo "TARGET connection successful."
 
-      # ============================================================
-      # 14. VERIFY DATABASE MIGRATION
-      # ============================================================
-
-      - name: Verify Database Migration
+      # ==========================================================
+      # 12. RESTORE SCHEMA TO TARGET
+      #
+      # IMPORTANT:
+      # Target is a NEW Supabase project.
+      #
+      # This does NOT use:
+      # supabase db push
+      #
+      # Therefore target migration history does not matter.
+      # ==========================================================
+      - name: Restore Schema to TARGET
         run: |
           set -e
 
           echo "=========================================="
-          echo "TARGET MIGRATION HISTORY"
+          echo "RESTORING SOURCE SCHEMA TO TARGET"
           echo "=========================================="
 
-          supabase migration list
+          psql \
+            "$TARGET_DB_URL" \
+            --single-transaction \
+            --variable ON_ERROR_STOP=1 \
+            --file migration/schema.sql
 
-      # ============================================================
-      # 15. CHECK EDGE FUNCTIONS IN REPOSITORY
-      # ============================================================
-
-      - name: Check Edge Functions
-        run: |
+          echo ""
           echo "=========================================="
-          echo "EDGE FUNCTIONS"
+          echo "TARGET SCHEMA RESTORE COMPLETED"
           echo "=========================================="
 
-          if [ ! -d "supabase/functions" ]; then
-            echo "No supabase/functions directory found."
-            exit 0
-          fi
-
-          find supabase/functions \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            -printf "%f\n" \
-            | sort
-
-      # ============================================================
-      # 16. DEPLOY EDGE FUNCTIONS
-      # ============================================================
-
-      - name: Deploy Edge Functions
+      # ==========================================================
+      # 13. VERIFY TARGET TABLES
+      # ==========================================================
+      - name: Verify TARGET Tables
         run: |
           set -e
 
-          if [ ! -d "supabase/functions" ]; then
-            echo "No Edge Functions directory."
-            exit 0
-          fi
-
           echo "=========================================="
-          echo "DEPLOYING EDGE FUNCTIONS"
+          echo "TARGET TABLES"
           echo "=========================================="
 
-          found=false
+          psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "
+              SELECT
+                schemaname,
+                tablename
+              FROM pg_tables
+              WHERE schemaname NOT IN (
+                'pg_catalog',
+                'information_schema'
+              )
+              ORDER BY schemaname, tablename;
+            "
 
-          for dir in supabase/functions/*/; do
-
-            if [ ! -d "$dir" ]; then
-              continue
-            fi
-
-            function_name=$(basename "$dir")
-
-            if [ "$function_name" = "_shared" ]; then
-              echo "Skipping _shared"
-              continue
-            fi
-
-            found=true
-
-            echo ""
-            echo "Deploying:"
-            echo "$function_name"
-
-            supabase functions deploy "$function_name" \
-              --project-ref "$TARGET_PROJECT_REF"
-
-            echo "SUCCESS: $function_name"
-
-          done
-
-          if [ "$found" = false ]; then
-            echo "No Edge Functions found."
-          fi
-
-      # ============================================================
-      # 17. STORAGE BUCKET LIST
-      # ============================================================
-
-      - name: Check Storage Configuration
+      # ==========================================================
+      # 14. VERIFY TARGET FUNCTIONS
+      # ==========================================================
+      - name: Verify TARGET Functions
         run: |
+          set -e
+
           echo "=========================================="
-          echo "STORAGE"
+          echo "TARGET FUNCTIONS"
           echo "=========================================="
 
-          echo "Storage bucket migration is handled separately."
-          echo "Database metadata for storage is already part of the schema."
+          psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "
+              SELECT
+                n.nspname AS schema_name,
+                p.proname AS function_name
+              FROM pg_proc p
+              JOIN pg_namespace n
+                ON n.oid = p.pronamespace
+              WHERE n.nspname NOT IN (
+                'pg_catalog',
+                'information_schema'
+              )
+              ORDER BY n.nspname, p.proname;
+            "
 
-      # ============================================================
-      # 18. FINAL MIGRATION SUMMARY
-      # ============================================================
+      # ==========================================================
+      # 15. VERIFY TARGET TRIGGERS
+      # ==========================================================
+      - name: Verify TARGET Triggers
+        run: |
+          set -e
 
+          echo "=========================================="
+          echo "TARGET TRIGGERS"
+          echo "=========================================="
+
+          psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "
+              SELECT
+                event_object_schema AS schema_name,
+                event_object_table AS table_name,
+                trigger_name
+              FROM information_schema.triggers
+              ORDER BY
+                event_object_schema,
+                event_object_table,
+                trigger_name;
+            "
+
+      # ==========================================================
+      # 16. VERIFY TARGET POLICIES
+      # ==========================================================
+      - name: Verify TARGET RLS Policies
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TARGET RLS POLICIES"
+          echo "=========================================="
+
+          psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "
+              SELECT
+                schemaname,
+                tablename,
+                policyname
+              FROM pg_policies
+              ORDER BY
+                schemaname,
+                tablename,
+                policyname;
+            "
+
+      # ==========================================================
+      # 17. SAVE SCHEMA AS GITHUB ARTIFACT
+      # ==========================================================
+      - name: Upload Schema Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-schema-${{ github.run_number }}
+          path: migration/schema.sql
+          retention-days: 7
+
+      # ==========================================================
+      # 18. FINAL SUMMARY
+      # ==========================================================
       - name: Migration Summary
         if: always()
         run: |
           echo ""
           echo "=========================================="
-          echo "SUPABASE MIGRATION SUMMARY"
+          echo "SUPABASE SCHEMA MIGRATION SUMMARY"
           echo "=========================================="
           echo ""
           echo "SOURCE:"
@@ -347,26 +372,31 @@ jobs:
           echo "TARGET:"
           echo "$TARGET_PROJECT_REF"
           echo ""
-          echo "Completed stages:"
-          echo "  Database schema"
-          echo "  PostgreSQL functions"
-          echo "  Triggers"
-          echo "  RLS policies"
-          echo "  Views"
-          echo "  Indexes"
-          echo "  Edge Functions"
+          echo "Migrated:"
+          echo "  - Database schema"
+          echo "  - Tables"
+          echo "  - Views"
+          echo "  - Functions"
+          echo "  - Triggers"
+          echo "  - Indexes"
+          echo "  - RLS policies"
+          echo "  - Schema-level objects"
           echo ""
-          echo "Storage OBJECT files are NOT copied by this workflow."
+          echo "NOT migrated:"
+          echo "  - Table data"
+          echo "  - Storage files"
+          echo "  - Edge Functions"
+          echo "  - Edge Function secrets"
           echo ""
           echo "=========================================="
 
-      # ============================================================
+      # ==========================================================
       # 19. CLEANUP
-      # ============================================================
-
+      # ==========================================================
       - name: Cleanup
         if: always()
         run: |
           rm -rf .supabase
+          rm -f "$GITHUB_ENV" 2>/dev/null || true
 
           echo "Cleanup completed."
