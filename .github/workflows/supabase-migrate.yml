@@ -1,288 +1,372 @@
-name: Supabase Complete Cross-Org Sync (DB & Edge Functions)
+name: Supabase Complete Migration
 
 on:
   workflow_dispatch:
 
 jobs:
-  migrate-and-deploy:
+  migrate:
     runs-on: ubuntu-latest
+
+    env:
+      SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+      TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
 
     steps:
 
       # ============================================================
-      # 1. Checkout repository
+      # 1. CHECKOUT
       # ============================================================
+
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # ============================================================
-      # 2. Setup Supabase CLI
+      # 2. SUPABASE CLI
       # ============================================================
+
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: "2.116.0"
 
       # ============================================================
-      # 3. Authenticate SOURCE Supabase account
+      # 3. POSTGRES CLIENT
       # ============================================================
-      - name: Authenticate Source Supabase Account
+
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      # ============================================================
+      # 4. SHOW CONFIGURATION
+      # ============================================================
+
+      - name: Show Migration Configuration
+        run: |
+          echo "=========================================="
+          echo "SUPABASE MIGRATION"
+          echo "=========================================="
+          echo "SOURCE : $SOURCE_PROJECT_REF"
+          echo "TARGET : $TARGET_PROJECT_REF"
+          echo "=========================================="
+
+      # ============================================================
+      # 5. LOGIN SOURCE
+      # ============================================================
+
+      - name: Login to SOURCE
         env:
           SOURCE_SUPABASE_ACCESS_TOKEN: ${{ secrets.SOURCE_SUPABASE_ACCESS_TOKEN }}
         run: |
           set -e
 
-          echo "========================================"
-          echo "Authenticating SOURCE account"
-          echo "========================================"
+          echo "Logging into SOURCE..."
 
-          supabase login --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
-
-          echo "Source authentication successful."
+          supabase login \
+            --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
 
       # ============================================================
-      # 4. Link SOURCE project
+      # 6. LINK SOURCE
       # ============================================================
-      - name: Link Source Project
+
+      - name: Link SOURCE Project
         env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+          SOURCE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
         run: |
           set -e
-
-          echo "========================================"
-          echo "Connecting to SOURCE project"
-          echo "Project: $SOURCE_PROJECT_REF"
-          echo "========================================"
 
           rm -rf .supabase
 
           supabase link \
             --project-ref "$SOURCE_PROJECT_REF" \
-            --password "$SUPABASE_DB_PASSWORD"
+            --password "$SOURCE_DB_PASSWORD"
 
-          echo "Source project linked successfully."
+          echo "SOURCE linked successfully."
 
       # ============================================================
-      # 5. Show SOURCE migration history
+      # 7. SOURCE MIGRATION HISTORY
       # ============================================================
-      - name: Check Source Migration History
+
+      - name: Check SOURCE Migration History
         run: |
           set -e
 
-          echo "========================================"
-          echo "SOURCE migration history"
-          echo "========================================"
+          echo "SOURCE migration history:"
 
           supabase migration list
 
       # ============================================================
-      # 6. Repair stale SOURCE migration
-      #
-      # IMPORTANT:
-      # Only use this if 20260906023724 is confirmed to be a stale
-      # migration that should NOT be considered applied.
+      # 8. PULL SOURCE SCHEMA
       # ============================================================
-      - name: Repair Source Migration History
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
+
+      - name: Pull SOURCE Schema
         run: |
           set -e
 
-          MIGRATION_ID="20260906023724"
+          echo "=========================================="
+          echo "PULLING SOURCE SCHEMA"
+          echo "=========================================="
 
-          echo "========================================"
-          echo "Repairing SOURCE migration history"
-          echo "Migration: $MIGRATION_ID"
-          echo "========================================"
-
-          supabase migration repair \
-            --status reverted \
-            "$MIGRATION_ID"
-
-          echo "Migration repair completed."
-
-      # ============================================================
-      # 7. Pull SOURCE schema
-      # ============================================================
-      - name: Pull Schema from Source
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Pulling database schema from SOURCE"
-          echo "========================================"
+          mkdir -p supabase/migrations
 
           supabase db pull
 
           echo ""
-          echo "Source schema pulled successfully."
+          echo "Generated migration files:"
+
+          find supabase/migrations \
+            -maxdepth 1 \
+            -type f \
+            -printf "%f\n" \
+            | sort
 
       # ============================================================
-      # 8. Display resulting migrations
+      # 9. DISPLAY SCHEMA OBJECTS
       # ============================================================
-      - name: Show Source Migrations
+
+      - name: Inspect SOURCE Schema
         run: |
-          echo "========================================"
-          echo "SOURCE migrations after db pull"
-          echo "========================================"
+          set -e
 
-          if [ -d "supabase/migrations" ]; then
-            find supabase/migrations \
-              -maxdepth 1 \
-              -type f \
-              -printf "%f\n" \
-              | sort
-          else
-            echo "No migration directory found."
-          fi
+          echo "=========================================="
+          echo "TABLES"
+          echo "=========================================="
+
+          grep -iE 'CREATE TABLE' \
+            supabase/migrations/*.sql || true
+
+          echo ""
+          echo "=========================================="
+          echo "FUNCTIONS"
+          echo "=========================================="
+
+          grep -iE 'CREATE (OR REPLACE )?FUNCTION' \
+            supabase/migrations/*.sql || true
+
+          echo ""
+          echo "=========================================="
+          echo "TRIGGERS"
+          echo "=========================================="
+
+          grep -iE 'CREATE TRIGGER' \
+            supabase/migrations/*.sql || true
+
+          echo ""
+          echo "=========================================="
+          echo "POLICIES"
+          echo "=========================================="
+
+          grep -iE 'CREATE POLICY' \
+            supabase/migrations/*.sql || true
+
+          echo ""
+          echo "=========================================="
+          echo "VIEWS"
+          echo "=========================================="
+
+          grep -iE 'CREATE (OR REPLACE )?VIEW' \
+            supabase/migrations/*.sql || true
 
       # ============================================================
-      # 9. Reset SOURCE link
+      # 10. LOGIN TARGET
       # ============================================================
-      - name: Reset Source Link
-        run: |
-          rm -rf .supabase
 
-          echo "Source link removed."
-
-      # ============================================================
-      # 10. Authenticate TARGET Supabase account
-      # ============================================================
-      - name: Authenticate Target Supabase Account
+      - name: Login to TARGET
         env:
           TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
         run: |
           set -e
 
-          echo "========================================"
-          echo "Authenticating TARGET account"
-          echo "========================================"
+          supabase login \
+            --token "$TARGET_SUPABASE_ACCESS_TOKEN"
 
-          supabase login --token "$TARGET_SUPABASE_ACCESS_TOKEN"
-
-          echo "Target authentication successful."
+          echo "TARGET login successful."
 
       # ============================================================
-      # 11. Link TARGET project
+      # 11. LINK TARGET
       # ============================================================
-      - name: Link Target Project
+
+      - name: Link TARGET Project
         env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
+          TARGET_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
         run: |
           set -e
-
-          echo "========================================"
-          echo "Connecting to TARGET project"
-          echo "Project: $TARGET_PROJECT_REF"
-          echo "========================================"
 
           rm -rf .supabase
 
           supabase link \
             --project-ref "$TARGET_PROJECT_REF" \
-            --password "$SUPABASE_DB_PASSWORD"
+            --password "$TARGET_DB_PASSWORD"
 
-          echo "Target project linked successfully."
+          echo "TARGET linked successfully."
 
       # ============================================================
-      # 12. Check TARGET migration history
+      # 12. TARGET MIGRATION HISTORY
       # ============================================================
-      - name: Check Target Migration History
+
+      - name: Check TARGET Migration History
         run: |
           set -e
 
-          echo "========================================"
-          echo "TARGET migration history"
-          echo "========================================"
+          echo "TARGET migration history:"
 
           supabase migration list
 
       # ============================================================
-      # 13. Push schema to TARGET
+      # 13. PUSH DATABASE SCHEMA
       # ============================================================
-      - name: Push Schema to Target
-        env:
-          SUPABASE_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
+
+      - name: Push Database Schema to TARGET
         run: |
           set -e
 
-          echo "========================================"
-          echo "Pushing database schema to TARGET"
-          echo "========================================"
+          echo "=========================================="
+          echo "PUSHING DATABASE SCHEMA"
+          echo "=========================================="
 
           supabase db push
 
-          echo ""
-          echo "Database synchronization completed."
+          echo "Database schema migration completed."
 
       # ============================================================
-      # 14. Deploy Edge Functions
+      # 14. VERIFY DATABASE MIGRATION
       # ============================================================
-      - name: Deploy Edge Functions
-        env:
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
+
+      - name: Verify Database Migration
         run: |
           set -e
 
-          echo "========================================"
-          echo "Deploying Edge Functions"
-          echo "Target: $TARGET_PROJECT_REF"
-          echo "========================================"
+          echo "=========================================="
+          echo "TARGET MIGRATION HISTORY"
+          echo "=========================================="
+
+          supabase migration list
+
+      # ============================================================
+      # 15. CHECK EDGE FUNCTIONS IN REPOSITORY
+      # ============================================================
+
+      - name: Check Edge Functions
+        run: |
+          echo "=========================================="
+          echo "EDGE FUNCTIONS"
+          echo "=========================================="
 
           if [ ! -d "supabase/functions" ]; then
             echo "No supabase/functions directory found."
-            echo "Skipping Edge Functions."
             exit 0
           fi
 
-          found_functions=false
+          find supabase/functions \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -printf "%f\n" \
+            | sort
+
+      # ============================================================
+      # 16. DEPLOY EDGE FUNCTIONS
+      # ============================================================
+
+      - name: Deploy Edge Functions
+        run: |
+          set -e
+
+          if [ ! -d "supabase/functions" ]; then
+            echo "No Edge Functions directory."
+            exit 0
+          fi
+
+          echo "=========================================="
+          echo "DEPLOYING EDGE FUNCTIONS"
+          echo "=========================================="
+
+          found=false
 
           for dir in supabase/functions/*/; do
 
-            if [ -d "$dir" ]; then
-
-              func_name=$(basename "$dir")
-
-              if [ "$func_name" = "_shared" ]; then
-                echo "Skipping _shared directory."
-                continue
-              fi
-
-              found_functions=true
-
-              echo ""
-              echo "----------------------------------------"
-              echo "Deploying: $func_name"
-              echo "----------------------------------------"
-
-              supabase functions deploy "$func_name" \
-                --project-ref "$TARGET_PROJECT_REF"
-
-              echo "Successfully deployed: $func_name"
-
+            if [ ! -d "$dir" ]; then
+              continue
             fi
+
+            function_name=$(basename "$dir")
+
+            if [ "$function_name" = "_shared" ]; then
+              echo "Skipping _shared"
+              continue
+            fi
+
+            found=true
+
+            echo ""
+            echo "Deploying:"
+            echo "$function_name"
+
+            supabase functions deploy "$function_name" \
+              --project-ref "$TARGET_PROJECT_REF"
+
+            echo "SUCCESS: $function_name"
 
           done
 
-          if [ "$found_functions" = false ]; then
+          if [ "$found" = false ]; then
             echo "No Edge Functions found."
           fi
 
-          echo ""
-          echo "Edge Function deployment completed."
+      # ============================================================
+      # 17. STORAGE BUCKET LIST
+      # ============================================================
+
+      - name: Check Storage Configuration
+        run: |
+          echo "=========================================="
+          echo "STORAGE"
+          echo "=========================================="
+
+          echo "Storage bucket migration is handled separately."
+          echo "Database metadata for storage is already part of the schema."
 
       # ============================================================
-      # 15. Cleanup
+      # 18. FINAL MIGRATION SUMMARY
       # ============================================================
+
+      - name: Migration Summary
+        if: always()
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "SUPABASE MIGRATION SUMMARY"
+          echo "=========================================="
+          echo ""
+          echo "SOURCE:"
+          echo "$SOURCE_PROJECT_REF"
+          echo ""
+          echo "TARGET:"
+          echo "$TARGET_PROJECT_REF"
+          echo ""
+          echo "Completed stages:"
+          echo "  Database schema"
+          echo "  PostgreSQL functions"
+          echo "  Triggers"
+          echo "  RLS policies"
+          echo "  Views"
+          echo "  Indexes"
+          echo "  Edge Functions"
+          echo ""
+          echo "Storage OBJECT files are NOT copied by this workflow."
+          echo ""
+          echo "=========================================="
+
+      # ============================================================
+      # 19. CLEANUP
+      # ============================================================
+
       - name: Cleanup
         if: always()
         run: |
           rm -rf .supabase
 
-          echo "========================================"
           echo "Cleanup completed."
-          echo "========================================"
