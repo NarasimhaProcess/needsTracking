@@ -7,6 +7,10 @@ jobs:
   migrate-edge-and-storage:
     runs-on: ubuntu-latest
 
+    env:
+      SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+      TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
+
     steps:
 
       # ==========================================================
@@ -24,25 +28,37 @@ jobs:
           version: "2.116.0"
 
       # ==========================================================
-      # 3. INSTALL AWS CLI
+      # 3. INSTALL AWS CLI V2 + JQ
       # ==========================================================
-      - name: Install AWS CLI
+      - name: Install AWS CLI and jq
         run: |
           set -e
 
           sudo apt-get update
-          sudo apt-get install -y awscli jq
+          sudo apt-get install -y curl unzip jq
 
+          echo "Installing AWS CLI v2..."
+
+          curl -fsSL \
+            "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+            -o /tmp/awscliv2.zip
+
+          unzip -q /tmp/awscliv2.zip -d /tmp
+
+          sudo /tmp/aws/install --update
+
+          echo ""
+          echo "AWS CLI:"
           aws --version
+
+          echo ""
+          echo "jq:"
           jq --version
 
       # ==========================================================
-      # 4. CONFIGURATION
+      # 4. SHOW CONFIGURATION
       # ==========================================================
       - name: Show Configuration
-        env:
-          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
         run: |
           echo "=========================================="
           echo "EDGE + STORAGE MIGRATION"
@@ -60,6 +76,11 @@ jobs:
         run: |
           set -e
 
+          if [ -z "$SOURCE_SUPABASE_ACCESS_TOKEN" ]; then
+            echo "ERROR: SOURCE_SUPABASE_ACCESS_TOKEN is missing."
+            exit 1
+          fi
+
           supabase login \
             --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
 
@@ -73,6 +94,11 @@ jobs:
           TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
         run: |
           set -e
+
+          if [ -z "$TARGET_SUPABASE_ACCESS_TOKEN" ]; then
+            echo "ERROR: TARGET_SUPABASE_ACCESS_TOKEN is missing."
+            exit 1
+          fi
 
           supabase login \
             --token "$TARGET_SUPABASE_ACCESS_TOKEN"
@@ -106,12 +132,13 @@ jobs:
             function_name=$(basename "$dir")
 
             if [ "$function_name" = "_shared" ]; then
+              echo "Skipping _shared"
               continue
             fi
 
             found=true
 
-            echo "Function: $function_name"
+            echo "Found function: $function_name"
 
           done
 
@@ -123,8 +150,6 @@ jobs:
       # 8. DEPLOY EDGE FUNCTIONS
       # ==========================================================
       - name: Deploy Edge Functions to TARGET
-        env:
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
         run: |
           set -e
 
@@ -133,7 +158,7 @@ jobs:
           echo "=========================================="
 
           if [ ! -d "supabase/functions" ]; then
-            echo "No functions directory."
+            echo "No supabase/functions directory."
             exit 0
           fi
 
@@ -160,8 +185,7 @@ jobs:
             echo "------------------------------------------"
 
             supabase functions deploy "$function_name" \
-              --project-ref "$TARGET_PROJECT_REF" \
-              --use-api
+              --project-ref "$TARGET_PROJECT_REF"
 
             echo "SUCCESS: $function_name"
 
@@ -175,8 +199,6 @@ jobs:
       # 9. VERIFY EDGE FUNCTIONS
       # ==========================================================
       - name: Verify Edge Functions
-        env:
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
         run: |
           set -e
 
@@ -188,21 +210,10 @@ jobs:
             --project-ref "$TARGET_PROJECT_REF"
 
       # ==========================================================
-      # 10. SOURCE S3 CREDENTIALS
-      #
-      # Create these in:
-      #
-      # SOURCE_STORAGE_ACCESS_KEY
-      # SOURCE_STORAGE_SECRET_KEY
-      # SOURCE_STORAGE_REGION
-      #
-      # Get them from:
-      # Source Supabase
-      # Storage -> Configuration -> S3
+      # 10. CONFIGURE SOURCE STORAGE
       # ==========================================================
       - name: Configure SOURCE Storage
         env:
-          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
           SOURCE_STORAGE_ACCESS_KEY: ${{ secrets.SOURCE_STORAGE_ACCESS_KEY }}
           SOURCE_STORAGE_SECRET_KEY: ${{ secrets.SOURCE_STORAGE_SECRET_KEY }}
           SOURCE_STORAGE_REGION: ${{ secrets.SOURCE_STORAGE_REGION }}
@@ -230,17 +241,10 @@ jobs:
           echo "SOURCE Storage configured."
 
       # ==========================================================
-      # 11. TARGET S3 CREDENTIALS
-      #
-      # Create:
-      #
-      # TARGET_STORAGE_ACCESS_KEY
-      # TARGET_STORAGE_SECRET_KEY
-      # TARGET_STORAGE_REGION
+      # 11. CONFIGURE TARGET STORAGE
       # ==========================================================
       - name: Configure TARGET Storage
         env:
-          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
           TARGET_STORAGE_ACCESS_KEY: ${{ secrets.TARGET_STORAGE_ACCESS_KEY }}
           TARGET_STORAGE_SECRET_KEY: ${{ secrets.TARGET_STORAGE_SECRET_KEY }}
           TARGET_STORAGE_REGION: ${{ secrets.TARGET_STORAGE_REGION }}
@@ -268,9 +272,53 @@ jobs:
           echo "TARGET Storage configured."
 
       # ==========================================================
-      # 12. LIST SOURCE BUCKETS
+      # 12. TEST SOURCE S3 CONNECTION
       # ==========================================================
-      - name: List SOURCE Storage Buckets
+      - name: Test SOURCE Storage
+        env:
+          SOURCE_STORAGE_ACCESS_KEY: ${{ secrets.SOURCE_STORAGE_ACCESS_KEY }}
+          SOURCE_STORAGE_SECRET_KEY: ${{ secrets.SOURCE_STORAGE_SECRET_KEY }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TESTING SOURCE STORAGE"
+          echo "=========================================="
+
+          AWS_ACCESS_KEY_ID="$SOURCE_STORAGE_ACCESS_KEY" \
+          AWS_SECRET_ACCESS_KEY="$SOURCE_STORAGE_SECRET_KEY" \
+          aws s3 ls \
+            --endpoint-url "$SOURCE_STORAGE_ENDPOINT" \
+            --region "$SOURCE_STORAGE_REGION"
+
+          echo "SOURCE Storage connection successful."
+
+      # ==========================================================
+      # 13. TEST TARGET S3 CONNECTION
+      # ==========================================================
+      - name: Test TARGET Storage
+        env:
+          TARGET_STORAGE_ACCESS_KEY: ${{ secrets.TARGET_STORAGE_ACCESS_KEY }}
+          TARGET_STORAGE_SECRET_KEY: ${{ secrets.TARGET_STORAGE_SECRET_KEY }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TESTING TARGET STORAGE"
+          echo "=========================================="
+
+          AWS_ACCESS_KEY_ID="$TARGET_STORAGE_ACCESS_KEY" \
+          AWS_SECRET_ACCESS_KEY="$TARGET_STORAGE_SECRET_KEY" \
+          aws s3 ls \
+            --endpoint-url "$TARGET_STORAGE_ENDPOINT" \
+            --region "$TARGET_STORAGE_REGION"
+
+          echo "TARGET Storage connection successful."
+
+      # ==========================================================
+      # 14. LIST SOURCE BUCKETS
+      # ==========================================================
+      - name: List SOURCE Buckets
         env:
           SOURCE_STORAGE_ACCESS_KEY: ${{ secrets.SOURCE_STORAGE_ACCESS_KEY }}
           SOURCE_STORAGE_SECRET_KEY: ${{ secrets.SOURCE_STORAGE_SECRET_KEY }}
@@ -283,17 +331,27 @@ jobs:
 
           AWS_ACCESS_KEY_ID="$SOURCE_STORAGE_ACCESS_KEY" \
           AWS_SECRET_ACCESS_KEY="$SOURCE_STORAGE_SECRET_KEY" \
-          aws s3 ls \
+          aws s3api list-buckets \
             --endpoint-url "$SOURCE_STORAGE_ENDPOINT" \
-            --region "$SOURCE_STORAGE_REGION"
+            --region "$SOURCE_STORAGE_REGION" \
+            --query 'Buckets[].Name' \
+            --output text \
+            | tr '\t' '\n' \
+            | sort \
+            > source_buckets.txt
+
+          if [ ! -s source_buckets.txt ]; then
+            echo "No Storage buckets found."
+            exit 0
+          fi
+
+          cat source_buckets.txt
 
       # ==========================================================
-      # 13. CREATE TARGET BUCKETS
+      # 15. CREATE TARGET BUCKETS
       # ==========================================================
-      - name: Create TARGET Storage Buckets
+      - name: Create TARGET Buckets
         env:
-          SOURCE_STORAGE_ACCESS_KEY: ${{ secrets.SOURCE_STORAGE_ACCESS_KEY }}
-          SOURCE_STORAGE_SECRET_KEY: ${{ secrets.SOURCE_STORAGE_SECRET_KEY }}
           TARGET_STORAGE_ACCESS_KEY: ${{ secrets.TARGET_STORAGE_ACCESS_KEY }}
           TARGET_STORAGE_SECRET_KEY: ${{ secrets.TARGET_STORAGE_SECRET_KEY }}
         run: |
@@ -303,19 +361,12 @@ jobs:
           echo "CREATING TARGET STORAGE BUCKETS"
           echo "=========================================="
 
-          AWS_ACCESS_KEY_ID="$SOURCE_STORAGE_ACCESS_KEY" \
-          AWS_SECRET_ACCESS_KEY="$SOURCE_STORAGE_SECRET_KEY" \
-          aws s3api list-buckets \
-            --endpoint-url "$SOURCE_STORAGE_ENDPOINT" \
-            --region "$SOURCE_STORAGE_REGION" \
-            --query 'Buckets[].Name' \
-            --output text > source_buckets.txt
+          if [ ! -s source_buckets.txt ]; then
+            echo "No buckets to create."
+            exit 0
+          fi
 
-          echo "Source buckets:"
-
-          cat source_buckets.txt
-
-          while read -r bucket
+          while IFS= read -r bucket
           do
 
             if [ -z "$bucket" ]; then
@@ -323,7 +374,7 @@ jobs:
             fi
 
             echo ""
-            echo "Creating target bucket: $bucket"
+            echo "Creating bucket: $bucket"
 
             AWS_ACCESS_KEY_ID="$TARGET_STORAGE_ACCESS_KEY" \
             AWS_SECRET_ACCESS_KEY="$TARGET_STORAGE_SECRET_KEY" \
@@ -335,12 +386,20 @@ jobs:
 
           done < source_buckets.txt
 
+          echo ""
+          echo "Target bucket creation completed."
+
       # ==========================================================
-      # 14. COPY STORAGE OBJECTS
+      # 16. COPY STORAGE OBJECTS
       #
-      # SOURCE -> TARGET
+      # Source:
+      #   Supabase Storage
       #
-      # This copies actual images/files.
+      # Temporary GitHub runner:
+      #   storage-migration/
+      #
+      # Target:
+      #   Supabase Storage
       # ==========================================================
       - name: Copy Storage Objects
         env:
@@ -355,7 +414,15 @@ jobs:
           echo "COPYING STORAGE OBJECTS"
           echo "=========================================="
 
-          while read -r bucket
+          if [ ! -s source_buckets.txt ]; then
+            echo "No buckets found."
+            exit 0
+          fi
+
+          rm -rf storage-migration
+          mkdir -p storage-migration
+
+          while IFS= read -r bucket
           do
 
             if [ -z "$bucket" ]; then
@@ -363,13 +430,13 @@ jobs:
             fi
 
             echo ""
-            echo "------------------------------------------"
-            echo "Copying bucket: $bucket"
-            echo "------------------------------------------"
+            echo "=========================================="
+            echo "BUCKET: $bucket"
+            echo "=========================================="
 
             mkdir -p "storage-migration/$bucket"
 
-            echo "Downloading SOURCE..."
+            echo "Downloading from SOURCE..."
 
             AWS_ACCESS_KEY_ID="$SOURCE_STORAGE_ACCESS_KEY" \
             AWS_SECRET_ACCESS_KEY="$SOURCE_STORAGE_SECRET_KEY" \
@@ -377,9 +444,10 @@ jobs:
               "s3://$bucket" \
               "storage-migration/$bucket" \
               --endpoint-url "$SOURCE_STORAGE_ENDPOINT" \
-              --region "$SOURCE_STORAGE_REGION"
+              --region "$SOURCE_STORAGE_REGION" \
+              --no-progress
 
-            echo "Uploading TARGET..."
+            echo "Uploading to TARGET..."
 
             AWS_ACCESS_KEY_ID="$TARGET_STORAGE_ACCESS_KEY" \
             AWS_SECRET_ACCESS_KEY="$TARGET_STORAGE_SECRET_KEY" \
@@ -387,16 +455,17 @@ jobs:
               "storage-migration/$bucket" \
               "s3://$bucket" \
               --endpoint-url "$TARGET_STORAGE_ENDPOINT" \
-              --region "$TARGET_STORAGE_REGION"
+              --region "$TARGET_STORAGE_REGION" \
+              --no-progress
 
             echo "Bucket completed: $bucket"
 
           done < source_buckets.txt
 
       # ==========================================================
-      # 15. VERIFY TARGET STORAGE
+      # 17. VERIFY TARGET BUCKETS
       # ==========================================================
-      - name: Verify TARGET Storage
+      - name: Verify TARGET Buckets
         env:
           TARGET_STORAGE_ACCESS_KEY: ${{ secrets.TARGET_STORAGE_ACCESS_KEY }}
           TARGET_STORAGE_SECRET_KEY: ${{ secrets.TARGET_STORAGE_SECRET_KEY }}
@@ -404,7 +473,7 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo "TARGET STORAGE"
+          echo "TARGET BUCKETS"
           echo "=========================================="
 
           AWS_ACCESS_KEY_ID="$TARGET_STORAGE_ACCESS_KEY" \
@@ -414,7 +483,70 @@ jobs:
             --region "$TARGET_STORAGE_REGION"
 
       # ==========================================================
-      # 16. FINAL SUMMARY
+      # 18. VERIFY OBJECT COUNTS
+      # ==========================================================
+      - name: Verify Storage Objects
+        env:
+          SOURCE_STORAGE_ACCESS_KEY: ${{ secrets.SOURCE_STORAGE_ACCESS_KEY }}
+          SOURCE_STORAGE_SECRET_KEY: ${{ secrets.SOURCE_STORAGE_SECRET_KEY }}
+          TARGET_STORAGE_ACCESS_KEY: ${{ secrets.TARGET_STORAGE_ACCESS_KEY }}
+          TARGET_STORAGE_SECRET_KEY: ${{ secrets.TARGET_STORAGE_SECRET_KEY }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "VERIFYING STORAGE OBJECT COUNTS"
+          echo "=========================================="
+
+          if [ ! -s source_buckets.txt ]; then
+            echo "No buckets found."
+            exit 0
+          fi
+
+          while IFS= read -r bucket
+          do
+
+            if [ -z "$bucket" ]; then
+              continue
+            fi
+
+            SOURCE_COUNT=$(
+              AWS_ACCESS_KEY_ID="$SOURCE_STORAGE_ACCESS_KEY" \
+              AWS_SECRET_ACCESS_KEY="$SOURCE_STORAGE_SECRET_KEY" \
+              aws s3 ls \
+                "s3://$bucket" \
+                --recursive \
+                --endpoint-url "$SOURCE_STORAGE_ENDPOINT" \
+                --region "$SOURCE_STORAGE_REGION" \
+                | wc -l
+            )
+
+            TARGET_COUNT=$(
+              AWS_ACCESS_KEY_ID="$TARGET_STORAGE_ACCESS_KEY" \
+              AWS_SECRET_ACCESS_KEY="$TARGET_STORAGE_SECRET_KEY" \
+              aws s3 ls \
+                "s3://$bucket" \
+                --recursive \
+                --endpoint-url "$TARGET_STORAGE_ENDPOINT" \
+                --region "$TARGET_STORAGE_REGION" \
+                | wc -l
+            )
+
+            echo ""
+            echo "Bucket: $bucket"
+            echo "SOURCE objects: $SOURCE_COUNT"
+            echo "TARGET objects: $TARGET_COUNT"
+
+            if [ "$SOURCE_COUNT" -ne "$TARGET_COUNT" ]; then
+              echo "WARNING: Object count mismatch."
+            else
+              echo "OK: Object counts match."
+            fi
+
+          done < source_buckets.txt
+
+      # ==========================================================
+      # 19. FINAL SUMMARY
       # ==========================================================
       - name: Migration Summary
         if: always()
@@ -424,15 +556,26 @@ jobs:
           echo "EDGE + STORAGE MIGRATION SUMMARY"
           echo "=========================================="
           echo ""
+          echo "SOURCE:"
+          echo "$SOURCE_PROJECT_REF"
+          echo ""
+          echo "TARGET:"
+          echo "$TARGET_PROJECT_REF"
+          echo ""
           echo "Completed:"
-          echo "  [OK] Edge Functions deployment"
-          echo "  [OK] Storage bucket creation"
-          echo "  [OK] Storage object copy"
+          echo "  Edge Function deployment"
+          echo "  Storage bucket creation"
+          echo "  Storage object copy"
+          echo "  Storage object verification"
+          echo ""
+          echo "IMPORTANT:"
+          echo "Edge Function secrets are NOT copied automatically."
+          echo "Configure them separately using Supabase secrets."
           echo ""
           echo "=========================================="
 
       # ==========================================================
-      # 17. CLEANUP
+      # 20. CLEANUP
       # ==========================================================
       - name: Cleanup
         if: always()
