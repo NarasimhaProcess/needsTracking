@@ -1,0 +1,256 @@
+name: Migrate Supabase Edge Functions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate-edge-functions:
+    runs-on: ubuntu-latest
+
+    env:
+      SOURCE_PROJECT_REF: cikxysaxvbixrcwlgzds
+      TARGET_PROJECT_REF: xrgmgzlchlateycowjrr
+
+    steps:
+
+      # ---------------------------------------------------------
+      # 1. Checkout repository
+      # ---------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # ---------------------------------------------------------
+      # 2. Install Supabase CLI
+      # ---------------------------------------------------------
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+
+      # ---------------------------------------------------------
+      # 3. Login to SOURCE and TARGET projects
+      # ---------------------------------------------------------
+      - name: Login to Supabase
+        env:
+          SOURCE_SUPABASE_ACCESS_TOKEN: ${{ secrets.SOURCE_SUPABASE_ACCESS_TOKEN }}
+          TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "LOGIN TO SOURCE SUPABASE"
+          echo "=========================================="
+
+          supabase login --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
+
+          echo ""
+          echo "SOURCE login successful."
+
+          echo ""
+          echo "=========================================="
+          echo "LOGIN TO TARGET SUPABASE"
+          echo "=========================================="
+
+          supabase login --token "$TARGET_SUPABASE_ACCESS_TOKEN"
+
+          echo ""
+          echo "TARGET login successful."
+
+
+      # ---------------------------------------------------------
+      # 4. Check Edge Functions directory
+      # ---------------------------------------------------------
+      - name: Check Edge Functions
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "CHECKING EDGE FUNCTIONS"
+          echo "=========================================="
+
+          if [ ! -d "supabase/functions" ]; then
+            echo "ERROR: supabase/functions directory not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "Functions found:"
+
+          find supabase/functions \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -printf '%f\n' | sort
+
+
+      # ---------------------------------------------------------
+      # 5. Deploy all Edge Functions to TARGET
+      # ---------------------------------------------------------
+      - name: Deploy Edge Functions to Target
+        env:
+          TARGET_SUPABASE_ACCESS_TOKEN: ${{ secrets.TARGET_SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "DEPLOYING EDGE FUNCTIONS"
+          echo "=========================================="
+
+          FUNCTION_COUNT=0
+
+          for FUNCTION_DIR in supabase/functions/*; do
+
+            if [ ! -d "$FUNCTION_DIR" ]; then
+              continue
+            fi
+
+            FUNCTION_NAME=$(basename "$FUNCTION_DIR")
+
+            # Ignore special directories
+            if [ "$FUNCTION_NAME" = "_shared" ]; then
+              echo "Skipping _shared directory"
+              continue
+            fi
+
+            echo ""
+            echo "------------------------------------------"
+            echo "Deploying: $FUNCTION_NAME"
+            echo "------------------------------------------"
+
+            supabase functions deploy "$FUNCTION_NAME" \
+              --project-ref "$TARGET_PROJECT_REF"
+
+            FUNCTION_COUNT=$((FUNCTION_COUNT + 1))
+
+            echo "Successfully deployed: $FUNCTION_NAME"
+
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "DEPLOYMENT COMPLETED"
+          echo "=========================================="
+
+          echo "Total functions deployed: $FUNCTION_COUNT"
+
+
+      # ---------------------------------------------------------
+      # 6. List TARGET Edge Functions
+      # ---------------------------------------------------------
+      - name: Verify Target Edge Functions
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TARGET EDGE FUNCTIONS"
+          echo "=========================================="
+
+          supabase functions list \
+            --project-ref "$TARGET_PROJECT_REF"
+
+
+      # ---------------------------------------------------------
+      # 7. Configure TARGET Edge Function Secrets
+      # ---------------------------------------------------------
+      #
+      # IMPORTANT:
+      #
+      # Only secrets that actually exist in GitHub Secrets
+      # will be configured.
+      #
+      # Add these GitHub Secrets if your functions use them:
+      #
+      # TARGET_SERVICE_ROLESECRET
+      # TARGET_STRIPE_SECRET_KEY
+      #
+      # Add more below if required by your functions.
+      #
+      # ---------------------------------------------------------
+      - name: Configure Target Edge Function Secrets
+        env:
+          TARGET_SERVICE_ROLESECRET: ${{ secrets.TARGET_SERVICE_ROLESECRET }}
+          TARGET_STRIPE_SECRET_KEY: ${{ secrets.TARGET_STRIPE_SECRET_KEY }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "CONFIGURING EDGE FUNCTION SECRETS"
+          echo "=========================================="
+
+          SECRET_ARGS=""
+
+          if [ -n "$TARGET_SERVICE_ROLESECRET" ]; then
+            echo "Configuring SERVICE_ROLESECRET"
+
+            SECRET_ARGS="$SECRET_ARGS SERVICE_ROLESECRET=$TARGET_SERVICE_ROLESECRET"
+          fi
+
+          if [ -n "$TARGET_STRIPE_SECRET_KEY" ]; then
+            echo "Configuring STRIPE_SECRET_KEY"
+
+            SECRET_ARGS="$SECRET_ARGS STRIPE_SECRET_KEY=$TARGET_STRIPE_SECRET_KEY"
+          fi
+
+          if [ -z "$SECRET_ARGS" ]; then
+            echo "No Edge Function secrets configured."
+            echo "Skipping secret configuration."
+            exit 0
+          fi
+
+          # shellcheck disable=SC2086
+          supabase secrets set \
+            --project-ref "$TARGET_PROJECT_REF" \
+            $SECRET_ARGS
+
+          echo ""
+          echo "Edge Function secrets configured."
+
+
+      # ---------------------------------------------------------
+      # 8. Show configured secret names
+      # ---------------------------------------------------------
+      - name: Verify Target Secrets
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TARGET EDGE FUNCTION SECRETS"
+          echo "=========================================="
+
+          supabase secrets list \
+            --project-ref "$TARGET_PROJECT_REF"
+
+
+      # ---------------------------------------------------------
+      # 9. Final summary
+      # ---------------------------------------------------------
+      - name: Migration Summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "SUPABASE EDGE FUNCTION MIGRATION COMPLETE"
+          echo "=========================================="
+
+          echo ""
+          echo "SOURCE:"
+          echo "  $SOURCE_PROJECT_REF"
+
+          echo ""
+          echo "TARGET:"
+          echo "  $TARGET_PROJECT_REF"
+
+          echo ""
+          echo "Completed:"
+          echo "  [x] Edge Function source deployed"
+          echo "  [x] Target Edge Functions verified"
+          echo "  [x] Edge Function secrets configured (if provided)"
+
+          echo ""
+          echo "Skipped:"
+          echo "  [ ] Storage buckets"
+          echo "  [ ] Storage files / S3"
+
+          echo ""
+          echo "=========================================="
