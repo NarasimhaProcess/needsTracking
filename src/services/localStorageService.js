@@ -75,3 +75,128 @@ export const clearGuestCart = async () => {
     return false;
   }
 };
+
+const PREFERRED_STORE_KEY = 'preferred_store';
+
+export const getPreferredStore = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PREFERRED_STORE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.warn('Error getting preferred store:', e);
+    return null;
+  }
+};
+
+export const setPreferredStore = async (sellerId, sellerName = '', isDirectQr = undefined) => {
+  try {
+    if (!sellerId) {
+      await AsyncStorage.removeItem(PREFERRED_STORE_KEY);
+      return true;
+    }
+    let flag = isDirectQr;
+    if (flag === undefined) {
+      const existing = await getPreferredStore();
+      if (existing?.sellerId === sellerId && existing?.isDirectQr) {
+        flag = true;
+      }
+    }
+    await AsyncStorage.setItem(
+      PREFERRED_STORE_KEY,
+      JSON.stringify({
+        sellerId,
+        sellerName: sellerName || '',
+        isDirectQr: !!flag,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+    return true;
+  } catch (e) {
+    console.warn('Error setting preferred store:', e);
+    return false;
+  }
+};
+
+export const clearPreferredStore = async () => {
+  try {
+    await AsyncStorage.removeItem(PREFERRED_STORE_KEY);
+    return true;
+  } catch (e) {
+    console.warn('Error clearing preferred store:', e);
+    return false;
+  }
+};
+
+const FAVORITE_PRODUCTS_KEY = 'favorite_products';
+
+export const getFavoriteProductIds = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(FAVORITE_PRODUCTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.warn('Error getting favorite products:', e);
+    return [];
+  }
+};
+
+export const toggleFavoriteProductId = async (productId) => {
+  try {
+    if (!productId) return [];
+    const list = await getFavoriteProductIds();
+    const strId = String(productId);
+    const exists = list.some((id) => String(id) === strId);
+    let updated;
+    if (exists) {
+      updated = list.filter((id) => String(id) !== strId);
+    } else {
+      updated = [...list, productId];
+    }
+    await AsyncStorage.setItem(FAVORITE_PRODUCTS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.warn('Error toggling favorite product:', e);
+    return [];
+  }
+};
+
+export const isProductFavorite = async (productId) => {
+  try {
+    if (!productId) return false;
+    const list = await getFavoriteProductIds();
+    return list.some((id) => String(id) === String(productId));
+  } catch (e) {
+    console.warn('Error checking favorite product:', e);
+    return false;
+  }
+};
+
+const GUEST_ORDERS_KEY = 'guest_order_ids';
+
+export const saveGuestOrderId = async (orderId) => {
+  try {
+    if (!orderId) return false;
+    const raw = await AsyncStorage.getItem(GUEST_ORDERS_KEY);
+    const ids = raw ? JSON.parse(raw) : [];
+    const strId = String(orderId);
+    if (!ids.includes(strId)) {
+      ids.unshift(strId);
+    }
+    await AsyncStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(ids.slice(0, 30)));
+    return true;
+  } catch (e) {
+    console.warn('Error saving guest order id:', e);
+    return false;
+  }
+};
+
+export const getGuestOrderIds = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(GUEST_ORDERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.warn('Error retrieving guest order ids:', e);
+    return [];
+  }
+};
+
+

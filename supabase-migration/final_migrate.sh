@@ -1,32 +1,11 @@
-# Supabase Configuration  export EXPO_TOKEN="RvReV1bMxRLqTKX5P2t68laIKs5GlryO_f8A8in9" 
-# export EXPO_TOKEN="lgbLKC8N8jWlo6Xc-j8ebi5xV8HIYfnoxWdh-85m"
-# eas env:push  --environment preview --path .env.local
-# eas build --platform android --profile preview
-
-# for agy antigravity ai coding
-# curl -fsSL https://antigravity.google/cli/install.sh | bash
-# agy
-EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=your_anon_key_here
-
-# Google Maps API
-EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-
-# Organization Name
-EXPO_PUBLIC_ORG_NAME=localwala's
-
-
-
-# migration scriopts
-
 #!/bin/bash
 set -e
 
 # ==========================================
 # ⚠️ INPUT YOUR PASSWORDS BELOW
 # ==========================================
-SRC_PASS='needstracker@12345'  
-TGT_PASS='needstracker@12345'  
+SRC_PASS=''  
+TGT_PASS=''  
 
 # Strict hardcoded endpoints from your URL strings
 SRC_HOST="aws-0-ap-south-1.pooler.supabase.com"
@@ -65,7 +44,7 @@ PGPASSWORD="$TGT_PASS" psql -h "$TGT_HOST" -p "$TGT_PORT" -U "$TGT_USER" -d "pos
 echo "✅ Structure and relation tables restored successfully."
 
 echo ""
-echo "[Step 4/4] Disabling Row Level Security (RLS) on all target tables..."
+echo "[Step 4/4] Disabling Row Level Security (RLS) & Granting API permissions to anon/authenticated..."
 PGPASSWORD="$TGT_PASS" psql -h "$TGT_HOST" -p "$TGT_PORT" -U "$TGT_USER" -d "postgres" -c "
 DO \$\$ 
 DECLARE 
@@ -74,10 +53,21 @@ BEGIN
     FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
         EXECUTE format('ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY;', r.tablename);
     END LOOP;
-END \$\$;"
+END \$\$;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON SCHEMA public TO postgres, anon, authenticated, service_role;
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
+"
 
 echo ""
 echo "=========================================================="
 echo "🎉 SUCCESS: All tables built cleanly without RLS!        "
 echo "=========================================================="
-

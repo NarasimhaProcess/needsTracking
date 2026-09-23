@@ -13,8 +13,10 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as Clipboard from 'expo-clipboard';
-import { supabase, getActiveQrCode, updateOrderStatus } from '../services/supabase';
+import { supabase, getActiveQrCode, updateOrderStatus, extractMerchantUpi } from '../services/supabase';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import { normalizeUpiId, isGenericQrName } from '../services/qrScanService';
 
 const UpiQrScreen = ({ navigation, route }) => {
   const { cart, totalAmount: passedAmount, shippingAddress, order, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
@@ -24,6 +26,9 @@ const UpiQrScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' | 'profile'
+  const [isQrViewerVisible, setIsQrViewerVisible] = useState(false);
+  const [qrViewerMedia, setQrViewerMedia] = useState([]);
+  const [qrViewerIndex, setQrViewerIndex] = useState(0);
 
   const resolvedSellerId =
     paramSellerId ||
@@ -61,28 +66,63 @@ const UpiQrScreen = ({ navigation, route }) => {
         }
 
         const { data: { user } } = await supabase.auth.getUser();
-        const targetUserId = sellerId || user?.id;
+        const targetUserId = resolvedSellerId || sellerId || user?.id;
 
         if (targetUserId) {
+          let foundUpi = '';
+
+          // 1. Primary source of truth: Seller Profile
+          let prof = null;
+          try {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('id, full_name, mobile, media_urls, upi_id')
+              .eq('id', targetUserId)
+              .maybeSingle();
+
+            if (data) {
+              prof = data;
+            } else if (error && error.message?.includes('upi_id')) {
+              const { data: fallbackData } = await supabase
+                .from('profiles')
+                .select('id, full_name, mobile, media_urls')
+                .eq('id', targetUserId)
+                .maybeSingle();
+              prof = fallbackData;
+            }
+          } catch (_) {}
+
+          if (prof) {
+            if (prof.full_name) setPayeeName(prof.full_name);
+            const normProf =
+              normalizeUpiId(prof.upi_id) ||
+              normalizeUpiId(extractMerchantUpi(prof.media_urls));
+            if (normProf && !isGenericQrName(normProf)) {
+              foundUpi = normProf;
+              setPayeeUpiId(foundUpi);
+            }
+          }
+
+          // 2. Active QR code record
           const qrCode = await getActiveQrCode(targetUserId);
           if (qrCode) {
             const url = qrCode.qr_image_url || qrCode.qr_code_url;
             setActiveQrImageUrl(url);
-            if (qrCode.name && qrCode.name.includes('@')) {
-              setPayeeUpiId(qrCode.name);
+            if (!foundUpi && qrCode.name && !isGenericQrName(qrCode.name)) {
+              const normQr = normalizeUpiId(qrCode.name);
+              if (normQr && !isGenericQrName(normQr)) {
+                foundUpi = normQr;
+                setPayeeUpiId(foundUpi);
+              }
             }
           }
 
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('id, full_name, mobile')
-            .eq('id', targetUserId)
-            .maybeSingle();
-
-          if (prof) {
-            if (prof.full_name) setPayeeName(prof.full_name);
-            if (!payeeUpiId && prof.mobile) {
-              setPayeeUpiId(`${prof.mobile}@upi`);
+          // 3. Current user metadata fallback
+          if (!foundUpi && user?.id === targetUserId && user?.user_metadata?.upi_id) {
+            const metaUpi = normalizeUpiId(user.user_metadata.upi_id);
+            if (metaUpi && !isGenericQrName(metaUpi)) {
+              foundUpi = metaUpi;
+              setPayeeUpiId(foundUpi);
             }
           }
         }
@@ -100,6 +140,61 @@ const UpiQrScreen = ({ navigation, route }) => {
   const orderRef = order?.order_number || (order?.id ? order.id.substring(0, 8) : 'Order');
   const dynamicUpiUri = `upi://pay?pa=${encodeURIComponent(activeVpa)}&pn=${encodeURIComponent(payeeName)}&am=${Number(amount).toFixed(2)}&cu=INR&tn=${encodeURIComponent('Bill Order ' + orderRef)}`;
   const dynamicQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`;
+
+  const openQrImageViewer = () => {
+    const list = [];
+    if (dynamicQrImageUrl) {
+      list.push({
+        id: 'upi-dynamic-qr',
+        uri: dynamicQrImageUrl,
+        type: 'image',
+        title: `Dynamic UPI QR Code (₹${Number(amount).toFixed(2)})`,
+        subtitle: `Pay to ${resolvedSellerName || payeeName}`,
+      });
+    }
+    if (activeQrImageUrl) {
+      list.push({
+        id: 'upi-profile-qr',
+        uri: activeQrImageUrl,
+        type: 'image',
+        title: `Profile QR Code - ${resolvedSellerName || payeeName}`,
+        subtitle: `UPI ID: ${activeVpa}`,
+      });
+    }
+    const orderItems = order?.order_items || cart?.cart_items || [];
+    orderItems.forEach((oi) => {
+      const prod = oi?.product_variant_combinations?.products;
+      const pMedia = (prod?.product_media || []).filter((m) => m && (m.media_url || m.uri));
+      const prodName = prod?.product_name || 'Item';
+      const prodPrice = oi.price || oi?.product_variant_combinations?.price || prod?.amount;
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          list.push({
+            id: `upi-oi-${oi.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: prodName,
+            subtitle: prodPrice ? `₹${prodPrice}` : null,
+          });
+        });
+      } else if (prod?.image_url || oi?.image_url) {
+        list.push({
+          id: `upi-oi-${oi.id}-img`,
+          uri: prod?.image_url || oi?.image_url,
+          type: 'image',
+          title: prodName,
+          subtitle: prodPrice ? `₹${prodPrice}` : null,
+        });
+      }
+    });
+
+    if (list.length > 0) {
+      const targetIdx = qrTab === 'profile' && activeQrImageUrl ? Math.max(0, list.findIndex((i) => i.id === 'upi-profile-qr')) : 0;
+      setQrViewerMedia(list);
+      setQrViewerIndex(targetIdx);
+      setIsQrViewerVisible(true);
+    }
+  };
 
   const handleCopyUpiId = async () => {
     try {
@@ -237,23 +332,27 @@ const UpiQrScreen = ({ navigation, route }) => {
               <Text style={styles.qrLoadingText}>Generating QR Code...</Text>
             </View>
           ) : (
-            <>
-              <Image
-                source={{
-                  uri:
-                    qrTab === 'profile' && activeQrImageUrl
-                      ? activeQrImageUrl
-                      : dynamicQrImageUrl,
-                }}
-                style={styles.qrImage}
-                resizeMode="contain"
-              />
-              <View style={styles.qrAmountOverlay}>
-                <Text style={styles.qrAmountOverlayText}>
-                  Order Bill: ₹{Number(amount).toFixed(2)}
-                </Text>
-              </View>
-            </>
+              <TouchableOpacity
+                activeOpacity={0.88}
+                onPress={openQrImageViewer}
+                accessibilityLabel="Tap to view full screen QR code"
+              >
+                <Image
+                  source={{
+                    uri:
+                      qrTab === 'profile' && activeQrImageUrl
+                        ? activeQrImageUrl
+                        : dynamicQrImageUrl,
+                  }}
+                  style={styles.qrImage}
+                  resizeMode="contain"
+                />
+                <View style={styles.qrAmountOverlay}>
+                  <Text style={styles.qrAmountOverlayText}>
+                    Order Bill: ₹{Number(amount).toFixed(2)}
+                  </Text>
+                </View>
+              </TouchableOpacity>
           )}
         </View>
 
@@ -339,6 +438,15 @@ const UpiQrScreen = ({ navigation, route }) => {
         sellerName={resolvedSellerName}
         customerId={resolvedCustomerId}
         forceShow={true}
+      />
+
+      {/* Full-Screen QR & Item Media Viewer */}
+      <FullScreenImageViewer
+        visible={isQrViewerVisible}
+        mediaList={qrViewerMedia}
+        initialIndex={qrViewerIndex}
+        onClose={() => setIsQrViewerVisible(false)}
+        title="UPI Payment QR Code"
       />
     </View>
   );

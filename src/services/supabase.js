@@ -1227,52 +1227,55 @@ export async function getOrders(userId, options = {}) {
       console.warn('getOrders: seller_id query exception:', err);
     }
 
-    // 2. Product-linked fallback for older orders created prior to seller_id column
-    try {
-      const { data: myProducts } = await supabase
-        .from('products')
-        .select('id')
-        .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
-
-      if (myProducts && myProducts.length > 0) {
-        const prodIds = myProducts.map((p) => p.id);
-        const { data: combinations } = await supabase
-          .from('product_variant_combinations')
+    // 2. Product-linked fallback for older legacy orders created prior to seller_id column
+    // Only query if direct seller_id match found nothing, ensuring instantaneous load times
+    if (orders.length === 0) {
+      try {
+        const { data: myProducts } = await supabase
+          .from('products')
           .select('id')
-          .in('product_id', prodIds);
+          .or(`user_id.eq.${userId},customer_id.eq.${userId}`);
 
-        if (combinations && combinations.length > 0) {
-          const combiIds = combinations.map((c) => c.id);
-          const { data: items } = await supabase
-            .from('order_items')
-            .select('order_id')
-            .in('product_variant_combination_id', combiIds);
+        if (myProducts && myProducts.length > 0) {
+          const prodIds = myProducts.map((p) => p.id);
+          const { data: combinations } = await supabase
+            .from('product_variant_combinations')
+            .select('id')
+            .in('product_id', prodIds);
 
-          if (items && items.length > 0) {
-            const linkedOrderIds = Array.from(new Set(items.map((it) => it.order_id).filter(Boolean)));
-            if (linkedOrderIds.length > 0) {
-              const existingIds = new Set(orders.map((o) => o.id));
-              const missingIds = linkedOrderIds.filter((id) => !existingIds.has(id));
+          if (combinations && combinations.length > 0) {
+            const combiIds = combinations.map((c) => c.id);
+            const { data: items } = await supabase
+              .from('order_items')
+              .select('order_id')
+              .in('product_variant_combination_id', combiIds);
 
-              if (missingIds.length > 0) {
-                const { data: extraOrders } = await supabase
-                  .from('orders')
-                  .select(selectQuery)
-                  .in('id', missingIds)
-                  .order('created_at', { ascending: false });
+            if (items && items.length > 0) {
+              const linkedOrderIds = Array.from(new Set(items.map((it) => it.order_id).filter(Boolean)));
+              if (linkedOrderIds.length > 0) {
+                const existingIds = new Set(orders.map((o) => o.id));
+                const missingIds = linkedOrderIds.filter((id) => !existingIds.has(id));
 
-                if (extraOrders && extraOrders.length > 0) {
-                  orders = [...orders, ...extraOrders].sort(
-                    (a, b) => new Date(b.created_at) - new Date(a.created_at)
-                  );
+                if (missingIds.length > 0) {
+                  const { data: extraOrders } = await supabase
+                    .from('orders')
+                    .select(selectQuery)
+                    .in('id', missingIds)
+                    .order('created_at', { ascending: false });
+
+                  if (extraOrders && extraOrders.length > 0) {
+                    orders = [...orders, ...extraOrders].sort(
+                      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+                    );
+                  }
                 }
               }
             }
           }
         }
+      } catch (fallbackErr) {
+        console.warn('getOrders fallback product search notice:', fallbackErr);
       }
-    } catch (fallbackErr) {
-      console.warn('getOrders fallback product search notice:', fallbackErr);
     }
   } else if (isAdmin && !options.buyerOnly) {
     const { data: adminData, error: adminErr } = await supabase
@@ -1416,6 +1419,44 @@ export async function updateOrderStatus(orderId, newStatus) {
     return null;
   }
   return data ? data[0] : null;
+}
+
+export async function updateOrderPaymentStatus(orderId, paymentStatus) {
+  try {
+    let { data, error } = await supabase
+      .from('orders')
+      .update({ payment_status: paymentStatus })
+      .eq('id', orderId)
+      .select();
+
+    if (error && (error.code === 'PGRST204' || error.message?.includes('payment_status'))) {
+      // payment_status column not yet in orders table, fallback to shipping_address JSON
+      const { data: currentOrder } = await supabase
+        .from('orders')
+        .select('shipping_address')
+        .eq('id', orderId)
+        .single();
+      const currentShipping = typeof currentOrder?.shipping_address === 'object' && currentOrder?.shipping_address !== null
+        ? currentOrder.shipping_address
+        : { address: currentOrder?.shipping_address };
+      const updatedShipping = { ...currentShipping, payment_status: paymentStatus };
+      const res = await supabase
+        .from('orders')
+        .update({ shipping_address: updatedShipping })
+        .eq('id', orderId)
+        .select();
+      return res.data ? res.data[0] : null;
+    }
+
+    if (error) {
+      console.error('Error updating order payment status:', error.message);
+      return null;
+    }
+    return data ? data[0] : null;
+  } catch (err) {
+    console.error('updateOrderPaymentStatus exception:', err);
+    return null;
+  }
 }
 
 export async function getPendingOrdersCount(userId, options = {}) {
@@ -1600,7 +1641,7 @@ export function getAuthRedirectUrl() {
       }
       return `${origin}${pathname}`;
     }
-    return 'https://narasimhaprocess.github.io/needsTracking/';
+    return 'https://narasimhareddyaiapp2-localwala.github.io/needsTracking/';
   }
 
   return AuthSession.makeRedirectUri({
@@ -1669,16 +1710,49 @@ export async function ensureUserProfile(user, defaultRole = null) {
             .select()
             .maybeSingle();
 
+          try {
+            await supabase.from('users').upsert({
+              id: user.id,
+              email: user.email || existingProfile.email || '',
+              name: updatedProfile?.full_name || existingProfile.full_name || user.email?.split('@')[0] || 'User',
+              mobile: updatedProfile?.mobile || existingProfile.mobile || null,
+              user_type: roleToAssign,
+              updated_at: new Date().toISOString(),
+            });
+          } catch (_) {}
+
           if (!updateErr && updatedProfile) {
             console.log(`[ensureUserProfile] Upgraded user profile to role "${roleToAssign}":`, updatedProfile);
             return updatedProfile;
           }
         }
+
+        try {
+          await supabase.from('users').upsert({
+            id: user.id,
+            email: user.email || existingProfile.email || '',
+            name: existingProfile.full_name || user.email?.split('@')[0] || 'User',
+            mobile: existingProfile.mobile || null,
+            user_type: existingProfile.role || roleToAssign,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (_) {}
+
         return existingProfile;
       }
     }
 
     if (existingProfile) {
+      try {
+        await supabase.from('users').upsert({
+          id: user.id,
+          email: user.email || existingProfile.email || '',
+          name: existingProfile.full_name || user.email?.split('@')[0] || 'User',
+          mobile: existingProfile.mobile || null,
+          user_type: existingProfile.role || 'customer',
+          updated_at: new Date().toISOString(),
+        });
+      } catch (_) {}
       return existingProfile;
     }
 
@@ -1712,6 +1786,18 @@ export async function ensureUserProfile(user, defaultRole = null) {
     if (insertErr) {
       console.warn('[ensureUserProfile] Upsert notice:', insertErr.message);
     }
+
+    try {
+      await supabase.from('users').upsert({
+        id: user.id,
+        email: user.email || '',
+        name: fullName,
+        mobile: user.user_metadata?.mobile || null,
+        user_type: role,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (_) {}
+
     return data || newProfile;
   } catch (err) {
     console.error('[ensureUserProfile] Error:', err);
@@ -2104,7 +2190,10 @@ export function embedStoreSettings(existingMediaList, storeSettings) {
     list = existingMediaList;
   }
   const cleanMedia = (list || []).filter(
-    (m) => m && m.type !== 'store_settings' && m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0
+    (m) =>
+      m &&
+      m.type !== 'store_settings' &&
+      (m.type === 'merchant_upi' || (m.uri && typeof m.uri === 'string' && m.uri.trim().length > 0))
   );
   cleanMedia.push({
     type: 'store_settings',
@@ -2113,6 +2202,55 @@ export function embedStoreSettings(existingMediaList, storeSettings) {
     product_active: storeSettings?.is_product_active !== false,
     updated_at: new Date().toISOString(),
   });
+  return cleanMedia;
+}
+
+/**
+ * Extracts merchant UPI ID saved in media_urls array (fallback for when upi_id column is not in profiles table)
+ */
+export function extractMerchantUpi(mediaUrls) {
+  if (!mediaUrls) return '';
+  let list = [];
+  if (typeof mediaUrls === 'string') {
+    try {
+      list = JSON.parse(mediaUrls);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(mediaUrls)) {
+    list = mediaUrls;
+  }
+  const item = (list || []).find((m) => m && (m.type === 'merchant_upi' || m.type === 'upi_settings'));
+  if (item && item.upi_id && typeof item.upi_id === 'string') {
+    return item.upi_id.trim();
+  }
+  return '';
+}
+
+/**
+ * Embeds merchant UPI ID into media_urls array without losing existing photos or store settings
+ */
+export function embedMerchantUpi(existingMediaList, upiId) {
+  let list = [];
+  if (typeof existingMediaList === 'string') {
+    try {
+      list = JSON.parse(existingMediaList);
+    } catch (_) {
+      list = [];
+    }
+  } else if (Array.isArray(existingMediaList)) {
+    list = existingMediaList;
+  }
+  const cleanMedia = (list || []).filter(
+    (m) => m && m.type !== 'merchant_upi' && m.type !== 'upi_settings'
+  );
+  if (upiId && typeof upiId === 'string' && upiId.trim().length > 0) {
+    cleanMedia.push({
+      type: 'merchant_upi',
+      upi_id: upiId.trim(),
+      updated_at: new Date().toISOString(),
+    });
+  }
   return cleanMedia;
 }
 

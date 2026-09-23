@@ -28,6 +28,7 @@ import { useCart } from "../context/CartContext";
 import { showAlert } from "../utils/alertUtils";
 import { Video, ResizeMode } from "expo-av";
 import StoreNavigationFooter from "../components/StoreNavigationFooter";
+import FullScreenImageViewer from "../components/FullScreenImageViewer";
 
 const { width } = Dimensions.get("window");
 
@@ -87,6 +88,82 @@ export default function SellersMapScreen({ route }) {
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [viewerMediaItem, setViewerMediaItem] = useState(null);
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerMediaList, setViewerMediaList] = useState([]);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState("");
+
+  const handleOpenMediaViewer = useCallback((targetSeller, initialIndex = 0, title = "Store Media") => {
+    const allMedia = [];
+    let targetIdx = 0;
+
+    (sellers || []).forEach((s) => {
+      const sMedia = (s?.mediaList || []).filter((m) => m && (m.uri || m.url || m.media_url));
+      if (sMedia.length > 0) {
+        sMedia.forEach((m, mIdx) => {
+          if ((String(s.id) === String(targetSeller?.id) || s.full_name === targetSeller?.full_name) && mIdx === initialIndex) {
+            targetIdx = allMedia.length;
+          }
+          allMedia.push({
+            id: `sel-map-${s.id}-m-${mIdx}`,
+            uri: m.uri || m.url || m.media_url,
+            type: m.type || "image",
+            title: sMedia.length > 1 ? `${s.full_name} (${mIdx + 1}/${sMedia.length})` : s.full_name,
+            subtitle: s.city || s.address || null,
+          });
+        });
+      } else if (s.firstPhoto) {
+        if (String(s.id) === String(targetSeller?.id) || s.full_name === targetSeller?.full_name) {
+          targetIdx = allMedia.length;
+        }
+        allMedia.push({
+          id: `sel-map-${s.id}-photo`,
+          uri: s.firstPhoto,
+          type: "image",
+          title: s.full_name,
+          subtitle: s.city || s.address || null,
+        });
+      }
+    });
+
+    if (allMedia.length === 0 && targetSeller) {
+      if (Array.isArray(targetSeller)) {
+        targetSeller.forEach((m, idx) => {
+          allMedia.push({
+            id: `direct-${idx}`,
+            uri: m.uri || m.url || m.media_url || m,
+            type: m.type || "image",
+            title: title || "Store Media",
+          });
+        });
+      } else if (targetSeller.mediaList) {
+        targetSeller.mediaList.forEach((m, idx) => {
+          allMedia.push({
+            id: `sel-direct-${idx}`,
+            uri: m.uri || m.url || m.media_url || m,
+            type: m.type || "image",
+            title: targetSeller.full_name,
+            subtitle: targetSeller.city || targetSeller.address || null,
+          });
+        });
+      } else if (targetSeller.firstPhoto) {
+        allMedia.push({
+          id: `sel-direct-photo`,
+          uri: targetSeller.firstPhoto,
+          type: "image",
+          title: targetSeller.full_name,
+        });
+      }
+      targetIdx = Math.min(Math.max(0, initialIndex), Math.max(0, allMedia.length - 1));
+    }
+
+    if (allMedia.length > 0) {
+      setViewerMediaList(allMedia);
+      setViewerInitialIndex(targetIdx);
+      setViewerTitle(targetSeller?.full_name || title || "Store Media");
+      setViewerVisible(true);
+    }
+  }, [sellers]);
 
   // Directory visibility: Default to false (Full Map by default)
   const [showDirectory, setShowDirectory] = useState(false);
@@ -854,7 +931,7 @@ export default function SellersMapScreen({ route }) {
   const initialLon = userLocation?.longitude || (mapActiveSellers.length > 0 ? mapActiveSellers[0].longitude : DEFAULT_LON);
   const initialZoom = userLocation ? 13 : (mapActiveSellers.length > 0 ? 12 : 5);
 
-  const htmlContent = `
+  const htmlContent = useMemo(() => `
     <!DOCTYPE html>
     <html>
     <head>
@@ -1402,7 +1479,7 @@ export default function SellersMapScreen({ route }) {
         </script>
     </body>
     </html>
-  `;
+  `, [initialLat, initialLon, initialZoom, mapActiveSellers, userLocation]);
 
   const calculatedDistance =
     selectedSeller && userLocation
@@ -1429,11 +1506,16 @@ export default function SellersMapScreen({ route }) {
         <View style={styles.directoryCardHeader}>
           {/* Avatar / 1st Profile Photo */}
           {item.firstPhoto ? (
-            <Image
-              source={{ uri: item.firstPhoto }}
-              style={styles.directoryAvatarImg}
-              resizeMode="cover"
-            />
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => handleOpenMediaViewer(item, 0, item.full_name)}
+            >
+              <Image
+                source={{ uri: item.firstPhoto }}
+                style={styles.directoryAvatarImg}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
           ) : (
             <View style={styles.directoryAvatar}>
               <Text style={styles.directoryAvatarText}>{initialLetter}</Text>
@@ -1495,7 +1577,7 @@ export default function SellersMapScreen({ route }) {
                   key={`dir-thumb-${item.id}-${mIdx}`}
                   style={styles.dirMediaThumbWrap}
                   activeOpacity={0.85}
-                  onPress={() => setViewerMediaItem(media)}
+                  onPress={() => handleOpenMediaViewer(item, mIdx, item.full_name)}
                 >
                   {media.type === "video" ? (
                     <View style={styles.dirVideoThumb}>
@@ -1550,9 +1632,7 @@ export default function SellersMapScreen({ route }) {
             activeOpacity={0.8}
             onPress={() => {
               setSelectedSeller(item);
-              if (!isWideScreen) {
-                setShowDirectory(false);
-              }
+              setShowDirectory(false);
               sendMapMessage({
                 type: "SET_VIEW",
                 latitude: item.latitude,
@@ -1908,65 +1988,30 @@ export default function SellersMapScreen({ route }) {
         </View>
       )}
 
-      {/* MAIN CONTENT AREA: Full Map by default, or Side-by-Side (Desktop) / Directory View (Mobile) when opened */}
-      {isWideScreen ? (
-        showDirectory ? (
-          <View style={styles.splitMainContent}>
-            {/* Left Column (40%): Store Directory */}
-            <View style={styles.sideDirectoryPanel}>
-              <View style={styles.sideFilterHeader}>
-                <View style={styles.sideHeaderTopRow}>
-                  <Text style={styles.sideFilterTitle}>
-                    Store Directory ({displayedSellers.length})
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setShowDirectory(false)}
-                    style={styles.closeDirectoryBtn}
-                    accessibilityLabel="Close Directory"
-                  >
-                    <Icon name="times" size={15} color="#64748B" />
-                  </TouchableOpacity>
-                </View>
-                {renderFilterChips()}
-              </View>
-              {renderDirectoryList()}
+      {/* MAIN CONTENT AREA: Full Map by default, or Full Store Directory when toggled (Full Screen across all devices, never 50%/50% split) */}
+      {showDirectory ? (
+        <View style={styles.mobileDirectoryContainer}>
+          <View style={styles.sideFilterHeader}>
+            <View style={styles.sideHeaderTopRow}>
+              <Text style={styles.sideFilterTitle}>
+                Store Directory ({displayedSellers.length})
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowDirectory(false)}
+                style={styles.closeDirectoryBtn}
+                accessibilityLabel="Close Directory"
+              >
+                <Icon name="times" size={15} color="#64748B" />
+              </TouchableOpacity>
             </View>
-
-            {/* Right Column (60%): Interactive Map */}
-            <View style={styles.sideMapPanel}>
-              {renderInteractiveMap()}
-            </View>
+            {renderFilterChips()}
           </View>
-        ) : (
-          /* Wide Screen: Full Map by Default */
-          <View style={styles.fullMapPanel}>
-            {renderInteractiveMap()}
-          </View>
-        )
+          {renderDirectoryList()}
+        </View>
       ) : (
-        /* Mobile Screen: Full Map by Default, Directory when toggled */
-        showDirectory ? (
-          <View style={styles.mobileDirectoryContainer}>
-            <View style={styles.sideFilterHeader}>
-              <View style={styles.sideHeaderTopRow}>
-                <Text style={styles.sideFilterTitle}>
-                  Store Directory ({displayedSellers.length})
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setShowDirectory(false)}
-                  style={styles.closeDirectoryBtn}
-                  accessibilityLabel="Close Directory"
-                >
-                  <Icon name="times" size={15} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-              {renderFilterChips()}
-            </View>
-            {renderDirectoryList()}
-          </View>
-        ) : (
-          renderInteractiveMap()
-        )
+        <View style={styles.fullMapPanel}>
+          {renderInteractiveMap()}
+        </View>
       )}
 
       {/* 3 Horizontal Dots Menu Modal (Buyer, Seller, Delivery Portals) */}
@@ -2185,11 +2230,22 @@ export default function SellersMapScreen({ route }) {
               <View style={styles.sellerModalHeader}>
                 <View style={styles.sellerModalHeaderLeft}>
                   {selectedSeller.firstPhoto ? (
-                    <Image
-                      source={{ uri: selectedSeller.firstPhoto }}
-                      style={styles.sellerModalAvatarImg}
-                      resizeMode="cover"
-                    />
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        handleOpenMediaViewer(
+                          selectedSeller,
+                          0,
+                          selectedSeller.full_name
+                        )
+                      }
+                    >
+                      <Image
+                        source={{ uri: selectedSeller.firstPhoto }}
+                        style={styles.sellerModalAvatarImg}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
                   ) : (
                     <View style={styles.sellerModalAvatarBox}>
                       <Text style={styles.sellerModalAvatarLetter}>
@@ -2249,7 +2305,13 @@ export default function SellersMapScreen({ route }) {
                             key={`sel-media-${idx}-${media.uri}`}
                             style={styles.cardMediaThumbWrap}
                             activeOpacity={0.85}
-                            onPress={() => setViewerMediaItem(media)}
+                            onPress={() =>
+                              handleOpenMediaViewer(
+                                selectedSeller,
+                                idx,
+                                selectedSeller.full_name
+                              )
+                            }
                           >
                             {media.type === "video" ? (
                               <View style={styles.cardVideoThumbBox}>
@@ -2344,41 +2406,14 @@ export default function SellersMapScreen({ route }) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Fullscreen Media Viewer Modal for Store Images & Videos */}
-      <Modal
-        visible={!!viewerMediaItem}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setViewerMediaItem(null)}
-      >
-        <View style={styles.viewerModalContainer}>
-          <TouchableOpacity
-            style={styles.viewerCloseBtn}
-            onPress={() => setViewerMediaItem(null)}
-          >
-            <Text style={styles.viewerCloseBtnText}>✕ Close</Text>
-          </TouchableOpacity>
-          {viewerMediaItem && (
-            <View style={styles.viewerMediaBox}>
-              {viewerMediaItem.type === "video" ? (
-                <Video
-                  source={{ uri: viewerMediaItem.uri }}
-                  style={styles.viewerFullVideo}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  shouldPlay={true}
-                />
-              ) : (
-                <Image
-                  source={{ uri: viewerMediaItem.uri }}
-                  style={styles.viewerFullImage}
-                  resizeMode="contain"
-                />
-              )}
-            </View>
-          )}
-        </View>
-      </Modal>
+      {/* Fullscreen Media Viewer with Horizontal Swipe/Scroll & Thumbnails */}
+      <FullScreenImageViewer
+        visible={viewerVisible}
+        mediaList={viewerMediaList}
+        initialIndex={viewerInitialIndex}
+        onClose={() => setViewerVisible(false)}
+        title={viewerTitle || "Store Media"}
+      />
 
       {/* Persistent Bottom Navigation Footer */}
       <StoreNavigationFooter
@@ -2401,6 +2436,7 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "100%",
     backgroundColor: "#F8FAFC",
+    ...(Platform.OS === "web" ? { minHeight: "100vh", width: "100%" } : {}),
   },
   fullMapPanel: {
     flex: 1,
@@ -2411,26 +2447,7 @@ const styles = StyleSheet.create({
   mobileDirectoryContainer: {
     flex: 1,
     width: "100%",
-    backgroundColor: "#F8FAFC",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    minHeight: 0,
-  },
-  splitMainContent: {
-    flex: 1,
-    width: "100%",
-    flexDirection: "row",
-    overflow: "hidden",
-    minHeight: 0,
-  },
-  sideDirectoryPanel: {
-    width: "40%",
-    minWidth: 360,
-    maxWidth: 500,
     height: "100%",
-    borderRightWidth: 1,
-    borderRightColor: "#E2E8F0",
     backgroundColor: "#F8FAFC",
     display: "flex",
     flexDirection: "column",
@@ -2440,12 +2457,6 @@ const styles = StyleSheet.create({
   directoryFlatList: {
     flex: 1,
     width: "100%",
-  },
-  sideMapPanel: {
-    flex: 1,
-    height: "100%",
-    position: "relative",
-    backgroundColor: "#E2E8F0",
   },
   sideFilterHeader: {
     paddingHorizontal: 16,
@@ -2751,9 +2762,13 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     position: "relative",
+    width: "100%",
+    height: "100%",
   },
   webview: {
     flex: 1,
+    width: "100%",
+    height: "100%",
   },
   mapLoadingBadge: {
     position: "absolute",

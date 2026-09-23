@@ -112,6 +112,8 @@ const UniversalWebView = React.forwardRef(({ source, onMessage, style, ...props 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: '100%',
+    height: '100%',
     overflow: 'hidden',
   },
 });

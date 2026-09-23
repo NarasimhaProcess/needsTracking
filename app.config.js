@@ -65,7 +65,7 @@ export default {
       "orientation": "portrait"
     },
     "experiments": {
-      "baseUrl": "/needsTracking/"
+      "baseUrl": "/needsTracking"
     },
     "plugins": [
       [

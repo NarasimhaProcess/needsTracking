@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase, signInWithGoogle, getAuthRedirectUrl } from '../services/supabase';
+import { getPreferredStore } from '../services/localStorageService';
 import { StackActions } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
@@ -22,17 +23,41 @@ export default function LoginScreen({ navigation, route }) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [preferredStore, setPreferredStoreState] = useState(null);
   const onAuthSuccess = route.params?.onAuthSuccess;
+
+  React.useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const pref = await getPreferredStore();
+        if (isMounted && pref?.sellerId) {
+          setPreferredStoreState(pref);
+        }
+      } catch (_) {}
+    })();
+    return () => { isMounted = false; };
+  }, []);
+
+  const navigateAfterAuth = (user, session) => {
+    if (onAuthSuccess) {
+      try { onAuthSuccess(user); } catch (e) {}
+    }
+    const targetSellerId = preferredStore?.sellerId || route.params?.sellerId;
+    const targetSellerName = preferredStore?.sellerName || route.params?.sellerName;
+    if (targetSellerId) {
+      navigation.navigate('Catalog', { sellerId: targetSellerId, sellerName: targetSellerName });
+    } else {
+      navigation.dispatch(StackActions.replace('ProductTabs', { session, user }));
+    }
+  };
 
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     try {
       const res = await signInWithGoogle('customer');
       if (res.success && res.user) {
-        if (onAuthSuccess) {
-          onAuthSuccess(res.user);
-        }
-        navigation.dispatch(StackActions.replace('ProductTabs', { session: res.session, user: res.user }));
+        navigateAfterAuth(res.user, res.session);
       } else if (res.error) {
         Alert.alert('Google Sign-In Failed', res.error);
       }
@@ -61,12 +86,7 @@ export default function LoginScreen({ navigation, route }) {
         Alert.alert('Login Error', error.message);
       } else {
         console.log('Login successful:', data.user);
-
-        if (onAuthSuccess) {
-          onAuthSuccess(data.user);
-        }
-
-        navigation.dispatch(StackActions.replace('ProductTabs', { session: data.session, user: data.user }));
+        navigateAfterAuth(data.user, data.session);
       }
     } catch (error) {
       Alert.alert('Error', 'An unexpected error occurred');
@@ -75,6 +95,7 @@ export default function LoginScreen({ navigation, route }) {
       setLoading(false);
     }
   };
+
 
   const handleForgotPassword = () => {
     if (!email) {
@@ -106,7 +127,20 @@ export default function LoginScreen({ navigation, route }) {
         <View style={styles.header}>
           <Text style={styles.icon}>📍</Text>
           <Text style={styles.title}>{Constants?.expoConfig?.extra?.ORG_NAME || process.env.EXPO_PUBLIC_ORG_NAME || 'NeedsTracker'}</Text>
-          <Text style={styles.subtitle}>Sign in to track your location</Text>
+          <Text style={styles.subtitle}>Sign in to track your location & orders</Text>
+          {preferredStore?.sellerId && (
+            <View style={styles.storeLoginBanner}>
+              <View style={styles.storeLoginIconBox}>
+                <FontAwesome name="shopping-bag" size={15} color="#007AFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.storeLoginSub}>Shopping At Store</Text>
+                <Text style={styles.storeLoginTitle} numberOfLines={1}>
+                  {preferredStore.sellerName || 'Individual Store'}
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
 
         <View style={styles.form}>
@@ -330,5 +364,39 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: 12,
     color: '#8E8E93',
+  },
+  storeLoginBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 14,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    gap: 10,
+    width: '100%',
+  },
+  storeLoginIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeLoginSub: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0284C7',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  storeLoginTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 1,
   },
 });

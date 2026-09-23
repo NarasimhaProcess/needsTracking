@@ -75,16 +75,80 @@ const OrderConfirmationScreen = ({ navigation, route }) => {
             </View>
           ) : null}
 
+          {(() => {
+            const confirmationBilling = order?.billing || (typeof order?.shipping_address === 'object' ? order.shipping_address?.billing : null);
+            const confSubtotal = Number(order?.subtotal || confirmationBilling?.subtotal || 0);
+            const confCgst = Number(order?.cgst_amount || confirmationBilling?.cgst_amount || 0);
+            const confSgst = Number(order?.sgst_amount || confirmationBilling?.sgst_amount || 0);
+            const confService = Number(order?.service_cost || confirmationBilling?.service_cost || 0);
+            const confCgstRate = order?.cgst_rate !== undefined ? order.cgst_rate : (confirmationBilling?.cgst_rate || 2.5);
+            const confSgstRate = order?.sgst_rate !== undefined ? order.sgst_rate : (confirmationBilling?.sgst_rate || 2.5);
+            const confServiceRate = order?.service_cost_rate !== undefined ? order.service_cost_rate : (confirmationBilling?.service_cost_rate || 0);
+            const hasConfBreakdown = confCgst > 0 || confSgst > 0 || confService > 0;
+
+            if (!hasConfBreakdown) return null;
+
+            return (
+              <View style={{ width: '100%', marginVertical: 8, paddingHorizontal: 4, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+                {confSubtotal > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#64748B' }}>Items Subtotal</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>₹{confSubtotal.toFixed(2)}</Text>
+                  </View>
+                )}
+                {confCgst > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#64748B' }}>CGST ({confCgstRate}%)</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{confCgst.toFixed(2)}</Text>
+                  </View>
+                )}
+                {confSgst > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#64748B' }}>SGST ({confSgstRate}%)</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{confSgst.toFixed(2)}</Text>
+                  </View>
+                )}
+                {confService > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#64748B' }}>Service Charge ({confServiceRate}%)</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{confService.toFixed(2)}</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })()}
+
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total Paid / Due:</Text>
             <Text style={styles.totalAmount}>₹{Number(order?.total_amount || 0).toFixed(2)}</Text>
           </View>
 
           {order?.payment_method && (
-            <Text style={styles.paymentMethod}>
+            <Text style={[styles.paymentMethod, { marginBottom: 8 }]}>
               Payment: {order.payment_method.toUpperCase()}
             </Text>
           )}
+
+          {(() => {
+            const payRef = order?.payment_reference ||
+              route?.params?.paymentReference ||
+              (typeof order?.shipping_address === 'object' ? order?.shipping_address?.payment_reference : null) ||
+              (typeof order?.shipping_address === 'object' ? order?.shipping_address?.billing?.payment_reference : null) ||
+              order?.shipping_address?.payment_note;
+            if (!payRef) return null;
+            return (
+              <View style={styles.paymentRefBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                  <Icon name="tag" size={13} color="#4F46E5" style={{ marginRight: 6 }} />
+                  <Text style={styles.paymentRefBoxLabel}>UPI / Payment Reference Code:</Text>
+                </View>
+                <Text style={styles.paymentRefBoxVal}>{payRef}</Text>
+                <Text style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>
+                  Keep this 6-digit code to easily verify payment in your bank or UPI statement.
+                </Text>
+              </View>
+            );
+          })()}
 
           <View style={styles.printActionRow}>
             <TouchableOpacity
@@ -299,6 +363,29 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '600',
     marginBottom: 20,
+  },
+  paymentRefBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  paymentRefBoxLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    marginRight: 6,
+  },
+  paymentRefBoxVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#007AFF',
+    letterSpacing: 0.5,
   },
   printActionRow: {
     flexDirection: 'row',

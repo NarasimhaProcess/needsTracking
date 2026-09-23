@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,24 +18,49 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import { Picker } from '@react-native-picker/picker';
 import * as Clipboard from 'expo-clipboard';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import LeafletMap from '../components/LeafletMap';
 import {
   supabase,
   getCart,
   getActiveQrCode,
+  updateQrCode,
   getUserAddresses,
   addUserAddress,
   deleteUserAddress,
+  extractMerchantUpi,
 } from '../services/supabase';
-import { getGuestCart, clearGuestCart } from '../services/localStorageService';
+import { getGuestCart, clearGuestCart, getPreferredStore, saveGuestOrderId } from '../services/localStorageService';
 import { schedulePushNotification } from '../services/notificationService';
 import { showAlert } from '../utils/alertUtils';
+import { getPrinterConfig } from '../services/printerService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import {
+  decodeQrFromImage,
+  generateQrDataUrl,
+  buildUpiPaymentUri,
+  buildAndroidIntentUri,
+  buildUpiAppLinks,
+  openUpiAppIntent,
+  parseUpiString,
+  normalizeUpiId,
+  isGenericQrName,
+} from '../services/qrScanService';
 
 const CheckoutScreen = ({ navigation, route }) => {
   const { cart: initialCart, customerId } = route?.params || {};
   const [cart, setCart] = useState(initialCart || null);
+
+  useEffect(() => {
+    if (route?.params?.cart) {
+      setCart(route.params.cart);
+    }
+  }, [route?.params?.cart]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [isQrViewerVisible, setIsQrViewerVisible] = useState(false);
+  const [qrViewerMedia, setQrViewerMedia] = useState([]);
+  const [qrViewerIndex, setQrViewerIndex] = useState(0);
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
   const [address, setAddress] = useState('');
@@ -76,15 +101,29 @@ const CheckoutScreen = ({ navigation, route }) => {
   const [verifyingEmailOtp, setVerifyingEmailOtp] = useState(false);
   const [isMobileVerified, setIsMobileVerified] = useState(false);
 
-  // UPI QR Code State
+  // UPI QR Code State (strictly from seller profile)
   const [sellerQr, setSellerQr] = useState(null);
   const [sellerProfile, setSellerProfile] = useState(null);
   const [sellerUpiId, setSellerUpiId] = useState('');
+  const [sellerRawUpiText, setSellerRawUpiText] = useState('');
   const [loadingSellerQr, setLoadingSellerQr] = useState(false);
-  const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' (with bill amount) | 'profile' (uploaded QR)
+  // 6-digit unique payment transaction reference (strictly digits, easy to identify in UPI statements)
+  const [uniquePaymentCode, setUniquePaymentCode] = useState(() =>
+    Math.floor(100000 + Math.random() * 900000).toString()
+  );
+  const [dynamicQrDataUrl, setDynamicQrDataUrl] = useState(null);
+  const [qrTab, setQrTab] = useState('dynamic'); // 'dynamic' | 'profile'
+  const [qrImageLoading, setQrImageLoading] = useState(false);
+  const [qrImageError, setQrImageError] = useState(false);
+  const [isScanningProfileQr, setIsScanningProfileQr] = useState(false);
   const [copiedUpi, setCopiedUpi] = useState(false);
-  const [customUpiId, setCustomUpiId] = useState('');
-  const [showEditUpi, setShowEditUpi] = useState(false);
+  const [sellerTaxConfig, setSellerTaxConfig] = useState(null);
+
+  // Order Type Modal State (Prompted when user clicks Pay with UPI)
+  const [showOrderTypeModal, setShowOrderTypeModal] = useState(false);
+  const [orderTypeModalAction, setOrderTypeModalAction] = useState('select_upi'); // 'select_upi' | 'place_order'
+  const [orderTypeConfirmed, setOrderTypeConfirmed] = useState(false);
+
 
   const normalizeGuestCart = (guestCartData) => ({
     cart_items: (guestCartData || []).map((item) => {
@@ -124,6 +163,22 @@ const CheckoutScreen = ({ navigation, route }) => {
           .eq('id', user.id)
           .maybeSingle();
 
+        // Check persistent local storage and user metadata for verification
+        let isPersistentlyVerified = false;
+        try {
+          const localVerified = await AsyncStorage.getItem(`@checkout_verified_${user.id}`);
+          if (localVerified === 'true') {
+            isPersistentlyVerified = true;
+          }
+        } catch (_) {}
+
+        const isAccountVerified =
+          isPersistentlyVerified ||
+          Boolean(user.email_confirmed_at) ||
+          Boolean(user.confirmed_at) ||
+          user.user_metadata?.email_verified === true ||
+          user.user_metadata?.mobile_verified === true;
+
         if (profileData) {
           setProfile(profileData);
           if (profileData.mobile) {
@@ -143,6 +198,10 @@ const CheckoutScreen = ({ navigation, route }) => {
             setSelectedCoords(profCoords);
             setMapInitialRegion(profCoords);
           }
+        }
+
+        if (isAccountVerified || profileData?.mobile) {
+          setIsMobileVerified(true);
         }
 
         // Fetch multiple addresses for this buyer
@@ -224,7 +283,7 @@ const CheckoutScreen = ({ navigation, route }) => {
   }, [name, mobile, address, city, postalCode, country, selectedCoords]);
 
   const cartItems = cart?.cart_items || [];
-  const totalAmount = cartItems.reduce(
+  const subtotal = cartItems.reduce(
     (total, item) =>
       total +
       (Number(item?.product_variant_combinations?.price || item?.price || 0) *
@@ -232,87 +291,374 @@ const CheckoutScreen = ({ navigation, route }) => {
     0
   );
 
+  const isTaxEnabled = sellerTaxConfig?.enableTax === true;
+  const isServiceCostEnabled = sellerTaxConfig?.enableServiceCost === true;
+
+  const cgstRate = isTaxEnabled ? Number(sellerTaxConfig?.cgstRate !== undefined ? sellerTaxConfig.cgstRate : 2.5) : 0;
+  const sgstRate = isTaxEnabled ? Number(sellerTaxConfig?.sgstRate !== undefined ? sellerTaxConfig.sgstRate : 2.5) : 0;
+  const serviceCostRate = isServiceCostEnabled ? Number(sellerTaxConfig?.serviceCostRate !== undefined ? sellerTaxConfig.serviceCostRate : 0) : 0;
+
+  const cgstAmount = isTaxEnabled && subtotal > 0 ? Math.round(subtotal * (cgstRate / 100) * 100) / 100 : 0;
+  const sgstAmount = isTaxEnabled && subtotal > 0 ? Math.round(subtotal * (sgstRate / 100) * 100) / 100 : 0;
+  const serviceCost = isServiceCostEnabled && subtotal > 0 && serviceCostRate > 0 ? Math.round(subtotal * (serviceCostRate / 100) * 100) / 100 : 0;
+
+  const totalAmount = subtotal + cgstAmount + sgstAmount + serviceCost;
+
   const tableOptions = ['Main counter', ...Array.from({ length: 10 }, (_, i) => (i + 1).toString())];
 
-  // Fetch Seller QR Code & UPI Information whenever cart or paymentMethod changes
+  useEffect(() => {
+    getPrinterConfig()
+      .then((cfg) => {
+        if (cfg) {
+          setSellerTaxConfig({
+            enableTax: Boolean(cfg.enableTax),
+            cgstRate: cfg.cgstRate !== undefined ? Number(cfg.cgstRate) : 2.5,
+            sgstRate: cfg.sgstRate !== undefined ? Number(cfg.sgstRate) : 2.5,
+            enableServiceCost: Boolean(cfg.enableServiceCost),
+            serviceCostRate: cfg.serviceCostRate !== undefined ? Number(cfg.serviceCostRate) : 0,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch Seller QR Code & UPI Information whenever cart, seller or mount changes
   const fetchSellerUpiInfo = useCallback(async () => {
     try {
       setLoadingSellerQr(true);
-      // Determine primary seller ID from cart items
-      let targetSellerId = customerId || null;
+      // Determine primary seller ID from route, params, cart, preferred store or seller profile
+      let targetSellerId = route?.params?.sellerId || customerId || null;
       if (!targetSellerId && cart?.cart_items && cart.cart_items.length > 0) {
         const prod = cart.cart_items[0]?.product_variant_combinations?.products;
         targetSellerId = prod?.user_id || prod?.customer_id || null;
+      }
+      if (!targetSellerId) {
+        try {
+          const pref = await getPreferredStore();
+          if (pref?.sellerId) {
+            targetSellerId = pref.sellerId;
+          }
+        } catch (_) {}
       }
       if (!targetSellerId && profile?.role === 'seller' && currentUser?.id) {
         targetSellerId = currentUser.id;
       }
 
-      if (targetSellerId) {
-        const qrData = await getActiveQrCode(targetSellerId);
-        if (qrData) {
-          setSellerQr(qrData);
-          if (qrData.name && qrData.name.includes('@')) {
-            setSellerUpiId(qrData.name);
-          }
-        }
+      let configuredUpiId = '';
+      let configuredQr = null;
 
-        const { data: profData } = await supabase
-          .from('profiles')
-          .select('id, full_name, mobile, email, media_urls')
-          .eq('id', targetSellerId)
-          .maybeSingle();
+      if (targetSellerId) {
+        // 1. Primary source of truth: Seller's profile in 'profiles' table
+        let profData = null;
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, mobile, email, media_urls, upi_id')
+            .eq('id', targetSellerId)
+            .maybeSingle();
+
+          if (data) {
+            profData = data;
+          } else if (error && error.message?.includes('upi_id')) {
+            const { data: fallbackData } = await supabase
+              .from('profiles')
+              .select('id, full_name, mobile, email, media_urls')
+              .eq('id', targetSellerId)
+              .maybeSingle();
+            profData = fallbackData;
+          }
+        } catch (e) {
+          console.warn('Notice fetching seller profile in checkout:', e);
+        }
 
         if (profData) {
           setSellerProfile(profData);
-          if (!sellerUpiId && profData.mobile) {
-            setSellerUpiId(`${profData.mobile}@upi`);
+          const profUpi =
+            normalizeUpiId(profData.upi_id) ||
+            normalizeUpiId(extractMerchantUpi(profData.media_urls));
+          if (profUpi && !isGenericQrName(profUpi)) {
+            configuredUpiId = profUpi;
+          }
+        }
+
+        // 2. Active QR code record from 'user_qr_codes'
+        const qrData = await getActiveQrCode(targetSellerId);
+        if (qrData) {
+          configuredQr = qrData;
+          setSellerQr(qrData);
+          if (!configuredUpiId && qrData.name && !isGenericQrName(qrData.name)) {
+            const normQr = normalizeUpiId(qrData.name);
+            if (normQr && !isGenericQrName(normQr)) {
+              configuredUpiId = normQr;
+            }
+          }
+        }
+
+        // 3. Scan QR image if UPI ID is not yet resolved
+        const profileQrUrl = configuredQr?.qr_image_url || configuredQr?.qr_code_url;
+        if (!configuredUpiId && profileQrUrl) {
+          try {
+            setIsScanningProfileQr(true);
+            const scan = await decodeQrFromImage(profileQrUrl);
+            if (scan?.success) {
+              if (scan.rawText) {
+                setSellerRawUpiText(scan.rawText);
+              }
+              if (scan.upiId) {
+                const scannedUpi = normalizeUpiId(scan.upiId);
+                if (scannedUpi && !isGenericQrName(scannedUpi)) {
+                  configuredUpiId = scannedUpi;
+                }
+              }
+              if (scan.payeeName && !profData?.full_name) {
+                setSellerProfile((prev) => ({ ...(prev || {}), full_name: scan.payeeName }));
+              }
+            }
+          } catch (scanErr) {
+            console.warn('Notice scanning profile QR in checkout:', scanErr);
+          } finally {
+            setIsScanningProfileQr(false);
           }
         }
       } else if (currentUser?.id) {
-        const qrData = await getActiveQrCode(currentUser.id);
-        if (qrData) {
-          setSellerQr(qrData);
-          if (qrData.name && qrData.name.includes('@')) {
-            setSellerUpiId(qrData.name);
+        let userProf = null;
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, mobile, email, media_urls, upi_id')
+            .eq('id', currentUser.id)
+            .maybeSingle();
+          if (data) {
+            userProf = data;
+          } else if (error && error.message?.includes('upi_id')) {
+            const { data: fallbackData } = await supabase
+              .from('profiles')
+              .select('id, full_name, mobile, email, media_urls')
+              .eq('id', currentUser.id)
+              .maybeSingle();
+            userProf = fallbackData;
+          }
+        } catch (_) {}
+
+        if (userProf) {
+          setSellerProfile(userProf);
+          const profUpi =
+            normalizeUpiId(userProf.upi_id) ||
+            normalizeUpiId(extractMerchantUpi(userProf.media_urls));
+          if (profUpi && !isGenericQrName(profUpi)) {
+            configuredUpiId = profUpi;
           }
         }
+
+        if (!configuredUpiId && currentUser.user_metadata?.upi_id) {
+          const metaUpi = normalizeUpiId(currentUser.user_metadata.upi_id);
+          if (metaUpi && !isGenericQrName(metaUpi)) {
+            configuredUpiId = metaUpi;
+          }
+        }
+
+        const qrData = await getActiveQrCode(currentUser.id);
+        if (qrData) {
+          configuredQr = qrData;
+          setSellerQr(qrData);
+          if (!configuredUpiId && qrData.name && !isGenericQrName(qrData.name)) {
+            const normQr = normalizeUpiId(qrData.name);
+            if (normQr && !isGenericQrName(normQr)) {
+              configuredUpiId = normQr;
+            }
+          }
+        }
+      }
+
+      setSellerUpiId(configuredUpiId);
+
+      const hasUpi = Boolean(
+        configuredUpiId ||
+        (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url || configuredQr.name))
+      );
+
+      // Prioritize dynamic bill QR if UPI ID is configured, otherwise show uploaded standee
+      if (configuredUpiId) {
+        setQrTab('dynamic');
+      } else if (configuredQr && (configuredQr.qr_image_url || configuredQr.qr_code_url)) {
+        setQrTab('profile');
+      } else {
+        setQrTab('dynamic');
+      }
+
+      // If seller has not configured UPI, lock payment method to 'cod'
+      if (!hasUpi) {
+        setPaymentMethod('cod');
+      } else {
+        setPaymentMethod((prev) => prev || 'upi');
       }
     } catch (err) {
       console.warn('Error fetching seller UPI info:', err);
     } finally {
       setLoadingSellerQr(false);
     }
-  }, [cart, customerId, profile, currentUser, sellerUpiId]);
+  }, [cart, customerId, profile, currentUser]);
 
   useEffect(() => {
-    if (paymentMethod === 'upi') {
-      fetchSellerUpiInfo();
-    }
-  }, [paymentMethod, fetchSellerUpiInfo]);
+    fetchSellerUpiInfo();
+  }, [fetchSellerUpiInfo]);
 
-  // Derive active UPI parameters
+  // Derive active UPI parameters strictly from seller profile
   const activeUpiId =
-    customUpiId.trim() ||
-    sellerUpiId.trim() ||
-    (sellerProfile?.mobile ? `${sellerProfile.mobile}@upi` : '') ||
-    (profile?.mobile ? `${profile.mobile}@upi` : 'store@okaxis');
+    (sellerUpiId && !isGenericQrName(sellerUpiId) ? normalizeUpiId(sellerUpiId) : '') ||
+    (sellerProfile?.upi_id && !isGenericQrName(sellerProfile.upi_id) ? normalizeUpiId(sellerProfile.upi_id) : '') ||
+    normalizeUpiId(extractMerchantUpi(sellerProfile?.media_urls)) ||
+    (profile?.upi_id && !isGenericQrName(profile.upi_id) ? normalizeUpiId(profile.upi_id) : '') ||
+    normalizeUpiId(extractMerchantUpi(profile?.media_urls)) ||
+    (currentUser?.user_metadata?.upi_id && !isGenericQrName(currentUser.user_metadata.upi_id) ? normalizeUpiId(currentUser.user_metadata.upi_id) : '') ||
+    '';
+
+  const isUpiConfigured = Boolean(
+    activeUpiId ||
+    (sellerQr && (sellerQr.qr_image_url || sellerQr.qr_code_url || sellerQr.name))
+  );
 
   const payeeName =
+    route?.params?.sellerName ||
+    sellerProfile?.store_name ||
     sellerProfile?.full_name ||
+    sellerProfile?.name ||
+    profile?.store_name ||
     profile?.full_name ||
-    'Store Merchant';
+    '';
 
-  const orderNote = `Bill #${(cart?.id || 'Order').toString().slice(-6)}`;
+  // Alphanumeric with spaces only - strictly NO '#' character so UPI apps (GPay, PhonePe, Paytm) never fail
+  const cleanCartRef = (cart?.id || '').toString().replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
+  const orderNote = cleanCartRef
+    ? `Order ${cleanCartRef} ${uniquePaymentCode}`
+    : `Order ${uniquePaymentCode}`;
 
   // Official UPI Payment URI format (supported across all Indian UPI apps)
-  const dynamicUpiUri = `upi://pay?pa=${encodeURIComponent(activeUpiId)}&pn=${encodeURIComponent(payeeName)}&am=${totalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(orderNote)}`;
+  const dynamicUpiUri = activeUpiId
+    ? buildUpiPaymentUri({
+        upiId: activeUpiId,
+        payeeName,
+        amount: totalAmount,
+        note: orderNote,
+        rawText: sellerRawUpiText,
+        tr: uniquePaymentCode,
+      })
+    : '';
 
-  // Dynamic QR Code image incorporating exact order bill amount
-  const dynamicQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`;
+  // Local instant high-resolution QR code generator (no external API delay)
+  useEffect(() => {
+    let isMounted = true;
+    if (dynamicUpiUri) {
+      generateQrDataUrl(dynamicUpiUri, { width: 350, margin: 2 }).then((dataUrl) => {
+        if (isMounted && dataUrl) {
+          setDynamicQrDataUrl(dataUrl);
+          setQrImageError(false);
+        }
+      }).catch(() => {});
+    } else {
+      setDynamicQrDataUrl(null);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [dynamicUpiUri]);
+
+  // Fallback web QR Code image URL
+  const fallbackDynamicQrUrl = dynamicUpiUri
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(dynamicUpiUri)}`
+    : null;
+
+  // Available UPI App Intent links (Google Pay, PhonePe, Paytm, BHIM, All Apps)
+  const upiAppList = useMemo(() => {
+    return buildUpiAppLinks({
+      upiId: activeUpiId || sellerUpiId,
+      payeeName,
+      amount: totalAmount,
+      note: orderNote,
+      rawText: sellerRawUpiText,
+      tr: uniquePaymentCode,
+    });
+  }, [activeUpiId, sellerUpiId, payeeName, totalAmount, orderNote, sellerRawUpiText, uniquePaymentCode]);
+
+  const getAppWebHref = (app) => {
+    if (!app || Platform.OS !== 'web' || typeof navigator === 'undefined') return undefined;
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) {
+      return app.androidIntent;
+    }
+    if (/iPhone|iPad|iPod/i.test(ua)) {
+      return app.iosUri || app.standardUri;
+    }
+    return app.standardUri;
+  };
 
   // Profile-uploaded QR image URL (from user_qr_codes table)
-  const profileQrImageUrl = sellerQr?.qr_image_url || null;
+  const profileQrImageUrl = sellerQr?.qr_image_url || sellerQr?.qr_code_url || null;
+
+  // Unified QR code image URL to display: If qrTab is 'profile' and profileQrImageUrl exists, use it. Otherwise use dynamic QR with exact order bill amount.
+  const displayedQrUri =
+    qrTab === 'profile' && profileQrImageUrl
+      ? profileQrImageUrl
+      : (dynamicQrDataUrl || fallbackDynamicQrUrl || profileQrImageUrl);
+
+  // Prompt Order Type when Pay with UPI is clicked
+  const handlePayWithUpiPress = (action = 'select_upi') => {
+    if (!isUpiConfigured) {
+      showAlert(
+        'UPI Not Configured',
+        'Store seller has not configured UPI details. Please choose Cash on Delivery / Counter.'
+      );
+      setPaymentMethod('cod');
+      return;
+    }
+    setOrderTypeModalAction(action);
+    setShowOrderTypeModal(true);
+  };
+
+  const handleSelectDineIn = () => {
+    setOrderType('Dine-in');
+    setOrderTypeConfirmed(true);
+    setPaymentMethod('upi');
+    setShowOrderTypeModal(false);
+    if (orderTypeModalAction === 'place_order') {
+      handlePlaceOrder({ forcedOrderType: 'Dine-in', forcedPaymentMethod: 'upi' });
+    }
+  };
+
+  const handleSelectParcel = () => {
+    setOrderType('Parcel');
+    setOrderTypeConfirmed(true);
+    setPaymentMethod('upi');
+    setShowOrderTypeModal(false);
+    if (!currentUser) {
+      showAlert(
+        'Sign In Required for Parcel Order',
+        'Parcel orders require delivery & contact details. Please sign in or create an account to proceed.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign In / Sign Up',
+            onPress: () =>
+              navigation.navigate('BuyerLogin', {
+                redirectTo: 'Checkout',
+                redirectParams: { cart, customerId },
+              }),
+          },
+        ]
+      );
+      return;
+    }
+
+    if (!mobile.trim() || !address.trim()) {
+      showAlert(
+        'Delivery Address Required',
+        'Please enter your 10-digit mobile number and delivery address below for your parcel order.'
+      );
+    } else if (orderTypeModalAction === 'place_order') {
+      handlePlaceOrder({ forcedOrderType: 'Parcel', forcedPaymentMethod: 'upi' });
+    }
+  };
+
 
   const handleCopyUpiId = async () => {
     try {
@@ -326,13 +672,67 @@ const CheckoutScreen = ({ navigation, route }) => {
     } catch (_) {}
   };
 
-  const handleOpenDirectUpiPay = () => {
-    Linking.openURL(dynamicUpiUri).catch(() => {
+  const handleOpenDirectUpiPay = async (appId = 'any') => {
+    let resolvedUpi = activeUpiId || sellerUpiId;
+
+    // If still missing, try decoding profile QR image immediately
+    if (!resolvedUpi && profileQrImageUrl) {
+      try {
+        const scan = await decodeQrFromImage(profileQrImageUrl);
+        if (scan?.success && scan.upiId) {
+          resolvedUpi = scan.upiId;
+          setSellerUpiId(scan.upiId);
+        }
+      } catch (_) {}
+    }
+
+    // Check if on Desktop Web browser where UPI handler apps don't exist
+    const isDesktopWeb =
+      Platform.OS === 'web' &&
+      typeof navigator !== 'undefined' &&
+      !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    if (isDesktopWeb) {
+      if (resolvedUpi) {
+        handleCopyUpiId();
+      }
       showAlert(
-        'UPI App Not Found',
-        `Could not launch a UPI app automatically. Please scan the QR Code on screen using Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+        'Scan QR Code with Phone',
+        `UPI payment apps (Google Pay, PhonePe, Paytm) run on mobile devices.\n\n` +
+        `1. Scan the QR code displayed on screen using your mobile phone's camera or UPI app.\n` +
+        (resolvedUpi ? `2. Or pay ₹${totalAmount.toFixed(2)} directly to UPI ID: ${resolvedUpi} (copied to clipboard!).` : '')
       );
+      return;
+    }
+
+    if (!resolvedUpi && !profileQrImageUrl) {
+      showAlert(
+        'Scan Store QR Code',
+        `Please scan the Seller's QR code displayed on screen with Google Pay, PhonePe, Paytm, or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+      );
+      return;
+    }
+
+    const launchResult = await openUpiAppIntent({
+      appId,
+      upiId: resolvedUpi,
+      payeeName,
+      amount: totalAmount,
+      note: orderNote,
+      rawText: sellerRawUpiText,
+      tr: uniquePaymentCode,
+      LinkingInstance: Linking,
     });
+
+    if (!launchResult?.success) {
+      if (resolvedUpi) {
+        handleCopyUpiId();
+      }
+      showAlert(
+        'Open UPI App',
+        `Could not open ${launchResult?.app?.name || 'UPI app'} directly. Please scan the QR code on screen using Google Pay, PhonePe, or Paytm, or pay to:\n\n${resolvedUpi || 'Merchant'}\n(Copied to clipboard!)`
+      );
+    }
   };
 
   // Handle Address selection
@@ -612,6 +1012,27 @@ const CheckoutScreen = ({ navigation, route }) => {
       if (verifyError) throw verifyError;
 
       const cleanMobile = mobile.trim().replace(/[\s\-()]/g, '').slice(-10);
+
+      // 1. Permanently remember on this device so user is never asked again
+      try {
+        await AsyncStorage.setItem(`@checkout_verified_${user.id}`, 'true');
+        if (cleanMobile) {
+          await AsyncStorage.setItem(`@checkout_verified_mobile_${user.id}`, cleanMobile);
+        }
+      } catch (storageErr) {
+        console.warn('AsyncStorage verification persist notice:', storageErr);
+      }
+
+      // 2. Persist to auth user_metadata
+      await supabase.auth.updateUser({
+        data: {
+          mobile: cleanMobile,
+          mobile_verified: true,
+          email_verified: true,
+        },
+      }).catch(() => {});
+
+      // 3. Persist to profiles table
       const { error: profError } = await supabase
         .from('profiles')
         .update({
@@ -624,16 +1045,12 @@ const CheckoutScreen = ({ navigation, route }) => {
         console.warn('Profile update notice:', profError);
       }
 
-      await supabase.auth.updateUser({
-        data: { mobile: cleanMobile },
-      }).catch(() => {});
-
       setIsMobileVerified(true);
       setShowOtpModal(false);
       setOtpCode('');
       setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile }));
 
-      showAlert('✅ Verified', 'Your mobile number has been verified and updated in your profile!');
+      showAlert('✅ Verified', 'Your contact details have been verified! You will not be asked again.');
     } catch (err) {
       showAlert('Verification Failed', err.message || 'Invalid or expired code. Please try again.');
     } finally {
@@ -641,96 +1058,139 @@ const CheckoutScreen = ({ navigation, route }) => {
     }
   };
 
-  const handlePlaceOrder = async () => {
-    if (!paymentMethod) {
+  const handlePlaceOrder = async (overrideOpts = {}) => {
+    const activeMethod = overrideOpts?.forcedPaymentMethod || paymentMethod;
+    const activeType = overrideOpts?.forcedOrderType || orderType;
+    const isDineIn = activeType === 'Dine-in';
+
+    if (!activeMethod) {
       showAlert('Payment Method', 'Please select a payment method.');
       return;
     }
 
-    setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    const orderUserId = user?.id;
-
-    if (!orderUserId) {
-      setLoading(false);
+    if (activeMethod === 'upi' && !isUpiConfigured) {
       showAlert(
-        'Sign In Required',
-        'Please sign in or create an account to place your order.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Sign In / Sign Up',
-            onPress: () =>
-              navigation.navigate('BuyerLogin', {
-                redirectTo: 'Checkout',
-                redirectParams: { cart, customerId },
-              }),
-          },
-        ]
+        'UPI Not Configured',
+        'Store seller has not configured UPI payment details. Please proceed with Cash payment.'
       );
+      setPaymentMethod('cod');
       return;
     }
 
-    if (!name.trim()) {
-      setLoading(false);
-      showAlert('Shipping Details', 'Please enter your full name.');
-      return;
-    }
+    const { data: { user } = {} } = await supabase.auth.getUser();
+    const orderUserId = user?.id || null;
 
-    const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
-    if (!cleanMobile) {
-      setLoading(false);
-      showAlert('Mobile Required', 'Please provide a 10-digit mobile number for order delivery.');
-      return;
-    }
+    // Validation rules: Mandatory login & address for Parcel; optional/skipped for Dine-in
+    if (!isDineIn) {
+      if (!orderUserId) {
+        showAlert(
+          'Sign In Required for Parcel',
+          'Parcel orders require account sign-in to save delivery details. Please sign in or create an account to place your order.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Sign In / Sign Up',
+              onPress: () =>
+                navigation.navigate('BuyerLogin', {
+                  redirectTo: 'Checkout',
+                  redirectParams: { cart, customerId },
+                }),
+            },
+          ]
+        );
+        return;
+      }
 
-    if (!/^(?:\+91|91)?[6-9]\d{9}$/.test(cleanMobile)) {
-      setLoading(false);
-      showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
-      return;
-    }
+      if (!name.trim()) {
+        showAlert('Shipping Details', 'Please enter your full name for parcel delivery.');
+        return;
+      }
 
-    // Require Email OTP verification if buyer has no mobile in profile and not yet verified this session
-    if (!profile?.mobile && !isMobileVerified) {
-      setLoading(false);
-      showAlert(
-        'Verify Contact Number',
-        `For your first checkout, please verify your mobile number. We will send a 6-digit verification code to your registered email (${user?.email || 'your account'}).`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Send Code to Email',
-            onPress: () => handleSendEmailOtp(cleanMobile),
-          },
-        ]
-      );
-      return;
-    }
+      const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
+      if (!cleanMobile) {
+        showAlert('Mobile Required', 'Please provide a 10-digit mobile number for order delivery.');
+        return;
+      }
 
-    if (!address.trim()) {
-      setLoading(false);
-      showAlert('Shipping Details', 'Please enter your delivery address.');
-      return;
-    }
+      if (!/^(?:\+91|91)?[6-9]\d{9}$/.test(cleanMobile)) {
+        showAlert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
+        return;
+      }
 
-    // Persist mobile to profile if missing
-    if (!profile?.mobile || profile.mobile !== cleanMobile.slice(-10)) {
-      try {
-        await supabase
-          .from('profiles')
-          .update({
-            mobile: cleanMobile.slice(-10),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', orderUserId);
-        setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile.slice(-10) }));
-      } catch (profErr) {
-        console.warn('Profile mobile sync notice:', profErr);
+      const isShopOrder = profile && profile.role === 'seller';
+
+      // Check if buyer has already verified via profile, session state, user metadata, saved addresses, or persistent AsyncStorage
+      let alreadyVerified = isMobileVerified || Boolean(profile?.mobile);
+      if (!alreadyVerified && orderUserId) {
+        try {
+          const localCheck = await AsyncStorage.getItem(`@checkout_verified_${orderUserId}`);
+          if (
+            localCheck === 'true' ||
+            Boolean(user?.email_confirmed_at) ||
+            Boolean(user?.confirmed_at) ||
+            user?.user_metadata?.email_verified === true ||
+            user?.user_metadata?.mobile_verified === true ||
+            (savedAddresses && savedAddresses.length > 0)
+          ) {
+            alreadyVerified = true;
+            setIsMobileVerified(true);
+          }
+        } catch (_) {}
+      }
+
+      if (!isShopOrder && !alreadyVerified) {
+        showAlert(
+          'Verify Contact Number',
+          `For your first checkout, please verify your mobile number. We will send a 6-digit verification code to your registered email (${user?.email || 'your account'}).`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Send Code to Email',
+              onPress: () => handleSendEmailOtp(cleanMobile),
+            },
+          ]
+        );
+        return;
+      }
+
+      if (!address.trim()) {
+        showAlert('Shipping Details', 'Please enter your delivery address.');
+        return;
       }
     }
 
-    const orderStatus = paymentMethod === 'cod' ? 'processing' : 'pending_payment';
-    const isShopOrder = profile && profile.role === 'seller';
+    setLoading(true);
+
+    const cleanMobile = (mobile || '').trim().replace(/[\s\-()]/g, '');
+
+    // Persist mobile to profile if missing (when logged in)
+    if (orderUserId && cleanMobile) {
+      if (!profile?.mobile || profile.mobile !== cleanMobile.slice(-10)) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              mobile: cleanMobile.slice(-10),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', orderUserId);
+          setProfile((prev) => ({ ...(prev || {}), mobile: cleanMobile.slice(-10) }));
+        } catch (profErr) {
+          console.warn('Profile mobile sync notice:', profErr);
+        }
+      }
+
+      // Persist verified status to AsyncStorage and user_metadata permanently
+      try {
+        await AsyncStorage.setItem(`@checkout_verified_${orderUserId}`, 'true');
+        await AsyncStorage.setItem(`@checkout_verified_mobile_${orderUserId}`, cleanMobile.slice(-10));
+        await supabase.auth.updateUser({
+          data: { mobile: cleanMobile.slice(-10), mobile_verified: true, email_verified: true },
+        }).catch(() => {});
+      } catch (_) {}
+    }
+
+    const orderStatus = activeMethod === 'cod' ? 'processing' : 'pending_payment';
 
     // Group cart items by seller (product vendor user_id)
     const itemsBySeller = {};
@@ -764,66 +1224,176 @@ const CheckoutScreen = ({ navigation, route }) => {
         const sellerGroup = itemsBySeller[sellerKey];
         const rawSellerId = sellerGroup.sellerId && sellerGroup.sellerId !== 'store'
           ? sellerGroup.sellerId
-          : (isShopOrder ? profile?.id : null);
+          : (profile?.role === 'seller' ? profile?.id : null);
         const isValidUUID = (val) =>
           typeof val === 'string' &&
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
         const targetSellerId = isValidUUID(rawSellerId) ? rawSellerId.trim() : null;
 
+        const groupSubtotal = sellerGroup.subtotal;
+        const groupCgst = isTaxEnabled && groupSubtotal > 0 ? Math.round(groupSubtotal * (cgstRate / 100) * 100) / 100 : 0;
+        const groupSgst = isTaxEnabled && groupSubtotal > 0 ? Math.round(groupSubtotal * (sgstRate / 100) * 100) / 100 : 0;
+        const groupService = isServiceCostEnabled && groupSubtotal > 0 && serviceCostRate > 0 ? Math.round(groupSubtotal * (serviceCostRate / 100) * 100) / 100 : 0;
+        const groupTotal = groupSubtotal + groupCgst + groupSgst + groupService;
+
+        const billingBreakdown = {
+          subtotal: groupSubtotal,
+          cgst_amount: groupCgst,
+          sgst_amount: groupSgst,
+          service_cost: groupService,
+          cgst_rate: cgstRate,
+          sgst_rate: sgstRate,
+          service_cost_rate: serviceCostRate,
+          total: groupTotal,
+        };
+
+        const shippingWithBilling = isDineIn
+          ? {
+              type: 'Dine-in',
+              table_no: tableNo || 'Main counter',
+              name: name.trim() || 'Guest Diner',
+              mobile: cleanMobile || (profile?.mobile || ''),
+              address: `Dine-in (${tableNo || 'Main counter'})`,
+              city: city || '',
+              postalCode: postalCode || '',
+              billing: billingBreakdown,
+              payment_reference: uniquePaymentCode,
+              payment_note: orderNote,
+              payment_status: 'pending',
+            }
+          : {
+              ...(typeof shippingAddress === 'object' ? shippingAddress : { address: shippingAddress }),
+              billing: billingBreakdown,
+              payment_reference: uniquePaymentCode,
+              payment_note: orderNote,
+              payment_status: 'pending',
+            };
+
         const orderPayload = {
           user_id: orderUserId,
           seller_id: targetSellerId,
-          shipping_address: shippingAddress,
-          total_amount: sellerGroup.subtotal,
+          shipping_address: shippingWithBilling,
+          total_amount: groupTotal,
+          subtotal: groupSubtotal,
+          cgst_amount: groupCgst,
+          sgst_amount: groupSgst,
+          service_cost: groupService,
+          cgst_rate: cgstRate,
+          sgst_rate: sgstRate,
+          service_cost_rate: serviceCostRate,
           status: orderStatus,
-          payment_method: paymentMethod,
-          order_type: isShopOrder ? 'shop-order' : 'delivery',
+          payment_method: activeMethod,
+          payment_reference: uniquePaymentCode,
+          payment_status: 'pending',
+          order_type: 'shop-order', // Dine-in and parcel shop orders go directly to seller
+          table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
         };
 
-        if (isShopOrder) {
-          orderPayload.table_no = orderType === 'Dine-in' ? tableNo : 'Parcel';
+        let order = null;
+        let orderError = null;
+
+        // If unauthenticated guest, try SECURITY DEFINER RPC to bypass client-side RLS limits
+        if (!orderUserId) {
+          try {
+            const rawItemsPayload = sellerGroup.items.map((item) => ({
+              product_variant_combination_id: item.product_variant_combinations.id,
+              quantity: item.quantity,
+              price: item.product_variant_combinations.price,
+            }));
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('create_guest_dine_in_order', {
+              p_order: orderPayload,
+              p_items: rawItemsPayload,
+            });
+            if (!rpcErr && rpcData) {
+              order = rpcData;
+            } else if (rpcErr) {
+              console.warn('RPC create_guest_dine_in_order notice, falling back to direct table insert:', rpcErr.message);
+            }
+          } catch (rpcCatchErr) {
+            console.warn('RPC create_guest_dine_in_order exception, falling back to direct insert:', rpcCatchErr);
+          }
         }
 
-        let { data: order, error: orderError } = await supabase
-          .from('orders')
-          .insert(orderPayload)
-          .select()
-          .single();
+        // Direct table insert if order not yet created by RPC
+        if (!order) {
+          let res = await supabase
+            .from('orders')
+            .insert(orderPayload)
+            .select()
+            .single();
+          order = res.data;
+          orderError = res.error;
 
-        if (orderError && (orderError.code === 'PGRST204' || (orderError.message && orderError.message.includes('column')))) {
-          console.warn('Retrying sub-order creation without seller_id column:', orderError.message);
-          const fallbackPayload = { ...orderPayload };
-          delete fallbackPayload.seller_id;
-          const retry = await supabase.from('orders').insert(fallbackPayload).select().single();
-          order = retry.data;
-          orderError = retry.error;
+          if (orderError && (orderError.code === 'PGRST204' || (orderError.message && orderError.message.includes('column')))) {
+            console.warn('Retrying sub-order creation without extra columns:', orderError.message);
+            const fallbackPayload = {
+              user_id: orderUserId,
+              seller_id: targetSellerId,
+              shipping_address: shippingWithBilling,
+              total_amount: groupTotal,
+              status: orderStatus,
+              payment_method: activeMethod,
+              payment_reference: uniquePaymentCode,
+              order_type: 'shop-order',
+              table_no: isDineIn ? (tableNo || 'Main counter') : 'Parcel',
+            };
+            if (orderError.message && orderError.message.includes('payment_reference')) {
+              delete fallbackPayload.payment_reference;
+            }
+            let retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+            if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && retry.error.message.includes('seller_id')))) {
+              delete fallbackPayload.seller_id;
+              retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+            }
+            if (retry.error && (retry.error.code === 'PGRST204' || (retry.error.message && (retry.error.message.includes('payment_reference') || retry.error.message.includes('column'))))) {
+              delete fallbackPayload.payment_reference;
+              retry = await supabase.from('orders').insert(fallbackPayload).select().single();
+            }
+            order = retry.data;
+            orderError = retry.error;
+          }
+
+          if (orderError) {
+            console.error('Error creating sub-order:', orderError.message);
+            throw orderError;
+          }
+
+          const orderItemsPayload = sellerGroup.items.map((item) => ({
+            order_id: order.id,
+            product_variant_combination_id: item.product_variant_combinations.id,
+            quantity: item.quantity,
+            price: item.product_variant_combinations.price,
+          }));
+
+          const { error: orderItemsError } = await supabase
+            .from('order_items')
+            .insert(orderItemsPayload);
+
+          if (orderItemsError) {
+            console.error('Error creating order items:', orderItemsError.message);
+            throw orderItemsError;
+          }
         }
 
-        if (orderError) {
-          console.error('Error creating sub-order:', orderError.message);
-          throw orderError;
-        }
-
-        const orderItemsPayload = sellerGroup.items.map((item) => ({
-          order_id: order.id,
-          product_variant_combination_id: item.product_variant_combinations.id,
-          quantity: item.quantity,
-          price: item.product_variant_combinations.price,
-        }));
-
-        const { error: orderItemsError } = await supabase
-          .from('order_items')
-          .insert(orderItemsPayload);
-
-        if (orderItemsError) {
-          console.error('Error creating order items:', orderItemsError.message);
-          throw orderItemsError;
+        if (order) {
+          order.billing = billingBreakdown;
+          order.subtotal = groupSubtotal;
+          order.cgst_amount = groupCgst;
+          order.sgst_amount = groupSgst;
+          order.service_cost = groupService;
+          order.cgst_rate = cgstRate;
+          order.sgst_rate = sgstRate;
+          order.service_cost_rate = serviceCostRate;
+          order.order_items = sellerGroup.items;
         }
 
         createdOrders.push(order);
+        if (!orderUserId && order?.id) {
+          saveGuestOrderId(order.id);
+        }
 
-        // Trigger Delivery Manager Assignment for Delivery Orders
-        if (!isShopOrder) {
+        // Dine-in orders never assign delivery manager - orders go directly to seller only!
+        if (!isDineIn && activeType === 'delivery') {
           try {
             await supabase.functions.invoke('assign-delivery-manager', {
               body: { order: { id: order.id } },
@@ -835,10 +1405,10 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         // Send local confirmation notification
         try {
-          const notificationTitle = isShopOrder
-            ? (orderType === 'Dine-in' ? `Order Placed for Table #${tableNo}` : 'Parcel Order Placed')
-            : '🎉 Order Placed Successfully!';
-          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${sellerGroup.subtotal.toFixed(2)} is confirmed.`;
+          const notificationTitle = isDineIn
+            ? `🍽️ Order Placed for Table #${tableNo || 'Main counter'}`
+            : '📦 Parcel Order Placed!';
+          const notificationBody = `Order #${order.order_number || order.id.substring(0, 8)} for ₹${groupTotal.toFixed(2)} is confirmed with store.`;
 
           await schedulePushNotification(
             notificationTitle,
@@ -871,13 +1441,16 @@ const CheckoutScreen = ({ navigation, route }) => {
           ]
         );
       } else if (createdOrders.length === 1) {
+        setUniquePaymentCode(Math.floor(100000 + Math.random() * 900000).toString());
         navigation.navigate('OrderConfirmation', {
           order: createdOrders[0],
+          paymentReference: uniquePaymentCode,
           sellerId: resolvedSellerId,
           sellerName: resolvedSellerName,
           customerId: resolvedCustomerId,
         });
       } else {
+        setUniquePaymentCode(Math.floor(100000 + Math.random() * 900000).toString());
         navigation.navigate('OrderList');
       }
     } catch (err) {
@@ -894,6 +1467,60 @@ const CheckoutScreen = ({ navigation, route }) => {
     null;
   const resolvedSellerName = route?.params?.sellerName || sellerProfile?.full_name || null;
   const resolvedCustomerId = customerId || currentUser?.id || null;
+
+  const openQrImageViewer = () => {
+    const list = [];
+    if (profileQrImageUrl) {
+      list.push({
+        id: 'checkout-profile-qr',
+        uri: profileQrImageUrl,
+        type: 'image',
+        title: `Seller Profile QR Code - ${resolvedSellerName || 'Store'}`,
+        subtitle: `UPI ID: ${activeUpiId || 'Store QR'}`,
+      });
+    }
+    const activeDynamicUrl = dynamicQrDataUrl || fallbackDynamicQrUrl;
+    if (activeDynamicUrl) {
+      list.push({
+        id: 'checkout-dynamic-qr',
+        uri: activeDynamicUrl,
+        type: 'image',
+        title: `Dynamic UPI QR Code (₹${totalAmount.toFixed(2)})`,
+        subtitle: `Scan to pay ₹${totalAmount.toFixed(2)} to ${resolvedSellerName || 'Store'}`,
+      });
+    }
+    (cartItems || []).forEach((ci) => {
+      const prod = ci?.product_variant_combinations?.products;
+      const pMedia = (prod?.product_media || []).filter((m) => m && (m.media_url || m.uri));
+      const prodName = prod?.product_name || 'Cart Item';
+      const prodPrice = ci?.product_variant_combinations?.price || prod?.amount;
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          list.push({
+            id: `ci-${ci.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: prodName,
+            subtitle: prodPrice ? `₹${prodPrice}` : null,
+          });
+        });
+      } else if (prod?.image_url || ci?.image_url) {
+        list.push({
+          id: `ci-${ci.id}-img`,
+          uri: prod?.image_url || ci?.image_url,
+          type: 'image',
+          title: prodName,
+          subtitle: prodPrice ? `₹${prodPrice}` : null,
+        });
+      }
+    });
+
+    if (list.length > 0) {
+      setQrViewerMedia(list);
+      setQrViewerIndex(0);
+      setIsQrViewerVisible(true);
+    }
+  };
 
   if (!cartItems || cartItems.length === 0) {
     return (
@@ -977,13 +1604,13 @@ const CheckoutScreen = ({ navigation, route }) => {
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={true}
       >
-        {/* Guest Sign-In Notice Banner */}
-        {!currentUser && (
+        {/* Guest Sign-In Notice Banner (Only mandatory for Parcel orders) */}
+        {!currentUser && orderType === 'Parcel' && (
           <View style={styles.guestBanner}>
             <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.guestBannerTitle}>🛍️ Sign in to complete order</Text>
+              <Text style={styles.guestBannerTitle}>🛍️ Sign in to complete parcel order</Text>
               <Text style={styles.guestBannerSubtitle}>
-                Log in or create an account to save your address and track orders.
+                Log in or create an account to save your address and deliver parcel orders.
               </Text>
             </View>
             <TouchableOpacity
@@ -1006,258 +1633,379 @@ const CheckoutScreen = ({ navigation, route }) => {
           <Text style={styles.summaryItems}>
             {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'} in cart
           </Text>
+          {(isTaxEnabled || (isServiceCostEnabled && serviceCost > 0)) && (
+            <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 8 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ fontSize: 13, color: '#64748B' }}>Items Subtotal</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>₹{subtotal.toFixed(2)}</Text>
+              </View>
+              {isTaxEnabled && cgstAmount > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>CGST ({cgstRate}%)</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{cgstAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {isTaxEnabled && sgstAmount > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>SGST ({sgstRate}%)</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{sgstAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {isServiceCostEnabled && serviceCost > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>Service Charge ({serviceCostRate}%)</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{serviceCost.toFixed(2)}</Text>
+                </View>
+              )}
+            </View>
+          )}
           <Text style={styles.summaryTotal}>Total: ₹{totalAmount.toFixed(2)}</Text>
         </View>
 
-        {/* Delivery Address Header */}
-        <View style={styles.addressSectionHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.sectionHeading}>Delivery Address & Contact</Text>
-            <Text style={styles.sectionSubheading}>Choose saved address or pick location with GPS map</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.addAddressHeaderBtn}
-            onPress={handleOpenAddAddressModal}
-            activeOpacity={0.8}
-          >
-            <Icon name="map-marker" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.addAddressHeaderBtnText}>+ Add / Map</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Saved Addresses Horizontal Carousel */}
-        {savedAddresses && savedAddresses.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.savedAddressesScroll}
-          >
-            {savedAddresses.map((addr) => {
-              const isSelected = selectedAddressId === addr.id;
-              return (
-                <TouchableOpacity
-                  key={addr.id}
-                  style={[styles.addressCard, isSelected && styles.addressCardSelected]}
-                  onPress={() => handleSelectAddress(addr)}
-                  activeOpacity={0.85}
-                >
-                  <View style={styles.addressCardTopRow}>
-                    <View
-                      style={[
-                        styles.addressTagBadge,
-                        addr.tag === 'Work'
-                          ? styles.tagWork
-                          : addr.tag === 'Other'
-                          ? styles.tagOther
-                          : styles.tagHome,
-                      ]}
-                    >
-                      <Icon
-                        name={addr.tag === 'Work' ? 'briefcase' : addr.tag === 'Other' ? 'map-pin' : 'home'}
-                        size={11}
-                        color="#0F172A"
-                        style={{ marginRight: 4 }}
-                      />
-                      <Text style={styles.addressTagText}>{addr.tag || 'Home'}</Text>
-                    </View>
-                    <Icon
-                      name={isSelected ? 'check-circle' : 'circle-o'}
-                      size={18}
-                      color={isSelected ? '#007AFF' : '#94A3B8'}
-                    />
-                  </View>
-
-                  <Text style={styles.addressCardName} numberOfLines={1}>
-                    {addr.recipient_name}
-                  </Text>
-                  <Text style={styles.addressCardMobile}>
-                    <Icon name="phone" size={11} color="#64748B" /> {addr.mobile}
-                  </Text>
-                  <Text style={styles.addressCardDetails} numberOfLines={2}>
-                    {addr.address_line_1}, {addr.city} {addr.zip_code ? `- ${addr.zip_code}` : ''}
-                  </Text>
-
-                  {addr.latitude && addr.longitude && (
-                    <View style={styles.addressGpsBadge}>
-                      <Icon name="crosshairs" size={10} color="#10B981" style={{ marginRight: 4 }} />
-                      <Text style={styles.addressGpsText}>GPS Pinned</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        ) : (
-          <TouchableOpacity
-            style={styles.emptyAddressBanner}
-            onPress={handleOpenAddAddressModal}
-            activeOpacity={0.8}
-          >
-            <View style={styles.emptyAddressIconCircle}>
-              <Icon name="map-marker" size={20} color="#007AFF" />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.emptyAddressTitle}>Set Delivery Location on Map</Text>
-              <Text style={styles.emptyAddressSubtitle}>
-                Tap to pick location from map and save your delivery address
-              </Text>
-            </View>
-            <Icon name="chevron-right" size={14} color="#94A3B8" />
-          </TouchableOpacity>
-        )}
-
-        {/* Active Address Form Fields */}
-        <View style={styles.addressFormBox}>
-          <Text style={styles.formFieldLabel}>Recipient Full Name *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Full Name *"
-            placeholderTextColor="#94a3b8"
-            value={name}
-            onChangeText={setName}
-          />
-
-          <View style={styles.mobileInputHeaderRow}>
-            <Text style={styles.formFieldLabel}>Mobile Number (10 digits) *</Text>
-            {isMobileVerified || profile?.mobile ? (
-              <View style={styles.verifiedBadge}>
-                <Icon name="check-circle" size={12} color="#10B981" style={{ marginRight: 4 }} />
-                <Text style={styles.verifiedBadgeText}>Verified</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                onPress={() => handleSendEmailOtp()}
-                disabled={sendingEmailOtp}
-                style={styles.verifyOtpLinkBtn}
+        {/* Order Type Selector (Dine-in Default vs Parcel) */}
+        <View style={styles.orderTypeCard}>
+          <Text style={styles.sectionHeading}>Order Type</Text>
+          <View style={styles.orderTypeSegmentedRow}>
+            <TouchableOpacity
+              style={[
+                styles.orderTypeSegmentBtn,
+                orderType === 'Dine-in' && styles.orderTypeSegmentBtnActive,
+              ]}
+              onPress={() => {
+                setOrderType('Dine-in');
+                setOrderTypeConfirmed(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Icon
+                name="cutlery"
+                size={15}
+                color={orderType === 'Dine-in' ? '#FFFFFF' : '#007AFF'}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.orderTypeSegmentText,
+                  orderType === 'Dine-in' && styles.orderTypeSegmentTextActive,
+                ]}
               >
-                {sendingEmailOtp ? (
-                  <ActivityIndicator size="small" color="#007AFF" />
-                ) : (
-                  <Text style={styles.verifyOtpLinkText}>Verify via Email OTP</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
+                🍽️ Dine-in (Default)
+              </Text>
+            </TouchableOpacity>
 
-          <View style={styles.mobileInputWrap}>
-            <Text style={styles.countryCodePrefix}>+91</Text>
-            <TextInput
-              style={[styles.input, styles.mobileInputInner]}
-              placeholder="10-digit mobile number *"
-              placeholderTextColor="#94a3b8"
-              value={mobile}
-              onChangeText={(text) => {
-                const cleaned = text.replace(/[^0-9]/g, '').slice(0, 10);
-                setMobile(cleaned);
-                if (cleaned.length !== 10 && !profile?.mobile) {
-                  setIsMobileVerified(false);
+            <TouchableOpacity
+              style={[
+                styles.orderTypeSegmentBtn,
+                orderType === 'Parcel' && styles.orderTypeSegmentBtnActive,
+              ]}
+              onPress={() => {
+                setOrderType('Parcel');
+                setOrderTypeConfirmed(true);
+                if (!currentUser) {
+                  showAlert(
+                    'Sign In Required for Parcel',
+                    'Parcel orders require delivery & contact details. Please sign in or create an account to proceed.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Sign In / Sign Up',
+                        onPress: () =>
+                          navigation.navigate('BuyerLogin', {
+                            redirectTo: 'Checkout',
+                            redirectParams: { cart, customerId },
+                          }),
+                      },
+                    ]
+                  );
                 }
               }}
-              keyboardType="phone-pad"
-              maxLength={10}
-            />
+              activeOpacity={0.8}
+            >
+              <Icon
+                name="cube"
+                size={15}
+                color={orderType === 'Parcel' ? '#FFFFFF' : '#007AFF'}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.orderTypeSegmentText,
+                  orderType === 'Parcel' && styles.orderTypeSegmentTextActive,
+                ]}
+              >
+                📦 Parcel / Takeaway
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.formFieldLabel}>Address / Street / Landmark *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Address / Street / Landmark *"
-            placeholderTextColor="#94a3b8"
-            value={address}
-            onChangeText={setAddress}
-          />
+          {orderType === 'Dine-in' ? (
+            <View style={styles.dineInDetailsBox}>
+              <View style={styles.dineInHeaderRow}>
+                <Icon name="check-circle" size={14} color="#10B981" style={{ marginRight: 6 }} />
+                <Text style={styles.dineInNoticeText}>
+                  Dining in at store. Login and delivery address are not mandatory!
+                </Text>
+              </View>
 
-          <View style={styles.addressCityRow}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={styles.formFieldLabel}>City *</Text>
+              <Text style={styles.formFieldLabel}>Select Table / Counter:</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={tableNo}
+                  onValueChange={(itemValue) => setTableNo(itemValue)}
+                  style={styles.picker}
+                >
+                  {tableOptions.map((option) => (
+                    <Picker.Item
+                      key={option}
+                      label={option === 'Main counter' ? 'Main Counter (Self Pick-up)' : `Table #${option}`}
+                      value={option}
+                    />
+                  ))}
+                </Picker>
+              </View>
+
+              <Text style={[styles.formFieldLabel, { marginTop: 10 }]}>Customer Name (Optional):</Text>
               <TextInput
                 style={styles.input}
-                placeholder="City *"
+                placeholder="Guest Customer (Optional)"
                 placeholderTextColor="#94a3b8"
-                value={city}
-                onChangeText={setCity}
+                value={name}
+                onChangeText={setName}
               />
             </View>
-            <View style={{ flex: 1, marginLeft: 8 }}>
-              <Text style={styles.formFieldLabel}>Postal Code</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Postal Code"
-                placeholderTextColor="#94a3b8"
-                value={postalCode}
-                onChangeText={setPostalCode}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-
-          {selectedCoords && (
-            <View style={styles.activeCoordsRow}>
-              <Icon name="crosshairs" size={13} color="#10B981" style={{ marginRight: 6 }} />
-              <Text style={styles.activeCoordsText}>
-                GPS Coordinates: {selectedCoords.latitude.toFixed(5)}, {selectedCoords.longitude.toFixed(5)}
+          ) : (
+            <View style={styles.parcelNoticeBox}>
+              <Icon name="info-circle" size={14} color="#D97706" style={{ marginRight: 6 }} />
+              <Text style={styles.parcelNoticeText}>
+                Parcel Order: Contact number, delivery address & sign-in are mandatory.
               </Text>
             </View>
           )}
         </View>
 
-        {profile && profile.role === 'seller' && (
-          <>
-            <Text style={styles.sectionHeading}>Order Type</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={orderType}
-                onValueChange={(itemValue) => setOrderType(itemValue)}
-                style={styles.picker}
+        {/* Delivery Address & Contact (Rendered ONLY when orderType is Parcel) */}
+        {orderType === 'Parcel' && (
+          <View>
+            <View style={styles.addressSectionHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionHeading}>Delivery Address & Contact *</Text>
+                <Text style={styles.sectionSubheading}>Choose saved address or pick location with GPS map</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addAddressHeaderBtn}
+                onPress={handleOpenAddAddressModal}
+                activeOpacity={0.8}
               >
-                <Picker.Item label="Dine-in" value="Dine-in" />
-                <Picker.Item label="Parcel" value="Parcel" />
-              </Picker>
+                <Icon name="map-marker" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.addAddressHeaderBtnText}>+ Add / Map</Text>
+              </TouchableOpacity>
             </View>
 
-            {orderType === 'Dine-in' && (
-              <>
-                <Text style={styles.sectionHeading}>Dine-in Details</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={tableNo}
-                    onValueChange={(itemValue) => setTableNo(itemValue)}
-                    style={styles.picker}
-                  >
-                    {tableOptions.map((option) => (
-                      <Picker.Item key={option} label={option} value={option} />
-                    ))}
-                  </Picker>
+            {/* Saved Addresses Horizontal Carousel */}
+            {savedAddresses && savedAddresses.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.savedAddressesScroll}
+              >
+                {savedAddresses.map((addr) => {
+                  const isSelected = selectedAddressId === addr.id;
+                  return (
+                    <TouchableOpacity
+                      key={addr.id}
+                      style={[styles.addressCard, isSelected && styles.addressCardSelected]}
+                      onPress={() => handleSelectAddress(addr)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.addressCardTopRow}>
+                        <View
+                          style={[
+                            styles.addressTagBadge,
+                            addr.tag === 'Work'
+                              ? styles.tagWork
+                              : addr.tag === 'Other'
+                              ? styles.tagOther
+                              : styles.tagHome,
+                          ]}
+                        >
+                          <Icon
+                            name={addr.tag === 'Work' ? 'briefcase' : addr.tag === 'Other' ? 'map-pin' : 'home'}
+                            size={11}
+                            color="#0F172A"
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text style={styles.addressTagText}>{addr.tag || 'Home'}</Text>
+                        </View>
+                        <Icon
+                          name={isSelected ? 'check-circle' : 'circle-o'}
+                          size={18}
+                          color={isSelected ? '#007AFF' : '#94A3B8'}
+                        />
+                      </View>
+
+                      <Text style={styles.addressCardName} numberOfLines={1}>
+                        {addr.recipient_name}
+                      </Text>
+                      <Text style={styles.addressCardMobile}>
+                        <Icon name="phone" size={11} color="#64748B" /> {addr.mobile}
+                      </Text>
+                      <Text style={styles.addressCardDetails} numberOfLines={2}>
+                        {addr.address_line_1}, {addr.city} {addr.zip_code ? `- ${addr.zip_code}` : ''}
+                      </Text>
+
+                      {addr.latitude && addr.longitude && (
+                        <View style={styles.addressGpsBadge}>
+                          <Icon name="crosshairs" size={10} color="#10B981" style={{ marginRight: 4 }} />
+                          <Text style={styles.addressGpsText}>GPS Pinned</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <TouchableOpacity
+                style={styles.emptyAddressBanner}
+                onPress={handleOpenAddAddressModal}
+                activeOpacity={0.8}
+              >
+                <View style={styles.emptyAddressIconCircle}>
+                  <Icon name="map-marker" size={20} color="#007AFF" />
                 </View>
-              </>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.emptyAddressTitle}>Set Delivery Location on Map</Text>
+                  <Text style={styles.emptyAddressSubtitle}>
+                    Tap to pick location from map and save your delivery address
+                  </Text>
+                </View>
+                <Icon name="chevron-right" size={14} color="#94A3B8" />
+              </TouchableOpacity>
             )}
-          </>
+
+            {/* Active Address Form Fields */}
+            <View style={styles.addressFormBox}>
+              <Text style={styles.formFieldLabel}>Recipient Full Name *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Full Name *"
+                placeholderTextColor="#94a3b8"
+                value={name}
+                onChangeText={setName}
+              />
+
+              <View style={styles.mobileInputHeaderRow}>
+                <Text style={styles.formFieldLabel}>Mobile Number (10 digits) *</Text>
+                {isMobileVerified || profile?.mobile ? (
+                  <View style={styles.verifiedBadge}>
+                    <Icon name="check-circle" size={12} color="#10B981" style={{ marginRight: 4 }} />
+                    <Text style={styles.verifiedBadgeText}>Verified</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => handleSendEmailOtp()}
+                    disabled={sendingEmailOtp}
+                    style={styles.verifyOtpLinkBtn}
+                  >
+                    {sendingEmailOtp ? (
+                      <ActivityIndicator size="small" color="#007AFF" />
+                    ) : (
+                      <Text style={styles.verifyOtpLinkText}>Verify via Email OTP</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.mobileInputWrap}>
+                <Text style={styles.countryCodePrefix}>+91</Text>
+                <TextInput
+                  style={[styles.input, styles.mobileInputInner]}
+                  placeholder="10-digit mobile number *"
+                  placeholderTextColor="#94a3b8"
+                  value={mobile}
+                  onChangeText={(text) => {
+                    const cleaned = text.replace(/[^0-9]/g, '').slice(0, 10);
+                    setMobile(cleaned);
+                  }}
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                />
+              </View>
+
+              <Text style={styles.formFieldLabel}>Address / Street / Landmark *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Address / Street / Landmark *"
+                placeholderTextColor="#94a3b8"
+                value={address}
+                onChangeText={setAddress}
+              />
+
+              <View style={styles.addressCityRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.formFieldLabel}>City *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="City *"
+                    placeholderTextColor="#94a3b8"
+                    value={city}
+                    onChangeText={setCity}
+                  />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.formFieldLabel}>Postal Code</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Postal Code"
+                    placeholderTextColor="#94a3b8"
+                    value={postalCode}
+                    onChangeText={setPostalCode}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              {selectedCoords && (
+                <View style={styles.activeCoordsRow}>
+                  <Icon name="crosshairs" size={13} color="#10B981" style={{ marginRight: 6 }} />
+                  <Text style={styles.activeCoordsText}>
+                    GPS Coordinates: {selectedCoords.latitude.toFixed(5)}, {selectedCoords.longitude.toFixed(5)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
         )}
 
         <Text style={styles.sectionHeading}>Payment Method</Text>
         <View style={styles.paymentMethodContainer}>
-          <TouchableOpacity
-            style={[styles.paymentButton, paymentMethod === 'upi' && styles.selectedPaymentButton]}
-            onPress={() => setPaymentMethod('upi')}
-            activeOpacity={0.8}
-          >
-            <Icon
-              name="qrcode"
-              size={22}
-              color={paymentMethod === 'upi' ? '#FFFFFF' : '#007AFF'}
-              style={{ marginBottom: 6 }}
-            />
-            <Text
-              style={[
-                styles.paymentButtonText,
-                paymentMethod === 'upi' && styles.selectedPaymentButtonText,
-              ]}
+          {isUpiConfigured && (
+            <TouchableOpacity
+              style={[styles.paymentButton, paymentMethod === 'upi' && styles.selectedPaymentButton]}
+              onPress={() => handlePayWithUpiPress('select_upi')}
+              activeOpacity={0.8}
             >
-              Pay with UPI
-            </Text>
-          </TouchableOpacity>
+              <Icon
+                name="qrcode"
+                size={22}
+                color={paymentMethod === 'upi' ? '#FFFFFF' : '#007AFF'}
+                style={{ marginBottom: 6 }}
+              />
+              <Text
+                style={[
+                  styles.paymentButtonText,
+                  paymentMethod === 'upi' && styles.selectedPaymentButtonText,
+                ]}
+              >
+                Pay with UPI
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            style={[styles.paymentButton, paymentMethod === 'cod' && styles.selectedPaymentButton]}
+            style={[
+              styles.paymentButton,
+              paymentMethod === 'cod' && styles.selectedPaymentButton,
+              !isUpiConfigured && { flex: 1 },
+            ]}
             onPress={() => setPaymentMethod('cod')}
             activeOpacity={0.8}
           >
@@ -1273,13 +2021,22 @@ const CheckoutScreen = ({ navigation, route }) => {
                 paymentMethod === 'cod' && styles.selectedPaymentButtonText,
               ]}
             >
-              Cash on Delivery
+              {orderType === 'Dine-in' ? 'Pay at Counter (Cash)' : 'Cash on Delivery'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* UPI PAYMENT CARD (Displayed when user selects UPI) */}
-        {paymentMethod === 'upi' && (
+        {!isUpiConfigured && (
+          <View style={styles.noUpiBanner}>
+            <Icon name="info-circle" size={13} color="#64748B" style={{ marginRight: 6 }} />
+            <Text style={styles.noUpiBannerText}>
+              Cash payment only (Seller has not configured UPI details).
+            </Text>
+          </View>
+        )}
+
+        {/* UPI PAYMENT CARD (Displayed strictly from seller profile when UPI is configured) */}
+        {paymentMethod === 'upi' && isUpiConfigured && (
           <View style={styles.upiCardContainer}>
             {/* Header */}
             <View style={styles.upiCardHeader}>
@@ -1304,13 +2061,24 @@ const CheckoutScreen = ({ navigation, route }) => {
             <View style={styles.upiAmountPill}>
               <View>
                 <Text style={styles.upiAmountLabel}>Order Bill Amount:</Text>
-                <Text style={styles.upiAmountSub}>Pre-filled in QR code</Text>
+                <Text style={styles.upiAmountSub}>Scan Profile QR or tap 'Pay in UPI App' below</Text>
               </View>
               <Text style={styles.upiAmountValue}>₹{totalAmount.toFixed(2)}</Text>
             </View>
 
-            {/* Tab Switcher if Profile QR is uploaded */}
-            {profileQrImageUrl && (
+            {/* UPI Payment Reference Code Pill (Unique 6-digit reference for bank/UPI reconciliation) */}
+            <View style={styles.paymentRefPill}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.paymentRefLabel}>UPI Transaction Note / Ref:</Text>
+                <Text style={styles.paymentRefValue}>{orderNote}</Text>
+              </View>
+              <View style={styles.paymentRefCodeBadge}>
+                <Text style={styles.paymentRefCodeText}>{uniquePaymentCode}</Text>
+              </View>
+            </View>
+
+            {/* QR Mode Switcher (Dynamic Bill QR vs Store Standee QR) */}
+            {profileQrImageUrl && (dynamicUpiUri || dynamicQrDataUrl) ? (
               <View style={styles.qrTabContainer}>
                 <TouchableOpacity
                   style={[styles.qrTabButton, qrTab === 'dynamic' && styles.qrTabButtonActive]}
@@ -1318,13 +2086,13 @@ const CheckoutScreen = ({ navigation, route }) => {
                   activeOpacity={0.8}
                 >
                   <Icon
-                    name="bolt"
-                    size={12}
+                    name="qrcode"
+                    size={14}
                     color={qrTab === 'dynamic' ? '#007AFF' : '#64748B'}
-                    style={{ marginRight: 5 }}
+                    style={{ marginRight: 6 }}
                   />
                   <Text style={[styles.qrTabText, qrTab === 'dynamic' && styles.qrTabTextActive]}>
-                    QR with Bill Amount
+                    ⚡ Dynamic Bill QR (₹{totalAmount.toFixed(2)})
                   </Text>
                 </TouchableOpacity>
 
@@ -1335,18 +2103,18 @@ const CheckoutScreen = ({ navigation, route }) => {
                 >
                   <Icon
                     name="image"
-                    size={12}
+                    size={14}
                     color={qrTab === 'profile' ? '#007AFF' : '#64748B'}
-                    style={{ marginRight: 5 }}
+                    style={{ marginRight: 6 }}
                   />
                   <Text style={[styles.qrTabText, qrTab === 'profile' && styles.qrTabTextActive]}>
-                    Profile QR Code
+                    🏪 Store Standee QR
                   </Text>
                 </TouchableOpacity>
               </View>
-            )}
+            ) : null}
 
-            {/* QR Code Container */}
+            {/* QR Code Container - Displays Dynamic or Profile QR Code */}
             <View style={styles.qrBox}>
               {loadingSellerQr ? (
                 <View style={styles.qrLoadingBox}>
@@ -1354,13 +2122,15 @@ const CheckoutScreen = ({ navigation, route }) => {
                   <Text style={styles.qrLoadingText}>Loading QR Code...</Text>
                 </View>
               ) : (
-                <>
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={openQrImageViewer}
+                  style={styles.qrImageTouchable}
+                  accessibilityLabel="Tap to view full screen QR code"
+                >
                   <Image
                     source={{
-                      uri:
-                        qrTab === 'profile' && profileQrImageUrl
-                          ? profileQrImageUrl
-                          : dynamicQrImageUrl,
+                      uri: displayedQrUri,
                     }}
                     style={styles.qrImage}
                     resizeMode="contain"
@@ -1370,27 +2140,88 @@ const CheckoutScreen = ({ navigation, route }) => {
                       Exact Bill: ₹{totalAmount.toFixed(2)}
                     </Text>
                   </View>
-                </>
+                </TouchableOpacity>
               )}
             </View>
 
             <Text style={styles.qrScanInstruction}>
-              {qrTab === 'profile'
-                ? `Scan with GPay / PhonePe / Paytm and enter ₹${totalAmount.toFixed(2)}.`
-                : `✨ Amount ₹${totalAmount.toFixed(2)} is automatically pre-filled when scanned!`}
+              {qrTab === 'profile' && profileQrImageUrl
+                ? `Scan Seller's Store Standee QR code with Google Pay, PhonePe, Paytm or any UPI app to pay ₹${totalAmount.toFixed(2)}.`
+                : `Scan with Google Pay, PhonePe, Paytm or any UPI app. Bill amount (₹${totalAmount.toFixed(2)}) and payee are pre-filled automatically!`}
             </Text>
 
-            {/* Direct 1-Tap Pay via UPI App (GPay / PhonePe / Paytm) */}
-            <TouchableOpacity
-              style={styles.directUpiPayButton}
-              onPress={handleOpenDirectUpiPay}
-              activeOpacity={0.85}
-            >
-              <Icon name="mobile-phone" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.directUpiPayButtonText}>
-                Pay ₹{totalAmount.toFixed(2)} in UPI App
-              </Text>
-            </TouchableOpacity>
+            {/* Direct 1-Tap UPI Apps & Intent Links */}
+            <View style={styles.upiAppsSection}>
+              <View style={styles.upiAppsSectionHeader}>
+                <Text style={styles.upiAppsSectionTitle}>🚀 Instant 1-Tap Pay via UPI App</Text>
+                <Text style={styles.upiAppsSectionSub}>Tap your app to pay ₹{totalAmount.toFixed(2)} with pre-filled bill total</Text>
+              </View>
+
+              <View style={styles.upiAppsGrid}>
+                {upiAppList
+                  .filter((a) => a.id !== 'any')
+                  .map((app) => {
+                    const webHref = getAppWebHref(app);
+                    return (
+                      <TouchableOpacity
+                        key={app.id}
+                        style={[
+                          styles.upiAppCard,
+                          { borderColor: app.borderColor, backgroundColor: app.bgColor },
+                        ]}
+                        onPress={() => handleOpenDirectUpiPay(app.id)}
+                        accessibilityRole={Platform.OS === 'web' && webHref ? 'link' : 'button'}
+                        href={webHref}
+                        target="_top"
+                        rel="noopener noreferrer"
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.upiAppIconCircle, { backgroundColor: '#FFFFFF' }]}>
+                          <Icon name={app.icon} size={15} color={app.color} />
+                        </View>
+                        <View style={styles.upiAppTextCol}>
+                          <Text style={[styles.upiAppName, { color: app.color }]}>{app.name}</Text>
+                          <Text style={styles.upiAppActionText}>Pay ₹{totalAmount.toFixed(2)}</Text>
+                        </View>
+                        <Icon name="chevron-right" size={11} color={app.color} style={{ opacity: 0.6 }} />
+                      </TouchableOpacity>
+                    );
+                  })}
+              </View>
+
+              {/* All Apps / System Chooser Intent Button */}
+              {(() => {
+                const anyApp = upiAppList.find((a) => a.id === 'any') || upiAppList[0];
+                const anyHref = anyApp ? getAppWebHref(anyApp) : undefined;
+                return (
+                  <TouchableOpacity
+                    style={styles.directUpiPayButton}
+                    onPress={() => handleOpenDirectUpiPay('any')}
+                    accessibilityRole={Platform.OS === 'web' && anyHref ? 'link' : 'button'}
+                    href={anyHref}
+                    target="_top"
+                    rel="noopener noreferrer"
+                    activeOpacity={0.85}
+                  >
+                    <Icon name="mobile-phone" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Text style={styles.directUpiPayButtonText}>
+                      Pay ₹{totalAmount.toFixed(2)} in Any UPI App
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })()}
+            </View>
+
+            {/* Google Pay / UPI Security Guidance */}
+            <View style={styles.upiSecurityTipCard}>
+              <Icon name="shield" size={15} color="#0D9488" style={{ marginTop: 2, marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.upiSecurityTipTitle}>Smooth UPI Checkout Tip</Text>
+                <Text style={styles.upiSecurityTipText}>
+                  If Google Pay displays a &quot;Transaction may be risky&quot; warning when tapping a link to an individual seller, simply scan the QR code above with your Google Pay camera, or choose PhonePe / Paytm / Any UPI App for 1-tap payment!
+                </Text>
+              </View>
+            </View>
 
             {/* Payee UPI ID & 1-Tap Copy */}
             <View style={styles.upiIdRow}>
@@ -1416,36 +2247,6 @@ const CheckoutScreen = ({ navigation, route }) => {
                 </Text>
               </TouchableOpacity>
             </View>
-
-            {/* Expandable Custom UPI ID */}
-            <TouchableOpacity
-              style={styles.toggleEditUpiBtn}
-              onPress={() => setShowEditUpi(!showEditUpi)}
-            >
-              <Text style={styles.toggleEditUpiText}>
-                {showEditUpi ? 'Hide custom UPI ID' : 'Change or customize UPI ID'}
-              </Text>
-              <Icon
-                name={showEditUpi ? 'chevron-up' : 'chevron-down'}
-                size={11}
-                color="#007AFF"
-                style={{ marginLeft: 5 }}
-              />
-            </TouchableOpacity>
-
-            {showEditUpi && (
-              <View style={styles.editUpiBox}>
-                <Text style={styles.editUpiLabel}>Custom Payee UPI ID:</Text>
-                <TextInput
-                  style={styles.editUpiInput}
-                  placeholder="e.g. yourstore@okaxis, 9876543210@paytm"
-                  placeholderTextColor="#94a3b8"
-                  value={customUpiId}
-                  onChangeText={setCustomUpiId}
-                  autoCapitalize="none"
-                />
-              </View>
-            )}
           </View>
         )}
       </ScrollView>
@@ -1468,7 +2269,13 @@ const CheckoutScreen = ({ navigation, route }) => {
 
         <TouchableOpacity
           style={[styles.footerPlaceOrderBtn, loading && styles.placeOrderButtonDisabled]}
-          onPress={handlePlaceOrder}
+          onPress={() => {
+            if (paymentMethod === 'upi' && !orderTypeConfirmed) {
+              handlePayWithUpiPress('place_order');
+            } else {
+              handlePlaceOrder();
+            }
+          }}
           disabled={loading}
           activeOpacity={0.85}
         >
@@ -1483,7 +2290,9 @@ const CheckoutScreen = ({ navigation, route }) => {
                 style={{ marginRight: 6 }}
               />
               <Text style={styles.footerPlaceOrderBtnText}>
-                {paymentMethod === 'upi' ? 'Pay with UPI' : 'Place Order'}
+                {paymentMethod === 'upi'
+                  ? (orderType === 'Dine-in' ? 'Pay with UPI (Dine-in)' : 'Pay with UPI (Parcel)')
+                  : (orderType === 'Dine-in' ? 'Confirm Dine-in Order' : 'Place Order')}
               </Text>
             </>
           )}
@@ -1500,6 +2309,85 @@ const CheckoutScreen = ({ navigation, route }) => {
         customerId={customerId}
         forceShow={true}
       />
+
+      {/* ORDER TYPE SELECTION MODAL (Prompted when user clicks Pay with UPI) */}
+      <Modal
+        visible={showOrderTypeModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowOrderTypeModal(false)}
+      >
+        <View style={styles.orderTypeModalOverlay}>
+          <View style={styles.orderTypeModalCard}>
+            <View style={styles.orderTypeModalHeader}>
+              <View style={styles.orderTypeModalIconWrap}>
+                <Icon name="question-circle" size={26} color="#007AFF" />
+              </View>
+              <Text style={styles.orderTypeModalTitle}>Select Order Type</Text>
+              <Text style={styles.orderTypeModalSub}>
+                Is this order for Dine-in at the store or Parcel takeaway?
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.modalOptionCard,
+                orderType === 'Dine-in' && styles.modalOptionCardActive,
+              ]}
+              onPress={handleSelectDineIn}
+              activeOpacity={0.8}
+            >
+              <View style={styles.modalOptionIconCircle}>
+                <Icon name="cutlery" size={18} color="#007AFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                  <Text style={styles.modalOptionTitle}>🍽️ Dine-in (Default)</Text>
+                  <View style={styles.modalOptionBadgeGreen}>
+                    <Text style={styles.modalOptionBadgeGreenText}>No Login Needed</Text>
+                  </View>
+                </View>
+                <Text style={styles.modalOptionDesc}>
+                  Eat at store. Select your table or counter. No login or delivery address required.
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.modalOptionCard,
+                orderType === 'Parcel' && styles.modalOptionCardActive,
+              ]}
+              onPress={handleSelectParcel}
+              activeOpacity={0.8}
+            >
+              <View style={styles.modalOptionIconCircleOrange}>
+                <Icon name="cube" size={18} color="#D97706" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                  <Text style={styles.modalOptionTitle}>📦 Parcel / Takeaway</Text>
+                  <View style={styles.modalOptionBadgeOrange}>
+                    <Text style={styles.modalOptionBadgeOrangeText}>Sign In Required</Text>
+                  </View>
+                </View>
+                <Text style={styles.modalOptionDesc}>
+                  Delivery or takeaway. Requires contact number and delivery address.
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.orderTypeModalCancelBtn}
+              onPress={() => setShowOrderTypeModal(false)}
+            >
+              <Text style={styles.orderTypeModalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* EMAIL OTP VERIFICATION MODAL */}
       <Modal
@@ -1752,6 +2640,15 @@ const CheckoutScreen = ({ navigation, route }) => {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Full-Screen QR & Item Media Viewer */}
+      <FullScreenImageViewer
+        visible={isQrViewerVisible}
+        mediaList={qrViewerMedia}
+        initialIndex={qrViewerIndex}
+        onClose={() => setIsQrViewerVisible(false)}
+        title="UPI Payment QR Code"
+      />
     </View>
   );
 };
@@ -2013,6 +2910,44 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#0284C7',
   },
+  paymentRefPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  paymentRefLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  paymentRefValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  paymentRefCodeBadge: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  paymentRefCodeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+  },
   qrTabContainer: {
     flexDirection: 'row',
     gap: 8,
@@ -2057,6 +2992,10 @@ const styles = StyleSheet.create({
     elevation: 2,
     marginBottom: 12,
   },
+  qrImageTouchable: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   qrImage: {
     width: 220,
     height: 220,
@@ -2094,6 +3033,64 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     paddingHorizontal: 8,
   },
+  upiAppsSection: {
+    marginBottom: 14,
+  },
+  upiAppsSectionHeader: {
+    marginBottom: 8,
+  },
+  upiAppsSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  upiAppsSectionSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  upiAppsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  upiAppCard: {
+    flex: 1,
+    minWidth: '47%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    borderWidth: 1,
+    gap: 8,
+  },
+  upiAppIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  upiAppTextCol: {
+    flex: 1,
+  },
+  upiAppName: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  upiAppActionText: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+    fontWeight: '500',
+  },
   directUpiPayButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2112,6 +3109,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  upiSecurityTipCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  upiSecurityTipTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F766E',
+    marginBottom: 2,
+  },
+  upiSecurityTipText: {
+    fontSize: 11,
+    color: '#115E59',
+    lineHeight: 16,
   },
   upiIdRow: {
     flexDirection: 'row',
@@ -2156,38 +3174,233 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#007AFF',
   },
-  toggleEditUpiBtn: {
+  orderTypeCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  orderTypeSegmentedRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 14,
+    gap: 4,
+  },
+  orderTypeSegmentBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  orderTypeSegmentBtnActive: {
+    backgroundColor: '#007AFF',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  orderTypeSegmentText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  orderTypeSegmentTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  dineInDetailsBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 12,
+  },
+  dineInHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 6,
+    paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  toggleEditUpiText: {
+  dineInNoticeText: {
     fontSize: 12,
-    color: '#007AFF',
+    color: '#065F46',
     fontWeight: '600',
+    flex: 1,
   },
-  editUpiBox: {
-    marginTop: 8,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+  parcelNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  editUpiLabel: {
+  parcelNoticeText: {
     fontSize: 12,
+    color: '#92400E',
     fontWeight: '600',
-    color: '#475569',
-    marginBottom: 6,
+    flex: 1,
   },
-  editUpiInput: {
-    backgroundColor: '#F8FAFC',
+  noUpiBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  noUpiBannerText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
+    flex: 1,
+  },
+  orderTypeModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  orderTypeModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  orderTypeModalHeader: {
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  orderTypeModalIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  orderTypeModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
     color: '#0F172A',
+    marginBottom: 4,
+  },
+  orderTypeModalSub: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  modalOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  modalOptionCardActive: {
+    borderColor: '#007AFF',
+    backgroundColor: '#F0F7FF',
+  },
+  modalOptionIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  modalOptionIconCircleOrange: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FEF3C7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  modalOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginRight: 8,
+  },
+  modalOptionDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  modalOptionBadgeGreen: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  modalOptionBadgeGreenText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  modalOptionBadgeOrange: {
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  modalOptionBadgeOrangeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  orderTypeModalCancelBtn: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  orderTypeModalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
   },
 
   /* Docked Action Footer Bar */

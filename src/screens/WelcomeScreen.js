@@ -18,11 +18,14 @@ import {
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import * as Location from 'expo-location';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useCart } from '../context/CartContext';
 import { supabase, extractStoreSettings } from '../services/supabase';
 import { showAlert } from '../utils/alertUtils';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import StoreQrModal from '../components/StoreQrModal';
+import { getPreferredStore, setPreferredStore, clearPreferredStore } from '../services/localStorageService';
 
 const { width } = Dimensions.get('window');
 
@@ -85,22 +88,116 @@ export default function WelcomeScreen() {
   const [viewerActiveIndex, setViewerActiveIndex] = useState(0);
   const [viewerStoreName, setViewerStoreName] = useState('');
 
+  // Store QR Code Modal and Preferred Store state
+  const [storeQrModalVisible, setStoreQrModalVisible] = useState(false);
+  const [qrModalSeller, setQrModalSeller] = useState(null);
+  const [preferredStore, setPreferredStoreState] = useState(null);
+
+  // Sync preferred store on screen focus
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      (async () => {
+        try {
+          const stored = await getPreferredStore();
+          if (isMounted) {
+            setPreferredStoreState(stored);
+          }
+        } catch (err) {
+          console.warn('[WelcomeScreen] Error loading preferred store:', err);
+        }
+      })();
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
+
+  const handleOpenStoreQr = useCallback((seller) => {
+    setQrModalSeller(seller);
+    setStoreQrModalVisible(true);
+  }, []);
+
+  const handleBrowseStoreFromQr = useCallback((seller) => {
+    setPreferredStore(seller.id, seller.full_name);
+    setPreferredStoreState({ sellerId: seller.id, sellerName: seller.full_name });
+    navigation.navigate('Catalog', {
+      sellerId: seller.id,
+      sellerName: seller.full_name,
+    });
+  }, [navigation]);
+
   const handleOpenMediaViewer = useCallback((seller, initialIndex = 0) => {
-    let items = (seller?.mediaList || []).filter((m) => m && m.uri);
-    if (items.length === 0) {
-      const fallbackUri = seller?.firstPhoto || seller?.avatar_url;
-      if (fallbackUri) {
-        items = [{ uri: fallbackUri, type: 'image' }];
+    // Compile media from all sellers so user can continuously scroll left or right across all stores!
+    const allSellersMedia = [];
+    let targetIdx = 0;
+    (sellers || []).forEach((s) => {
+      const sMedia = (s?.mediaList || []).filter((m) => m && m.uri);
+      if (sMedia.length > 0) {
+        sMedia.forEach((m, mIdx) => {
+          if (String(s.id) === String(seller?.id) && mIdx === initialIndex) {
+            targetIdx = allSellersMedia.length;
+          }
+          allSellersMedia.push({
+            id: `sel-${s.id}-m-${mIdx}`,
+            uri: m.uri,
+            type: m.type || 'image',
+            title: sMedia.length > 1 ? `${s.full_name} (${mIdx + 1}/${sMedia.length})` : s.full_name,
+            subtitle: s.city || s.address || null,
+          });
+        });
+      } else {
+        const photo = s.firstPhoto || s.avatar_url;
+        if (photo) {
+          if (String(s.id) === String(seller?.id)) {
+            targetIdx = allSellersMedia.length;
+          }
+          allSellersMedia.push({
+            id: `sel-${s.id}-photo`,
+            uri: photo,
+            type: 'image',
+            title: s.full_name,
+            subtitle: s.city || s.address || null,
+          });
+        }
+      }
+    });
+
+    if (allSellersMedia.length === 0 && seller) {
+      const items = (seller?.mediaList || []).filter((m) => m && m.uri);
+      if (items.length > 0) {
+        items.forEach((m, idx) => {
+          allSellersMedia.push({
+            id: `sel-single-${idx}`,
+            uri: m.uri,
+            type: m.type || 'image',
+            title: items.length > 1 ? `${seller.full_name} (${idx + 1}/${items.length})` : seller.full_name,
+            subtitle: seller.city || seller.address || null,
+          });
+        });
+        targetIdx = Math.min(Math.max(0, initialIndex), items.length - 1);
+      } else {
+        const fallbackUri = seller?.firstPhoto || seller?.avatar_url;
+        if (fallbackUri) {
+          allSellersMedia.push({
+            id: `sel-fallback`,
+            uri: fallbackUri,
+            type: 'image',
+            title: seller.full_name,
+            subtitle: seller.city || seller.address || null,
+          });
+          targetIdx = 0;
+        }
       }
     }
-    if (items.length === 0) return;
 
-    setViewerMediaList(items);
-    const validIndex = Math.min(Math.max(0, initialIndex), items.length - 1);
-    setViewerActiveIndex(validIndex);
-    setViewerStoreName(seller?.full_name || 'Store Media');
-    setViewerModalVisible(true);
-  }, []);
+    if (allSellersMedia.length > 0) {
+      setViewerMediaList(allSellersMedia);
+      setViewerActiveIndex(targetIdx);
+      setViewerStoreName(seller?.full_name || 'Stores & Media');
+      setViewerModalVisible(true);
+    }
+  }, [sellers]);
 
   const handleCloseMediaViewer = useCallback(() => {
     setViewerModalVisible(false);
@@ -510,6 +607,57 @@ export default function WelcomeScreen() {
             <Icon name="chevron-right" size={14} color="#FFFFFF" />
           </TouchableOpacity>
 
+          {/* Active Store Lock Banner (when user scanned or selected an individual store) */}
+          {preferredStore?.sellerId && (
+            <View style={styles.activeStoreBanner}>
+              <View style={styles.activeStoreIconBox}>
+                <Icon name="shopping-bag" size={16} color="#007AFF" />
+              </View>
+              <View style={styles.activeStoreInfo}>
+                <Text style={styles.activeStoreLabel}>Currently Shopping At:</Text>
+                <Text style={styles.activeStoreName} numberOfLines={1}>
+                  {preferredStore.sellerName || 'Selected Store'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.activeStoreBrowseBtn}
+                onPress={() =>
+                  navigation.navigate('Catalog', {
+                    sellerId: preferredStore.sellerId,
+                    sellerName: preferredStore.sellerName,
+                  })
+                }
+                activeOpacity={0.8}
+              >
+                <Text style={styles.activeStoreBrowseText}>Shop Now</Text>
+                <Icon name="chevron-right" size={10} color="#FFFFFF" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.activeStoreQrBtn}
+                onPress={() =>
+                  handleOpenStoreQr({
+                    id: preferredStore.sellerId,
+                    full_name: preferredStore.sellerName,
+                  })
+                }
+                activeOpacity={0.8}
+              >
+                <Icon name="qrcode" size={13} color="#007AFF" style={{ marginRight: 4 }} />
+                <Text style={styles.activeStoreQrText}>QR</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.activeStoreClearBtn}
+                onPress={async () => {
+                  await clearPreferredStore();
+                  setPreferredStoreState(null);
+                }}
+                activeOpacity={0.7}
+              >
+                <Icon name="times" size={14} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Portal Separator */}
           <Text style={styles.sectionHeader}>Portals & Access</Text>
 
@@ -759,15 +907,26 @@ export default function WelcomeScreen() {
                       <TouchableOpacity
                         style={styles.shopCatalogBtn}
                         activeOpacity={0.8}
-                        onPress={() =>
+                        onPress={() => {
+                          setPreferredStore(seller.id, seller.full_name);
+                          setPreferredStoreState({ sellerId: seller.id, sellerName: seller.full_name });
                           navigation.navigate('Catalog', {
                             sellerId: seller.id,
                             sellerName: seller.full_name,
-                          })
-                        }
+                          });
+                        }}
                       >
                         <Icon name="shopping-bag" size={13} color="#FFFFFF" style={{ marginRight: 6 }} />
                         <Text style={styles.shopCatalogBtnText}>Browse Store</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.storeQrBtn}
+                        activeOpacity={0.8}
+                        onPress={() => handleOpenStoreQr(seller)}
+                      >
+                        <Icon name="qrcode" size={14} color="#007AFF" style={{ marginRight: 5 }} />
+                        <Text style={styles.storeQrBtnText}>Store QR</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -797,122 +956,22 @@ export default function WelcomeScreen() {
         </View>
       </ScrollView>
 
-      {/* Fullscreen Media Viewer Modal with Option Images Scrolling */}
-      <Modal
+      {/* Fullscreen Media Viewer with Horizontal Swipe/Scroll & Thumbnails */}
+      <FullScreenImageViewer
         visible={viewerModalVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={handleCloseMediaViewer}
-      >
-        <View style={styles.viewerModalContainer}>
-          {/* Header Bar */}
-          <View style={styles.viewerHeaderBar}>
-            <View style={styles.viewerHeaderLeft}>
-              <Text style={styles.viewerStoreTitle} numberOfLines={1}>
-                {viewerStoreName}
-              </Text>
-              {viewerMediaList.length > 1 && (
-                <Text style={styles.viewerCounterText}>
-                  {viewerActiveIndex + 1} of {viewerMediaList.length} media
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity
-              style={styles.viewerCloseBtn}
-              onPress={handleCloseMediaViewer}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.viewerCloseBtnText}>✕ Close</Text>
-            </TouchableOpacity>
-          </View>
+        mediaList={viewerMediaList}
+        initialIndex={viewerActiveIndex}
+        onClose={handleCloseMediaViewer}
+        title={viewerStoreName || 'Store Media'}
+      />
 
-          {/* Main Media Preview Area with Prev / Next Navigation */}
-          <View style={styles.viewerMediaBox}>
-            {viewerMediaList[viewerActiveIndex] && (
-              <>
-                {viewerMediaList[viewerActiveIndex].type === 'video' ? (
-                  <Video
-                    source={{ uri: viewerMediaList[viewerActiveIndex].uri }}
-                    style={styles.viewerFullVideo}
-                    useNativeControls
-                    resizeMode={ResizeMode.CONTAIN}
-                    shouldPlay={true}
-                  />
-                ) : (
-                  <Image
-                    source={{ uri: viewerMediaList[viewerActiveIndex].uri }}
-                    style={styles.viewerFullImage}
-                    resizeMode="contain"
-                  />
-                )}
-
-                {/* Previous Arrow */}
-                {viewerMediaList.length > 1 && (
-                  <TouchableOpacity
-                    style={[styles.viewerNavBtn, styles.viewerNavBtnLeft]}
-                    onPress={handlePrevMedia}
-                    activeOpacity={0.7}
-                  >
-                    <Icon name="chevron-left" size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                )}
-
-                {/* Next Arrow */}
-                {viewerMediaList.length > 1 && (
-                  <TouchableOpacity
-                    style={[styles.viewerNavBtn, styles.viewerNavBtnRight]}
-                    onPress={handleNextMedia}
-                    activeOpacity={0.7}
-                  >
-                    <Icon name="chevron-right" size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-          </View>
-
-          {/* Bottom Scrolling Thumbnail Strip for all Option Images */}
-          {viewerMediaList.length > 1 && (
-            <View style={styles.viewerThumbScrollContainer}>
-              <Text style={styles.viewerThumbScrollTitle}>Option Images ({viewerMediaList.length}):</Text>
-              <ScrollView
-                horizontal
-                nestedScrollEnabled={true}
-                showsHorizontalScrollIndicator={true}
-                contentContainerStyle={styles.viewerThumbScrollContent}
-              >
-                {viewerMediaList.map((item, idx) => {
-                  const isActive = idx === viewerActiveIndex;
-                  return (
-                    <TouchableOpacity
-                      key={`modal-thumb-${idx}-${item.uri}`}
-                      style={[
-                        styles.viewerThumbItem,
-                        isActive && styles.viewerThumbItemActive,
-                      ]}
-                      onPress={() => setViewerActiveIndex(idx)}
-                      activeOpacity={0.8}
-                    >
-                      {item.type === 'video' ? (
-                        <View style={styles.viewerVideoThumbSmall}>
-                          <Text style={styles.viewerVideoPlaySmall}>▶</Text>
-                        </View>
-                      ) : (
-                        <Image
-                          source={{ uri: item.uri }}
-                          style={styles.viewerThumbImageSmall}
-                          resizeMode="cover"
-                        />
-                      )}
-                      {isActive && <View style={styles.activeDot} />}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-        </View>
-      </Modal>
+      {/* Individual Store QR Code Modal */}
+      <StoreQrModal
+        visible={storeQrModalVisible}
+        seller={qrModalSeller}
+        onClose={() => setStoreQrModalVisible(false)}
+        onBrowseStore={handleBrowseStoreFromQr}
+      />
 
       {/* Persistent Bottom Navigation Footer */}
       <StoreNavigationFooter
@@ -927,20 +986,27 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: '100%',
+    minWidth: '100%',
     backgroundColor: '#F8FAFC',
     height: Platform.OS === 'web' ? '100%' : undefined,
+    ...(Platform.OS === 'web' ? { minHeight: '100vh', width: '100%' } : {}),
   },
   scrollView: {
     flex: 1,
     width: '100%',
+    minWidth: '100%',
     ...(Platform.OS === 'web' ? { overflowY: 'auto' } : {}),
   },
   scrollContent: {
     flexGrow: 1,
+    width: '100%',
+    minWidth: '100%',
     paddingBottom: 90,
   },
   brandContainer: {
     alignItems: 'center',
+    width: '100%',
     paddingHorizontal: 24,
     marginTop: Platform.OS === 'ios' ? 24 : 36,
   },
@@ -998,6 +1064,77 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 6,
     marginBottom: 24,
+  },
+  activeStoreBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    marginBottom: 20,
+    gap: 10,
+  },
+  activeStoreIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeStoreInfo: {
+    flex: 1,
+  },
+  activeStoreLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0284C7',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  activeStoreName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 1,
+  },
+  activeStoreBrowseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  activeStoreBrowseText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  activeStoreQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+  },
+  activeStoreQrText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  activeStoreClearBtn: {
+    padding: 6,
+    borderRadius: 12,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   mainButtonContent: {
     flexDirection: 'row',
@@ -1197,12 +1334,14 @@ const styles = StyleSheet.create({
   sellersList: {
     display: 'flex',
     flexDirection: 'column',
+    width: '100%',
     gap: 12,
   },
   sellerCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
+    width: '100%',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#0F172A',
@@ -1333,6 +1472,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  storeQrBtn: {
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeQrBtnText: {
+    color: '#007AFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   viewOnMapBtn: {
     paddingHorizontal: 14,
     paddingVertical: 9,
@@ -1352,6 +1507,7 @@ const styles = StyleSheet.create({
 
   footer: {
     alignItems: 'center',
+    width: '100%',
     paddingBottom: 24,
     paddingHorizontal: 20,
     marginTop: 10,

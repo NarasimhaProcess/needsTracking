@@ -128,3 +128,32 @@
 ## 2026-09-13 05:20:00 UTC
 - **User Request**: "can you check the probelm of https://narasimhaprocess.github.io/needsTracking/ page loadin g not wokring"
 - **Summary**: Diagnosed root cause of blank page load crash: when `.env` is omitted in web builds, `Constants?.expoConfig?.extra?.SUPABASE_URL` was evaluated as an empty object `{}` rather than a string, causing `@supabase/supabase-js`'s URL trimmer to throw `TypeError: e.trim is not a function` at initial script evaluation. Added strict string validation (`getValidString`) and default active project fallbacks in `src/services/supabase.js` and `app.config.js`, created `.env`, rebuilt web bundle (`dist/`), verified clean execution and React DOM mounting, committed to `master`, and deployed live to `gh-pages`.
+
+## 2026-09-17 16:35:17 UTC
+- **User Request**: "in welcome page below browse button and catalog provide individaula store qr code dispaly if user use this qr only show his prducts only supppose if he come back after login also show his store only in login page for individal shopes is it good idea or nay other because I will this qr code to shop owner to attract the customers and they check product on mobile on shop"
+- **Summary**: Validated and implemented individual Store QR Code display, URL parameter routing, shop lock persistence, and A4 counter standee printing:
+  1. **Direct QR Scanning & Automatic Routing ([App.js](file:///workspaces/needsTracking/App.js))**: Added deep link and web query param detection (`?sellerId=...&sellerName=...`) on startup and navigation ready. When a customer scans a shop QR code, `App.js` persists the store in `localStorage` via `setPreferredStore` and automatically routes them directly to `CatalogScreen` filtered strictly to that seller.
+  2. **Active Store Persistence & Scoped Catalog ([CatalogScreen.js](file:///workspaces/needsTracking/src/screens/CatalogScreen.js))**: Ensured that when a customer lands from a QR code or preferred store, only that shop's products are loaded (`getActiveProductsWithDetails(targetSellerId)`). Added a top store banner with quick access to the store's QR code and a "View All" button to clear the lock.
+  3. **Welcome Screen Store Banner & Actions ([WelcomeScreen.js](file:///workspaces/needsTracking/src/screens/WelcomeScreen.js))**: Positioned a prominent "Currently Shopping At" active store banner below the main map/browse action button with 1-tap "Shop Now", "QR", and Clear buttons. Added individual "Store QR" buttons to each store card in the seller list.
+  4. **Login / Signup Scoping ([BuyerLoginScreen.js](file:///workspaces/needsTracking/src/screens/BuyerLoginScreen.js), [BuyerSignupScreen.js](file:///workspaces/needsTracking/src/screens/BuyerSignupScreen.js), [LoginScreen.js](file:///workspaces/needsTracking/src/screens/LoginScreen.js))**: Displayed the active "Shopping At Store: [Store Name]" header banner, and ensured users are returned directly to the scanned store's catalog after email, OTP, or Google authentication.
+  5. **Shopkeeper QR Modal & Printable Standee ([StoreQrModal.js](file:///workspaces/needsTracking/src/components/StoreQrModal.js), [printerService.js](file:///workspaces/needsTracking/src/services/printerService.js))**: Built interactive modal with high-res QR code, direct URL copy, and 1-tap A4 portrait printable counter standee for physical store counters.
+  6. Successfully compiled and verified web production export (`dist/`).
+## 2026-09-18 05:45:00 UTC
+- **User Request**: "in check out page pay with upi details should take it from seller profile only, no need of change customize upi id also, if seller not configure dont show this option only cash on delivery, and order type by default dine-in, so login or delivery contact address not mandatory if user not login, orders goes to seller only, and while click Pay with UPI just ask user is it parcel or Dine-in, If Dine-in Goes to next step slece change to order type to parcel then signin or address is mandatory, If you guess any idea let me know" / "can u check last fix"
+- **Summary**:
+  1. **Strict Seller Profile UPI Enforcement ([CheckoutScreen.js](file:///workspaces/needsTracking/src/screens/CheckoutScreen.js), [UpiQrScreen.js](file:///workspaces/needsTracking/src/screens/UpiQrScreen.js))**:
+     - Removed custom UPI ID editing/override fields so buyers cannot alter payee details.
+     - UPI payment details are strictly resolved from the seller's active QR code (`user_qr_codes`) and `profiles.upi_id`.
+     - When the seller has not configured a UPI ID, the "Pay with UPI" option is completely hidden and automatically falls back to Cash on Delivery / Pay at Counter (`cod`).
+  2. **Default Dine-in & Guest Checkout**:
+     - Order type defaults to **Dine-in**.
+     - Dine-in customers do not need to log in or enter delivery addresses (supports guest orders directly to table/counter).
+     - Orders are marked `order_type: 'shop-order'` and assigned directly to the store seller only (no external delivery manager assignment).
+  3. **Interactive Order Type Modal on "Pay with UPI"**:
+     - Clicking "Pay with UPI" prompts the customer: *"Is this order for Dine-in or Parcel?"*.
+     - **Dine-in**: Proceeds directly to UPI payment with no login or delivery address required.
+     - **Parcel**: Switches order type to Parcel, making account sign-in, verified contact number, and delivery address mandatory before proceeding.
+  4. **Supabase Database Migration ([enable_guest_and_dine_in_orders.sql](file:///workspaces/needsTracking/enable_guest_and_dine_in_orders.sql))**:
+     - Adds `seller_id`, `table_no`, and `order_type` columns to `orders`.
+     - Configures RLS policies (`orders_insert_policy`, `orders_select_policy`, `order_items_insert_policy`) allowing guest customers (`auth.uid() IS NULL`) to insert Dine-in orders and store sellers to view and manage all orders placed at their store.
+  5. **Production Build**: Verified zero missing styles, validated Babel transforms, and completed clean Expo web production export (`dist/`).

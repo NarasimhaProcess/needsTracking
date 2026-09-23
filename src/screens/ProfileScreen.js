@@ -28,6 +28,8 @@ import {
   setAllStoresActiveStatus,
   extractStoreSettings,
   embedStoreSettings,
+  extractMerchantUpi,
+  embedMerchantUpi,
 } from '../services/supabase';
 import {
   schedulePushNotification,
@@ -54,12 +56,16 @@ import {
   testVoiceAnnouncement,
 } from '../services/speechService';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
+import { useTheme } from '../context/ThemeContext';
+import { decodeQrFromImage, parseUpiString, normalizeUpiId, isGenericQrName } from '../services/qrScanService';
 
 const MAX_IMAGES = 3;
 const MAX_VIDEOS = 1;
 const MAX_VIDEO_SIZE_MB = 50;
 
 const ProfileScreen = ({ navigation, route }) => {
+  const { themeMode, setThemeMode, colors, isDark } = useTheme();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState(null);
@@ -82,6 +88,9 @@ const ProfileScreen = ({ navigation, route }) => {
   const [upiQrCodeUrl, setUpiQrCodeUrl] = useState(null);
   const [upiId, setUpiId] = useState('');
   const [savingUpiId, setSavingUpiId] = useState(false);
+  const [scanningQr, setScanningQr] = useState(false);
+  const [qrSourceInfo, setQrSourceInfo] = useState('');
+  const [showManualUpiEdit, setShowManualUpiEdit] = useState(false);
 
   // Map Area Search & Location Picker State
   const mapRef = useRef(null);
@@ -94,7 +103,9 @@ const ProfileScreen = ({ navigation, route }) => {
 
   // Profile media state: array of { uri: string, type: 'image' | 'video', isNew?: boolean }
   const [mediaList, setMediaList] = useState([]);
-  const [selectedPreviewMedia, setSelectedPreviewMedia] = useState(null);
+  const [showMediaViewer, setShowMediaViewer] = useState(false);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+  const [viewerCustomMedia, setViewerCustomMedia] = useState(null);
 
   const imageCount = mediaList.filter((m) => m.type === 'image').length;
   const videoCount = mediaList.filter((m) => m.type === 'video').length;
@@ -206,11 +217,29 @@ const ProfileScreen = ({ navigation, route }) => {
     }
   };
 
+  const syncTaxSettingsToAuth = async (cfg) => {
+    try {
+      await supabase.auth.updateUser({
+        data: {
+          tax_settings: {
+            enable_tax: cfg.enableTax === true,
+            cgst_rate: cfg.cgstRate !== undefined ? Number(cfg.cgstRate) : 2.5,
+            sgst_rate: cfg.sgstRate !== undefined ? Number(cfg.sgstRate) : 2.5,
+            enable_service_cost: cfg.enableServiceCost === true,
+            service_cost_rate: cfg.serviceCostRate !== undefined ? Number(cfg.serviceCostRate) : 0,
+            print_tax_breakdown: cfg.printTaxBreakdown !== false,
+          },
+        },
+      });
+    } catch (_) {}
+  };
+
   const handleToggleTax = async (val) => {
     try {
       const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), enableTax: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
+      syncTaxSettingsToAuth(updated);
       if (profile?.id) {
         try {
           await supabase.from('profiles').update({ enable_tax: val }).eq('id', profile.id);
@@ -233,6 +262,7 @@ const ProfileScreen = ({ navigation, route }) => {
     const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), cgstRate: rate };
     setPrinterConfig(updated);
     await savePrinterConfig(updated);
+    syncTaxSettingsToAuth(updated);
     if (profile?.id) {
       try {
         await supabase.from('profiles').update({ cgst_rate: rate }).eq('id', profile.id);
@@ -246,6 +276,7 @@ const ProfileScreen = ({ navigation, route }) => {
     const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), sgstRate: rate };
     setPrinterConfig(updated);
     await savePrinterConfig(updated);
+    syncTaxSettingsToAuth(updated);
     if (profile?.id) {
       try {
         await supabase.from('profiles').update({ sgst_rate: rate }).eq('id', profile.id);
@@ -258,6 +289,7 @@ const ProfileScreen = ({ navigation, route }) => {
       const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), enableServiceCost: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
+      syncTaxSettingsToAuth(updated);
       if (profile?.id) {
         try {
           await supabase.from('profiles').update({ enable_service_cost: val }).eq('id', profile.id);
@@ -280,6 +312,7 @@ const ProfileScreen = ({ navigation, route }) => {
     const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), serviceCostRate: rate };
     setPrinterConfig(updated);
     await savePrinterConfig(updated);
+    syncTaxSettingsToAuth(updated);
     if (profile?.id) {
       try {
         await supabase.from('profiles').update({ service_cost_rate: rate }).eq('id', profile.id);
@@ -292,6 +325,12 @@ const ProfileScreen = ({ navigation, route }) => {
       const updated = { ...(printerConfig || DEFAULT_PRINTER_CONFIG), printTaxBreakdown: val };
       setPrinterConfig(updated);
       await savePrinterConfig(updated);
+      syncTaxSettingsToAuth(updated);
+      if (profile?.id) {
+        try {
+          await supabase.from('profiles').update({ print_tax_breakdown: val }).eq('id', profile.id);
+        } catch (_) {}
+      }
     } catch (err) {
       console.warn('Error updating printTaxBreakdown:', err);
     }
@@ -324,6 +363,16 @@ const ProfileScreen = ({ navigation, route }) => {
       console.warn('Test voice error:', err);
     } finally {
       setTimeout(() => setTestingVoice(false), 1400);
+    }
+  };
+
+  const handleSelectTheme = async (mode) => {
+    try {
+      await setThemeMode(mode);
+      const modeLabel = mode === 'dark' ? 'Dark' : mode === 'light' ? 'Light' : 'System Default';
+      showAlert('Theme Updated', `Theme set to ${modeLabel}.`);
+    } catch (err) {
+      console.warn('Error updating theme mode:', err);
     }
   };
 
@@ -454,6 +503,25 @@ const ProfileScreen = ({ navigation, route }) => {
             setMarkerLocation({ latitude: lat, longitude: lon });
           }
 
+          // Sync Tax & Service Charge Settings from profile data or user metadata
+          const metaTax = user.user_metadata?.tax_settings || {};
+          const syncedTaxConfig = {
+            enableTax: data.enable_tax !== undefined && data.enable_tax !== null ? Boolean(data.enable_tax) : (metaTax.enable_tax !== undefined ? Boolean(metaTax.enable_tax) : undefined),
+            cgstRate: data.cgst_rate !== undefined && data.cgst_rate !== null ? Number(data.cgst_rate) : (metaTax.cgst_rate !== undefined ? Number(metaTax.cgst_rate) : undefined),
+            sgstRate: data.sgst_rate !== undefined && data.sgst_rate !== null ? Number(data.sgst_rate) : (metaTax.sgst_rate !== undefined ? Number(metaTax.sgst_rate) : undefined),
+            enableServiceCost: data.enable_service_cost !== undefined && data.enable_service_cost !== null ? Boolean(data.enable_service_cost) : (metaTax.enable_service_cost !== undefined ? Boolean(metaTax.enable_service_cost) : undefined),
+            serviceCostRate: data.service_cost_rate !== undefined && data.service_cost_rate !== null ? Number(data.service_cost_rate) : (metaTax.service_cost_rate !== undefined ? Number(metaTax.service_cost_rate) : undefined),
+            printTaxBreakdown: data.print_tax_breakdown !== undefined && data.print_tax_breakdown !== null ? Boolean(data.print_tax_breakdown) : (metaTax.print_tax_breakdown !== undefined ? Boolean(metaTax.print_tax_breakdown) : undefined),
+          };
+          const cleanSynced = Object.fromEntries(Object.entries(syncedTaxConfig).filter(([_, v]) => v !== undefined));
+          if (Object.keys(cleanSynced).length > 0) {
+            getPrinterConfig().then((cfg) => {
+              const merged = { ...cfg, ...cleanSynced };
+              setPrinterConfig(merged);
+              savePrinterConfig(merged);
+            });
+          }
+
           // Extract Store & Product Active Settings
           let storeSettings = extractStoreSettings(data.media_urls);
           const hasSettingsInMedia = Array.isArray(data.media_urls)
@@ -541,16 +609,40 @@ const ProfileScreen = ({ navigation, route }) => {
         }
 
         const activeQr = await getActiveQrCode(user.id);
+        const embeddedUpi = extractMerchantUpi(data?.media_urls);
+        let currentUpiId =
+          normalizeUpiId(data?.upi_id) ||
+          normalizeUpiId(embeddedUpi) ||
+          normalizeUpiId(user.user_metadata?.upi_id) ||
+          '';
+
         if (activeQr) {
           setUpiQrCodeUrl(activeQr.qr_image_url);
-          if (activeQr.name && activeQr.name.includes('@')) {
-            setUpiId(activeQr.name);
+          if (!currentUpiId && activeQr.name && !isGenericQrName(activeQr.name)) {
+            currentUpiId = normalizeUpiId(activeQr.name) || '';
+          }
+          // If UPI ID is missing, scan active QR image in background to recover it
+          if (!currentUpiId && activeQr.qr_image_url) {
+            decodeQrFromImage(activeQr.qr_image_url)
+              .then((scan) => {
+                if (scan?.success && scan.upiId) {
+                  const detected = normalizeUpiId(scan.upiId);
+                  if (detected && !isGenericQrName(detected)) {
+                    setUpiId(detected);
+                    setQrSourceInfo('Scanned from QR Code');
+                    setProfile((prev) => ({ ...(prev || {}), upi_id: detected }));
+                    updateQrCode(activeQr.id, detected, true).catch(() => {});
+                    supabase.from('profiles').update({ upi_id: detected }).eq('id', user.id).catch(() => {});
+                    supabase.auth.updateUser({ data: { upi_id: detected } }).catch(() => {});
+                  }
+                }
+              })
+              .catch(() => {});
           }
         }
-        if (user.user_metadata?.upi_id) {
-          setUpiId(user.user_metadata.upi_id);
-        } else if (data?.upi_id) {
-          setUpiId(data.upi_id);
+        if (currentUpiId && !isGenericQrName(currentUpiId)) {
+          setUpiId(currentUpiId);
+          setProfile((prev) => ({ ...(prev || {}), upi_id: currentUpiId }));
         }
       }
     } catch (err) {
@@ -937,6 +1029,14 @@ const ProfileScreen = ({ navigation, route }) => {
       const parsedLat = latitude != null && !isNaN(Number(latitude)) ? Number(latitude) : null;
       const parsedLon = longitude != null && !isNaN(Number(longitude)) ? Number(longitude) : null;
 
+      // Auto-normalize Merchant UPI ID (e.g. 9876543210 -> 9876543210@upi, storename -> storename@upi)
+      const rawUpi = (upiId || '').trim();
+      const normalizedUpi = normalizeUpiId(rawUpi);
+      if (normalizedUpi && !isGenericQrName(normalizedUpi)) {
+        setUpiId(normalizedUpi);
+        setProfile((prev) => ({ ...(prev || {}), upi_id: normalizedUpi }));
+      }
+
       const updates = {
         id: user.id,
         full_name: trimmedName,
@@ -950,6 +1050,14 @@ const ProfileScreen = ({ navigation, route }) => {
         zip_code: (zipCode || '').trim(),
         latitude: parsedLat,
         longitude: parsedLon,
+        upi_id: normalizedUpi && !isGenericQrName(normalizedUpi) ? normalizedUpi : (profile?.upi_id || null),
+        enable_tax: printerConfig?.enableTax === true,
+        cgst_rate: printerConfig?.cgstRate !== undefined ? Number(printerConfig.cgstRate) : 2.5,
+        sgst_rate: printerConfig?.sgstRate !== undefined ? Number(printerConfig.sgstRate) : 2.5,
+        enable_service_cost: printerConfig?.enableServiceCost === true,
+        service_cost_rate: printerConfig?.serviceCostRate !== undefined ? Number(printerConfig.serviceCostRate) : 0,
+        print_tax_breakdown: printerConfig?.printTaxBreakdown !== false,
+        theme_preference: themeMode || 'system',
         updated_at: new Date().toISOString(),
       };
 
@@ -962,11 +1070,27 @@ const ProfileScreen = ({ navigation, route }) => {
       updates.role = effectiveRole;
 
       // Try upserting to profiles table
-      const { data: updatedData, error: profileError } = await supabase
+      let { data: updatedData, error: profileError } = await supabase
         .from('profiles')
         .upsert(updates, { onConflict: 'id' })
         .select()
         .maybeSingle();
+
+      if (profileError && (profileError.code === 'PGRST204' || profileError.message?.includes('column'))) {
+        console.warn('Retrying profile upsert without tax, theme, or upi_id columns:', profileError.message);
+        const fallbackUpdates = { ...updates };
+        delete fallbackUpdates.enable_tax;
+        delete fallbackUpdates.cgst_rate;
+        delete fallbackUpdates.sgst_rate;
+        delete fallbackUpdates.enable_service_cost;
+        delete fallbackUpdates.service_cost_rate;
+        delete fallbackUpdates.print_tax_breakdown;
+        delete fallbackUpdates.theme_preference;
+        delete fallbackUpdates.upi_id;
+        const retryResult = await supabase.from('profiles').upsert(fallbackUpdates, { onConflict: 'id' }).select().maybeSingle();
+        updatedData = retryResult.data;
+        profileError = retryResult.error;
+      }
 
       if (profileError) {
         console.error('Error updating profile:', profileError.message);
@@ -975,9 +1099,15 @@ const ProfileScreen = ({ navigation, route }) => {
         return;
       }
 
+      // Embed merchant UPI ID into media_urls as persistent backup
+      let mediaListWithUpi = finalMediaList;
+      if (normalizedUpi && !isGenericQrName(normalizedUpi)) {
+        mediaListWithUpi = embedMerchantUpi(finalMediaList, normalizedUpi);
+      }
+
       if (isSeller) {
         // Embed store settings into final media array for profiles
-        const finalMediaWithSettings = embedStoreSettings(finalMediaList, {
+        const finalMediaWithSettings = embedStoreSettings(mediaListWithUpi, {
           is_store_active: isStoreActive,
           is_map_active: isMapActive,
           is_product_active: isProductViewActive,
@@ -1009,7 +1139,7 @@ const ProfileScreen = ({ navigation, route }) => {
         try {
           await supabase
             .from('profiles')
-            .update({ media_urls: finalMediaList })
+            .update({ media_urls: mediaListWithUpi })
             .eq('id', user.id);
         } catch (colErr) {
           console.warn('Notice: media_urls column update:', colErr);
@@ -1023,7 +1153,7 @@ const ProfileScreen = ({ navigation, route }) => {
           full_name: trimmedName,
           avatar_url: avatarUrl,
           profile_media: finalMediaList,
-          upi_id: (upiId || '').trim(),
+          upi_id: normalizedUpi && !isGenericQrName(normalizedUpi) ? normalizedUpi : (profile?.upi_id || ''),
           mobile: trimmedMobile,
           address_line_1: (addressLine1 || '').trim(),
           address_line_2: (addressLine2 || '').trim(),
@@ -1033,6 +1163,14 @@ const ProfileScreen = ({ navigation, route }) => {
           latitude: parsedLat,
           longitude: parsedLon,
           role: effectiveRole,
+          tax_settings: {
+            enable_tax: printerConfig?.enableTax === true,
+            cgst_rate: printerConfig?.cgstRate !== undefined ? Number(printerConfig.cgstRate) : 2.5,
+            sgst_rate: printerConfig?.sgstRate !== undefined ? Number(printerConfig.sgstRate) : 2.5,
+            enable_service_cost: printerConfig?.enableServiceCost === true,
+            service_cost_rate: printerConfig?.serviceCostRate !== undefined ? Number(printerConfig.serviceCostRate) : 0,
+            print_tax_breakdown: printerConfig?.printTaxBreakdown !== false,
+          },
           ...(isSeller
             ? {
                 store_settings: {
@@ -1045,11 +1183,23 @@ const ProfileScreen = ({ navigation, route }) => {
         },
       };
 
-      if (upiId && upiId.trim().includes('@')) {
+      if (normalizedUpi && !isGenericQrName(normalizedUpi)) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ upi_id: normalizedUpi })
+            .eq('id', user.id);
+        } catch (_) {}
         try {
           const activeQr = await getActiveQrCode(user.id);
           if (activeQr) {
-            await updateQrCode(activeQr.id, upiId.trim(), true);
+            await updateQrCode(activeQr.id, normalizedUpi, true);
+          } else {
+            const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+              `upi://pay?pa=${encodeURIComponent(normalizedUpi)}&pn=${encodeURIComponent(trimmedName || 'Store')}&cu=INR`
+            )}`;
+            await addQrCode(user.id, dynamicQrUrl, normalizedUpi, true);
+            setUpiQrCodeUrl(dynamicQrUrl);
           }
         } catch (qrSyncErr) {
           console.warn('Notice syncing QR code name:', qrSyncErr);
@@ -1313,57 +1463,174 @@ const ProfileScreen = ({ navigation, route }) => {
     }
   };
 
-  const handleUpiQrUpload = async () => {
+  const handleUpiQrUpload = async (mode = 'gallery') => {
     try {
       if (Platform.OS !== 'web') {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-          showAlert('Permission Denied', 'Camera roll permissions are required to upload QR code.');
-          return;
+        if (mode === 'camera') {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            showAlert('Permission Denied', 'Camera permission is required to photograph your QR code standee.');
+            return;
+          }
+        } else {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            showAlert('Permission Denied', 'Photo library permission is required to upload QR code.');
+            return;
+          }
         }
       }
 
-      let result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: Platform.OS !== 'web',
-        aspect: [4, 3],
-        quality: 1,
-      });
+      let result;
+      if (mode === 'camera' && Platform.OS !== 'web') {
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 1,
+        });
+      } else {
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: Platform.OS !== 'web',
+          aspect: [1, 1],
+          quality: 1,
+        });
+      }
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setSaving(true);
+        setScanningQr(true);
         const imageUrl = result.assets[0].uri;
         const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const uploadedUrl = await uploadQrImage(user.id, imageUrl);
-          if (uploadedUrl) {
-            const qrName = upiId.trim() || 'My UPI QR';
-            await addQrCode(user.id, uploadedUrl, qrName, true);
-            setUpiQrCodeUrl(uploadedUrl);
-            showAlert('Success', 'UPI QR Code uploaded successfully.');
-          } else {
-            showAlert('Error', 'Failed to upload QR code. Please try again.');
+        if (!user) {
+          showAlert('Error', 'User not authenticated.');
+          setScanningQr(false);
+          return;
+        }
+
+        // 1. Immediately scan/decode the local image to extract UPI details
+        let scan = null;
+        try {
+          scan = await decodeQrFromImage(imageUrl);
+        } catch (scanErr) {
+          console.warn('Initial QR scan error from local image:', scanErr);
+        }
+
+        // 2. Upload QR image to Supabase storage
+        const uploadedUrl = await uploadQrImage(user.id, imageUrl);
+
+        // 3. Fallback scan on uploaded URL if initial scan didn't find UPI
+        if ((!scan || !scan.success || !scan.upiId) && uploadedUrl) {
+          try {
+            const retryScan = await decodeQrFromImage(uploadedUrl);
+            if (retryScan?.success && retryScan.upiId) {
+              scan = retryScan;
+            }
+          } catch (_) {}
+        }
+
+        const targetQrUrl = uploadedUrl || imageUrl;
+
+        // 4. If UPI ID / payment URI detected, auto-save to profile, user_qr_codes, and auth metadata!
+        if (scan?.success && scan.upiId) {
+          const detectedUpi = normalizeUpiId(scan.upiId);
+          if (detectedUpi && !isGenericQrName(detectedUpi)) {
+            setUpiId(detectedUpi);
+            setUpiQrCodeUrl(targetQrUrl);
+            setQrSourceInfo('Auto-detected from QR Code');
+            setProfile((prev) => ({ ...(prev || {}), upi_id: detectedUpi }));
+
+            // Save active QR record with detected UPI ID
+            await addQrCode(user.id, targetQrUrl, detectedUpi, true);
+
+            // Update profiles table upi_id column
+            try {
+              await supabase.from('profiles').update({ upi_id: detectedUpi }).eq('id', user.id);
+            } catch (_) {}
+
+            // Update auth user metadata
+            try {
+              await supabase.auth.updateUser({ data: { upi_id: detectedUpi } });
+            } catch (_) {}
+
+            // Embed into media_urls backup
+            try {
+              const { data: curProf } = await supabase
+                .from('profiles')
+                .select('media_urls')
+                .eq('id', user.id)
+                .maybeSingle();
+              const updatedMedia = embedMerchantUpi(curProf?.media_urls || mediaList, detectedUpi);
+              await supabase.from('profiles').update({ media_urls: updatedMedia }).eq('id', user.id);
+            } catch (_) {}
+
+            // Auto-fill store name from QR payeeName if current name is empty
+            if (scan.payeeName && !name.trim()) {
+              setName(scan.payeeName);
+              try {
+                await supabase.from('profiles').update({ full_name: scan.payeeName }).eq('id', user.id);
+              } catch (_) {}
+            }
+
+            showAlert(
+              '🎉 UPI QR Configured Successfully!',
+              `Detected UPI ID: "${detectedUpi}"${scan.payeeName ? `\nStore / Payee: "${scan.payeeName}"` : ''}\n\nYour UPI ID and QR code have been saved automatically! Customers can now scan your QR code or pay their exact bill amount directly in Google Pay, PhonePe, or Paytm.`
+            );
+            setScanningQr(false);
+            return;
           }
         }
-        setSaving(false);
+
+        // 5. If QR was uploaded but UPI ID couldn't be decoded
+        if (targetQrUrl) {
+          const qrName = upiId.trim() || 'Store Standee QR';
+          await addQrCode(user.id, targetQrUrl, qrName, true);
+          setUpiQrCodeUrl(targetQrUrl);
+          showAlert(
+            'QR Code Uploaded',
+            'Your QR standee image was uploaded successfully!\n\nNote: We could not automatically detect the UPI ID from this image. If you would like dynamic bill QR codes at checkout, please verify or enter your UPI ID in the text field below.'
+          );
+        } else {
+          showAlert('Upload Failed', 'Failed to upload QR code image. Please try again.');
+        }
+        setScanningQr(false);
       }
     } catch (err) {
       console.error('Error during UPI QR upload:', err);
       showAlert('Upload Failed', err.message || 'Could not pick or upload image.');
-      setSaving(false);
+      setScanningQr(false);
     }
   };
 
+  const handleSelectUpiSuffix = (suffix) => {
+    let base = (upiId || '').trim();
+    if (base.toLowerCase().includes('upi://pay')) {
+      const match = base.match(/[?&]pa=([^&"'\s]+)/i);
+      if (match) base = decodeURIComponent(match[1]).trim();
+    }
+    if (base.includes('@')) {
+      base = base.split('@')[0].trim();
+    }
+    if (!base) {
+      base = (mobile || '').replace(/\D/g, '').slice(-10) || (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+    const updated = base ? `${base}${suffix}` : suffix;
+    setUpiId(updated);
+  };
+
   const handleSaveUpiId = async () => {
-    const trimmed = upiId.trim();
-    if (!trimmed) {
-      showAlert('Invalid UPI ID', 'Please enter a valid UPI ID (e.g., yourname@okaxis or 9876543210@upi)');
+    const raw = (upiId || '').trim();
+    const normalized = normalizeUpiId(raw);
+    if (!normalized || isGenericQrName(normalized)) {
+      showAlert(
+        'Enter UPI ID / Mobile',
+        'Please enter your UPI ID, 10-digit mobile number, or Merchant ID (e.g. 9876543210@upi, store@okaxis, or 9876543210). The @upi handle is added automatically if not specified.'
+      );
       return;
     }
-    if (!trimmed.includes('@')) {
-      showAlert('Invalid UPI ID', 'A valid UPI ID must include "@" (e.g. mobile@upi or username@okhdfcbank)');
-      return;
-    }
+
+    setUpiId(normalized);
+    setProfile((prev) => ({ ...(prev || {}), upi_id: normalized }));
+
     try {
       setSavingUpiId(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -1374,33 +1641,51 @@ const ProfileScreen = ({ navigation, route }) => {
 
       // Update user metadata with UPI ID
       await supabase.auth.updateUser({
-        data: { upi_id: trimmed },
+        data: { upi_id: normalized },
       });
 
-      // Try updating profiles table if column exists
+      // Try updating profiles table upi_id column
       try {
         await supabase
           .from('profiles')
-          .update({ upi_id: trimmed })
+          .update({ upi_id: normalized })
           .eq('id', user.id);
       } catch (err) {
         // column may not exist in profiles table
       }
 
+      // Persistent backup in media_urls
+      try {
+        const { data: curProf } = await supabase
+          .from('profiles')
+          .select('media_urls')
+          .eq('id', user.id)
+          .maybeSingle();
+        const updatedMedia = embedMerchantUpi(curProf?.media_urls || mediaList, normalized);
+        await supabase
+          .from('profiles')
+          .update({ media_urls: updatedMedia })
+          .eq('id', user.id);
+      } catch (_) {}
+
       // Sync with active QR code in user_qr_codes
       const activeQr = await getActiveQrCode(user.id);
+      const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+        `upi://pay?pa=${encodeURIComponent(normalized)}&pn=${encodeURIComponent(name.trim() || 'Store')}&cu=INR`
+      )}`;
+
       if (activeQr) {
-        await updateQrCode(activeQr.id, trimmed, true);
+        await updateQrCode(activeQr.id, normalized, true);
       } else {
-        // Generate dynamic QR code URL for this UPI ID
-        const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-          `upi://pay?pa=${trimmed}&pn=${encodeURIComponent(name.trim() || 'Store')}&cu=INR`
-        )}`;
-        await addQrCode(user.id, dynamicQrUrl, trimmed, true);
+        await addQrCode(user.id, dynamicQrUrl, normalized, true);
         setUpiQrCodeUrl(dynamicQrUrl);
       }
+      setQrSourceInfo('Manually Entered');
 
-      showAlert('Success', 'UPI ID saved successfully! Customers will now see dynamic UPI QR code with their exact order bill amount at checkout.');
+      showAlert(
+        'UPI ID Saved',
+        `Merchant UPI ID configured as "${normalized}". Customers will now see dynamic UPI QR code with their exact order bill amount at checkout.`
+      );
     } catch (err) {
       console.error('Error saving UPI ID:', err);
       showAlert('Error', err.message || 'Failed to save UPI ID.');
@@ -1411,8 +1696,8 @@ const ProfileScreen = ({ navigation, route }) => {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#007AFF" />
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -1432,8 +1717,8 @@ const ProfileScreen = ({ navigation, route }) => {
   const isBuyer = !isAdmin && !isSeller && !isDelivery;
 
   return (
-    <View style={styles.rootWrapper}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <View style={[styles.rootWrapper, { backgroundColor: colors.background }]}>
+      <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.scrollContent}>
       <View style={styles.profileHeaderBox}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {navigation?.canGoBack?.() && (
@@ -1442,10 +1727,10 @@ const ProfileScreen = ({ navigation, route }) => {
               onPress={() => navigation.goBack()}
               accessibilityLabel="Back"
             >
-              <Icon name="arrow-left" size={20} color="#007AFF" />
+              <Icon name="arrow-left" size={20} color={colors.primary} />
             </TouchableOpacity>
           )}
-          <Text style={styles.title}>Profile</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
         </View>
         {(profile?.role || profile?.user_type || isAdmin || isDelivery || isSeller) && (
           <View style={[
@@ -1965,7 +2250,10 @@ const ProfileScreen = ({ navigation, route }) => {
                 <View key={`media-${index}-${media.uri}`} style={styles.mediaItemWrapper}>
                   <TouchableOpacity
                     activeOpacity={0.9}
-                    onPress={() => setSelectedPreviewMedia(media)}
+                    onPress={() => {
+                      setSelectedMediaIndex(index);
+                      setShowMediaViewer(true);
+                    }}
                     style={styles.mediaThumbnailContainer}
                   >
                     {isVideo ? (
@@ -2019,95 +2307,212 @@ const ProfileScreen = ({ navigation, route }) => {
         )}
       </View>
 
-      {/* UPI QR Code & Payment Settings Section */}
-      {(!isBuyer || Boolean(upiId && upiId.trim())) && (
-        <View style={styles.upiSectionCard}>
-          <View style={styles.upiHeaderRow}>
-            <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
-          </View>
-          <Text style={styles.sectionSubtitle}>
-            {isDelivery
-              ? 'Set your UPI ID (VPA) for receiving direct tips and delivery payouts.'
-              : 'Set your UPI ID (VPA) so customers can pay directly with their exact order bill amount at Checkout.'}
-          </Text>
+      {/* UPI QR Code & Payment Settings Section - Always Visible */}
+      <View style={styles.upiSectionCard}>
+        <View style={styles.upiHeaderRow}>
+          <Text style={styles.sectionTitle}>💳 UPI Payments & QR Code</Text>
+        </View>
+        <Text style={styles.sectionSubtitle}>
+          {isDelivery
+            ? 'Set your UPI ID (VPA) for receiving direct tips and delivery payouts.'
+            : 'Set your Merchant UPI QR code so customers can scan and pay with exact order bill amounts — zero confusion, no manual typing needed!'}
+        </Text>
 
-        <Text style={styles.inputLabel}>UPI ID / VPA (e.g. mobile@upi, store@okaxis)</Text>
-        <View style={styles.upiInputRow}>
-          <TextInput
-            style={[styles.input, styles.upiInputFlex]}
-            placeholder="e.g. 9876543210@upi or store@okaxis"
-            value={upiId}
-            onChangeText={setUpiId}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TouchableOpacity
-            style={[styles.saveUpiBtn, savingUpiId && styles.buttonDisabled]}
-            onPress={handleSaveUpiId}
-            disabled={savingUpiId}
-          >
-            {savingUpiId ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.saveUpiBtnText}>Save</Text>
-            )}
-          </TouchableOpacity>
+        {/* PRIMARY SETUP: UPLOAD OR SCAN QR CODE */}
+        <View style={styles.qrUploadHeroCard}>
+          <View style={styles.qrHeroHeader}>
+            <View style={styles.qrHeroIconWrap}>
+              <Icon name="qrcode" size={24} color="#007AFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.qrHeroTitle}>Set UPI from QR Code (Recommended)</Text>
+              <Text style={styles.qrHeroSubtitle}>
+                Every customer has a scanner in Google Pay, PhonePe, and Paytm. Upload or snap your shop QR standee to auto-configure your UPI payment without typing!
+              </Text>
+            </View>
+          </View>
+
+          {scanningQr ? (
+            <View style={styles.qrScanningBox}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.qrScanningText}>Scanning QR code & extracting UPI ID...</Text>
+            </View>
+          ) : (
+            <View style={styles.qrActionButtonsRow}>
+              <TouchableOpacity
+                style={styles.qrActionBtnPrimary}
+                onPress={() => handleUpiQrUpload('gallery')}
+                disabled={scanningQr || saving}
+                activeOpacity={0.85}
+              >
+                <Icon name="image" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.qrActionBtnPrimaryText}>
+                  {upiQrCodeUrl ? 'Update QR from Gallery' : 'Upload QR from Gallery'}
+                </Text>
+              </TouchableOpacity>
+
+              {Platform.OS !== 'web' && (
+                <TouchableOpacity
+                  style={styles.qrActionBtnSecondary}
+                  onPress={() => handleUpiQrUpload('camera')}
+                  disabled={scanningQr || saving}
+                  activeOpacity={0.85}
+                >
+                  <Icon name="camera" size={16} color="#007AFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.qrActionBtnSecondaryText}>Take Photo</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
 
+        {/* ACTIVE UPI BANNER & DYNAMIC AMOUNT PREVIEW */}
         {upiId.trim() ? (
           <View style={styles.dynamicPreviewContainer}>
             <View style={styles.badgeRow}>
               <View style={styles.dynamicBadge}>
-                <Text style={styles.dynamicBadgeText}>✓ Dynamic Amount QR Active</Text>
+                <Icon name="check-circle" size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={styles.dynamicBadgeText}>UPI Active: {normalizeUpiId(upiId) || upiId.trim()}</Text>
               </View>
-              <Text style={styles.previewHint}>Generates QR with buyer's bill amount</Text>
+              {qrSourceInfo ? (
+                <Text style={styles.previewHint}>({qrSourceInfo})</Text>
+              ) : (
+                <Text style={styles.previewHint}>Generates QR with buyer's bill amount</Text>
+              )}
             </View>
 
-            <View style={styles.previewCard}>
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={() => {
+                const activeCleanUpi = normalizeUpiId(upiId) || upiId.trim();
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+                  `upi://pay?pa=${encodeURIComponent(activeCleanUpi)}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                )}`;
+                const combined = [
+                  { id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` },
+                  ...(upiQrCodeUrl ? [{ id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Standee` }] : []),
+                  ...mediaList.filter((m) => m && m.type !== 'store_settings'),
+                ];
+                setViewerCustomMedia(combined);
+                setSelectedMediaIndex(0);
+                setShowMediaViewer(true);
+              }}
+              style={styles.previewCard}
+            >
               <Image
                 source={{
                   uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-                    `upi://pay?pa=${upiId.trim()}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                    `upi://pay?pa=${encodeURIComponent(normalizeUpiId(upiId) || upiId.trim())}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
                   )}`,
                 }}
                 style={styles.previewQrImage}
               />
               <View style={styles.previewInfo}>
                 <Text style={styles.previewPayee}>{name.trim() || 'Your Store'}</Text>
-                <Text style={styles.previewUpiId}>{upiId.trim()}</Text>
+                <Text style={styles.previewUpiId}>{normalizeUpiId(upiId) || upiId.trim()}</Text>
                 <Text style={styles.previewDesc}>
-                  At checkout, QR code automatically fills customer's exact bill total.
+                  ⚡ Dynamic Bill QR ready! Customers scan this code with Google Pay, PhonePe, or Paytm with their exact bill total pre-filled. (Tap to view full screen)
                 </Text>
               </View>
-            </View>
+            </TouchableOpacity>
           </View>
         ) : null}
 
-        {/* Custom Uploaded QR Code (Optional) */}
-        <View style={styles.customQrSection}>
-          <Text style={styles.customQrTitle}>Custom Uploaded QR Code (Optional)</Text>
-          {upiQrCodeUrl && (
-            <View style={styles.qrCodeContainer}>
+        {/* Uploaded Store Standee QR Preview */}
+        {upiQrCodeUrl && (
+          <View style={styles.customQrSection}>
+            <Text style={styles.customQrTitle}>Uploaded Store Standee QR</Text>
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={() => {
+                const activeCleanUpi = normalizeUpiId(upiId) || upiId.trim();
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+                  `upi://pay?pa=${encodeURIComponent(activeCleanUpi)}&pn=${encodeURIComponent(name.trim() || 'Store')}&am=100&cu=INR&tn=Order%20Payment`
+                )}`;
+                const combined = [
+                  { id: 'custom-qr', uri: upiQrCodeUrl, type: 'image', title: `${name || 'Store'} Uploaded QR Standee` },
+                  ...(activeCleanUpi ? [{ id: 'dynamic-qr', uri: qrUrl, type: 'image', title: `${name || 'Store'} Dynamic UPI QR Code` }] : []),
+                  ...mediaList.filter((m) => m && m.type !== 'store_settings'),
+                ];
+                setViewerCustomMedia(combined);
+                setSelectedMediaIndex(0);
+                setShowMediaViewer(true);
+              }}
+              style={styles.qrCodeContainer}
+            >
               <Image source={{ uri: upiQrCodeUrl }} style={styles.upiQrImage} />
-            </View>
-          )}
+              <Text style={styles.previewDesc}>Tap to view full screen</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={handleUpiQrUpload}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator size="small" color="#007AFF" />
-            ) : (
-              <Text style={styles.secondaryButtonText}>
-                {upiQrCodeUrl ? '📷 Update Uploaded QR Code' : '📷 Upload Custom QR Code'}
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        {/* OPTIONAL MANUAL UPI ID ENTRY / EDIT */}
+        <TouchableOpacity
+          style={styles.manualToggleBtn}
+          onPress={() => setShowManualUpiEdit(!showManualUpiEdit)}
+          activeOpacity={0.8}
+        >
+          <Icon
+            name={showManualUpiEdit ? 'chevron-down' : 'chevron-right'}
+            size={12}
+            color="#64748B"
+            style={{ marginRight: 6 }}
+          />
+          <Text style={styles.manualToggleBtnText}>
+            {showManualUpiEdit ? 'Hide Manual UPI ID Input' : '✏️ Or edit / enter UPI ID manually'}
+          </Text>
+        </TouchableOpacity>
+
+        {showManualUpiEdit && (
+          <View style={styles.manualEditSection}>
+            <Text style={styles.inputLabel}>Merchant ID / UPI ID</Text>
+            <View style={styles.upiInputRow}>
+              <TextInput
+                style={[styles.input, styles.upiInputFlex]}
+                placeholder="e.g. mystore, 9876543210, or store@okaxis"
+                value={upiId}
+                onChangeText={setUpiId}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={[styles.saveUpiBtn, savingUpiId && styles.buttonDisabled]}
+                onPress={handleSaveUpiId}
+                disabled={savingUpiId}
+              >
+                {savingUpiId ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveUpiBtnText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Suffix Chips */}
+            <View style={styles.upiChipsRow}>
+              <Text style={styles.upiChipsLabel}>Quick Handles:</Text>
+              {['@upi', '@okaxis', '@okhdfcbank', '@ybl', '@paytm'].map((suffix) => {
+                const active = upiId.toLowerCase().endsWith(suffix.toLowerCase());
+                return (
+                  <TouchableOpacity
+                    key={suffix}
+                    style={[styles.upiChip, active && styles.upiChipActive]}
+                    onPress={() => handleSelectUpiSuffix(suffix)}
+                  >
+                    <Text style={[styles.upiChipText, active && styles.upiChipTextActive]}>
+                      {suffix}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.upiInputHelper}>
+              💡 Enter your Merchant ID, 10-digit mobile number, or full UPI VPA. Customers will pay directly with their exact order bill amount at Checkout.
+            </Text>
+          </View>
+        )}
       </View>
-      )}
 
       {/* Input Fields */}
       <View style={styles.formGroup}>
@@ -2137,6 +2542,7 @@ const ProfileScreen = ({ navigation, route }) => {
           onChangeText={setMobile}
           keyboardType="phone-pad"
         />
+
 
         <Text style={styles.inputLabel}>Address Line 1</Text>
         <TextInput
@@ -2206,6 +2612,115 @@ const ProfileScreen = ({ navigation, route }) => {
           <Text style={styles.buttonText}>Update Profile</Text>
         )}
       </TouchableOpacity>
+
+      {/* App Theme & Appearance Settings Card */}
+      <View
+        style={[
+          styles.themeSectionCard,
+          { backgroundColor: colors.surface, borderColor: colors.cardBorder },
+        ]}
+      >
+        <View style={styles.themeHeaderRow}>
+          <Icon name="adjust" size={18} color={colors.primary} style={{ marginRight: 8 }} />
+          <Text style={[styles.themeSectionTitle, { color: colors.text }]}>
+            App Theme & Appearance
+          </Text>
+        </View>
+        <Text style={[styles.themeSectionSub, { color: colors.textSecondary }]}>
+          Choose your interface theme. System Default automatically matches your device dark/light settings.
+        </Text>
+
+        <View style={styles.themeOptionsRow}>
+          {/* Light Mode */}
+          <TouchableOpacity
+            style={[
+              styles.themeOption,
+              { backgroundColor: colors.inputBg, borderColor: colors.border },
+              themeMode === 'light' && [styles.themeOptionActive, { borderColor: colors.primary, backgroundColor: colors.primaryLight }],
+            ]}
+            onPress={() => handleSelectTheme('light')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select Light Theme"
+          >
+            <View style={styles.themeOptionHeader}>
+              <Text style={styles.themeOptionEmoji}>☀️</Text>
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  { color: colors.text },
+                  themeMode === 'light' && [styles.themeOptionTextActive, { color: colors.primary }],
+                ]}
+              >
+                Light
+              </Text>
+              {themeMode === 'light' && (
+                <Icon name="check-circle" size={15} color={colors.primary} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            <Text style={[styles.themeOptionSub, { color: colors.textMuted }]}>Bright & crisp</Text>
+          </TouchableOpacity>
+
+          {/* Dark Mode */}
+          <TouchableOpacity
+            style={[
+              styles.themeOption,
+              { backgroundColor: colors.inputBg, borderColor: colors.border },
+              themeMode === 'dark' && [styles.themeOptionActive, { borderColor: colors.primary, backgroundColor: colors.primaryLight }],
+            ]}
+            onPress={() => handleSelectTheme('dark')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select Dark Theme"
+          >
+            <View style={styles.themeOptionHeader}>
+              <Text style={styles.themeOptionEmoji}>🌙</Text>
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  { color: colors.text },
+                  themeMode === 'dark' && [styles.themeOptionTextActive, { color: colors.primary }],
+                ]}
+              >
+                Dark
+              </Text>
+              {themeMode === 'dark' && (
+                <Icon name="check-circle" size={15} color={colors.primary} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            <Text style={[styles.themeOptionSub, { color: colors.textMuted }]}>Easy on eyes</Text>
+          </TouchableOpacity>
+
+          {/* System Mode */}
+          <TouchableOpacity
+            style={[
+              styles.themeOption,
+              { backgroundColor: colors.inputBg, borderColor: colors.border },
+              themeMode === 'system' && [styles.themeOptionActive, { borderColor: colors.primary, backgroundColor: colors.primaryLight }],
+            ]}
+            onPress={() => handleSelectTheme('system')}
+            activeOpacity={0.8}
+            accessibilityLabel="Select System Default Theme"
+          >
+            <View style={styles.themeOptionHeader}>
+              <Text style={styles.themeOptionEmoji}>⚙️</Text>
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  { color: colors.text },
+                  themeMode === 'system' && [styles.themeOptionTextActive, { color: colors.primary }],
+                ]}
+              >
+                System
+              </Text>
+              {themeMode === 'system' && (
+                <Icon name="check-circle" size={15} color={colors.primary} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            <Text style={[styles.themeOptionSub, { color: colors.textMuted }]}>
+              Auto ({isDark ? 'Dark' : 'Light'})
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Voice Announcement Settings Card (Male / Female) */}
       <View style={styles.voiceSectionCard}>
@@ -2486,41 +3001,17 @@ const ProfileScreen = ({ navigation, route }) => {
         <Text style={styles.buttonText}>Logout</Text>
       </TouchableOpacity>
 
-      {/* Media Fullscreen Preview Modal */}
-      <Modal
-        visible={!!selectedPreviewMedia}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setSelectedPreviewMedia(null)}
-      >
-        <View style={styles.previewModalContainer}>
-          <TouchableOpacity
-            style={styles.previewCloseBtn}
-            onPress={() => setSelectedPreviewMedia(null)}
-          >
-            <Text style={styles.previewCloseBtnText}>✕ Close</Text>
-          </TouchableOpacity>
-          {selectedPreviewMedia && (
-            <View style={styles.previewMediaBox}>
-              {selectedPreviewMedia.type === 'video' ? (
-                <Video
-                  source={{ uri: selectedPreviewMedia.uri }}
-                  style={styles.fullVideo}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  shouldPlay={true}
-                />
-              ) : (
-                <Image
-                  source={{ uri: selectedPreviewMedia.uri }}
-                  style={styles.fullImage}
-                  resizeMode="contain"
-                />
-              )}
-            </View>
-          )}
-        </View>
-      </Modal>
+      {/* Media Fullscreen Preview Modal with Swipe/Scroll Left-Right */}
+      <FullScreenImageViewer
+        visible={showMediaViewer}
+        mediaList={viewerCustomMedia || mediaList.filter((m) => m && m.type !== 'store_settings')}
+        initialIndex={selectedMediaIndex}
+        onClose={() => {
+          setShowMediaViewer(false);
+          setViewerCustomMedia(null);
+        }}
+        title={name ? `${name}'s Media` : 'Profile Photos & Video'}
+      />
 
       {/* Printer Settings Modal */}
       <PrinterSettingsModal
@@ -2977,6 +3468,109 @@ const styles = StyleSheet.create({
   upiHeaderRow: {
     marginBottom: 4,
   },
+  qrUploadHeroCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  qrHeroHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 12,
+  },
+  qrHeroIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#e0f2fe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrHeroTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  qrHeroSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  qrActionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  qrActionBtnPrimary: {
+    flex: 1,
+    minWidth: 160,
+    backgroundColor: '#007AFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  qrActionBtnPrimaryText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  qrActionBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  qrActionBtnSecondaryText: {
+    color: '#007AFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  qrScanningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    backgroundColor: '#f0f9ff',
+    borderRadius: 8,
+  },
+  qrScanningText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0284c7',
+  },
+  manualToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  manualToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  manualEditSection: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
   upiInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2999,6 +3593,45 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
     fontSize: 14,
+  },
+  upiChipsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  upiChipsLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    marginRight: 2,
+  },
+  upiChip: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  upiChipActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  upiChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  upiChipTextActive: {
+    color: '#ffffff',
+  },
+  upiInputHelper: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 12,
+    lineHeight: 15,
   },
   dynamicPreviewContainer: {
     backgroundColor: '#f0fdf4',
@@ -3739,6 +4372,78 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748B',
     marginRight: 2,
+  },
+  themeSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  themeHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  themeSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  themeSectionSub: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  themeOptionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  themeOption: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  themeOptionActive: {
+    borderColor: '#007AFF',
+    backgroundColor: '#EFF6FF',
+  },
+  themeOptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  themeOptionEmoji: {
+    fontSize: 18,
+    marginRight: 4,
+  },
+  themeOptionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  themeOptionTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+  themeOptionSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '500',
+    textAlign: 'center',
   },
   voiceSectionCard: {
     backgroundColor: '#FFFFFF',

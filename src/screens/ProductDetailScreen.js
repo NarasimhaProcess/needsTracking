@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import {
@@ -14,8 +14,9 @@ import {
 } from 'react-native';
 import { Video } from 'expo-av';
 import Swiper from 'react-native-swiper';
-import ImageViewer from 'react-native-image-zoom-viewer';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 import { addToCart, supabase } from '../services/supabase';
+import { getFavoriteProductIds, toggleFavoriteProductId } from '../services/localStorageService';
 
 const isImageMedia = (media) => {
   if (!media) return false;
@@ -36,7 +37,59 @@ const ProductDetailScreen = ({ navigation, route }) => {
   const [quantity, setQuantity] = useState(1);
   const [user, setUser] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const [images, setImages] = useState([]);
+  const [initialMediaIndex, setInitialMediaIndex] = useState(0);
+  const [otherProducts, setOtherProducts] = useState(route?.params?.allProducts || []);
+  const [isFav, setIsFav] = useState(false);
+  const [favoriteProductIds, setFavoriteProductIds] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      if (product?.id) {
+        try {
+          const favs = await getFavoriteProductIds();
+          if (isMounted) {
+            setFavoriteProductIds(favs || []);
+            setIsFav(favs.some((id) => String(id) === String(product.id)));
+          }
+        } catch (e) {
+          console.warn('Error checking favorite:', e);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [product?.id]);
+
+  const handleToggleFav = async (targetId = product?.id) => {
+    if (!targetId) return;
+    try {
+      const updated = await toggleFavoriteProductId(targetId);
+      setFavoriteProductIds(updated || []);
+      if (product?.id) {
+        setIsFav(updated.some((id) => String(id) === String(product.id)));
+      }
+    } catch (e) {
+      console.warn('Error toggling favorite:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (product?.seller_id && otherProducts.length === 0) {
+      supabase
+        .from('products')
+        .select('id, product_name, amount, image_url, product_media (id, media_url, media_type)')
+        .eq('seller_id', product.seller_id)
+        .neq('id', product.id)
+        .limit(20)
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setOtherProducts(data);
+          }
+        });
+    }
+  }, [product?.seller_id]);
 
   useEffect(() => {
     if (!product && productId) {
@@ -158,10 +211,88 @@ const ProductDetailScreen = ({ navigation, route }) => {
     );
   }
 
-  const mediaList = (product.product_media || []).filter(m => m && (m.media_url || m.uri));
+  const mediaList = useMemo(() => {
+    const raw = (product.product_media || []).filter(m => m && (m.media_url || m.uri));
+    if (raw.length > 0) return raw;
+    if (product?.image_url) {
+      return [{ id: 'prod-img', media_url: product.image_url, uri: product.image_url, media_type: 'image' }];
+    }
+    return [];
+  }, [product]);
+
+  const fullViewerMedia = useMemo(() => {
+    const list = [];
+    if (mediaList.length > 0) {
+      mediaList.forEach((m, idx) => {
+        list.push({
+          id: `this-prod-${m.id || idx}`,
+          productId: product?.id,
+          uri: m.media_url || m.uri,
+          type: m.media_type || 'image',
+          title: mediaList.length > 1 ? `${product.product_name} (${idx + 1}/${mediaList.length})` : product.product_name,
+          subtitle: product.amount ? `₹${product.amount}` : null,
+        });
+      });
+    } else if (product?.image_url) {
+      list.push({
+        id: `this-prod-img`,
+        productId: product?.id,
+        uri: product.image_url,
+        type: 'image',
+        title: product.product_name,
+        subtitle: product.amount ? `₹${product.amount}` : null,
+      });
+    }
+
+    (otherProducts || []).forEach((p) => {
+      const pMedia = (p?.product_media || []).filter(m => m && (m.media_url || m.uri));
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          list.push({
+            id: `other-${p.id}-${m.id || mIdx}`,
+            productId: p.id,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: pMedia.length > 1 ? `${p.product_name} (${mIdx + 1}/${pMedia.length})` : p.product_name,
+            subtitle: p.amount ? `₹${p.amount}` : null,
+          });
+        });
+      } else if (p.image_url) {
+        list.push({
+          id: `other-${p.id}-img`,
+          productId: p.id,
+          uri: p.image_url,
+          type: 'image',
+          title: p.product_name,
+          subtitle: p.amount ? `₹${p.amount}` : null,
+        });
+      }
+    });
+
+    return list;
+  }, [product, mediaList, otherProducts]);
 
   return (
-    <ScrollView style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      {/* Top Floating Action Bar with Back and Favorite */}
+      <View style={styles.topFloatingBar}>
+        <TouchableOpacity
+          style={styles.floatingCircleBtn}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Go back"
+        >
+          <Icon name="arrow-left" size={17} color="#1E293B" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.floatingCircleBtn, isFav && styles.floatingCircleBtnFavActive]}
+          onPress={handleToggleFav}
+          accessibilityLabel={isFav ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <Icon name={isFav ? 'heart' : 'heart-o'} size={17} color={isFav ? '#EF4444' : '#1E293B'} />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={styles.container}>
       {mediaList.length > 0 ? (
         <Swiper style={styles.swiper} showsButtons={mediaList.length > 1} loop={mediaList.length > 1}>
           {mediaList.map((media, index) => {
@@ -171,13 +302,8 @@ const ProductDetailScreen = ({ navigation, route }) => {
               <View key={media.id || `media-${index}`} style={styles.slide}>
                 <TouchableOpacity
                   onPress={() => {
-                    const imageUrls = mediaList
-                      .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                      .map(m => ({ url: m.media_url || m.uri }));
-                    if (imageUrls.length > 0) {
-                      setImages(imageUrls);
-                      setIsModalVisible(true);
-                    }
+                    setInitialMediaIndex(index);
+                    setIsModalVisible(true);
                   }}
                   style={styles.mediaContainer}
                   activeOpacity={0.9}
@@ -200,13 +326,8 @@ const ProductDetailScreen = ({ navigation, route }) => {
                     <TouchableOpacity
                       style={styles.zoomIcon}
                       onPress={() => {
-                        const imageUrls = mediaList
-                          .filter(m => isImageMedia(m) && (m.media_url || m.uri))
-                          .map(m => ({ url: m.media_url || m.uri }));
-                        if (imageUrls.length > 0) {
-                          setImages(imageUrls);
-                          setIsModalVisible(true);
-                        }
+                        setInitialMediaIndex(index);
+                        setIsModalVisible(true);
                       }}
                     >
                       <MaterialIcons name="zoom-out-map" size={24} color="white" />
@@ -298,14 +419,21 @@ const ProductDetailScreen = ({ navigation, route }) => {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={isModalVisible} transparent={true}>
-        <ImageViewer
-          imageUrls={images}
-          onCancel={() => setIsModalVisible(false)}
-          enableSwipeDown
-        />
-      </Modal>
+      <FullScreenImageViewer
+        visible={isModalVisible}
+        mediaList={fullViewerMedia}
+        initialIndex={initialMediaIndex}
+        onClose={() => setIsModalVisible(false)}
+        title={product?.product_name || 'Product Media'}
+        onToggleFavorite={(target) => {
+          const tId = typeof target === 'object' ? (target.productId || target.id) : target;
+          handleToggleFav(tId || product?.id);
+        }}
+        favoriteProductIds={favoriteProductIds}
+        isFavorite={isFav}
+      />
     </ScrollView>
+  </View>
   );
 };
 
@@ -480,6 +608,34 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  topFloatingBar: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  floatingCircleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  floatingCircleBtnFavActive: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
   },
 });
 

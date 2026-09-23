@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { FontAwesome as Icon } from '@expo/vector-icons';
 import { useCart } from '../context/CartContext';
+import { useTheme } from '../context/ThemeContext';
 
 // Import the screens that will be part of the tabs
 import ProductScreen from '../screens/ProductScreen';
@@ -130,6 +131,7 @@ function CatalogStackNavigator({ route }) {
 function ProductTabNavigator({ route }) {
   const { session } = route.params || {};
   const { role: contextRole, cartItemCount } = useCart();
+  const { colors, isDark } = useTheme();
   const user = session?.user || session;
   const userId = user?.id;
   const userMetadata = user?.user_metadata || session?.user_metadata;
@@ -164,11 +166,11 @@ function ProductTabNavigator({ route }) {
 
           return <Icon name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: '#007AFF',
-        tabBarInactiveTintColor: '#64748B',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textSecondary,
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#E2E8F0',
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
           height: 58,
           paddingBottom: 6,
           paddingTop: 6,

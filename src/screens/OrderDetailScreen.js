@@ -14,12 +14,13 @@ import {
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { supabase, getOrderById, updateOrderStatus } from '../services/supabase';
+import { supabase, getOrderById, updateOrderStatus, updateOrderPaymentStatus } from '../services/supabase';
 import { printReceipt, extractOrderNumbers, announceOrderPrint } from '../services/printerService';
 import UniversalWebView from '../components/UniversalWebView';
 import { useCart } from '../context/CartContext';
 import PrinterSettingsModal from '../components/PrinterSettingsModal';
 import StoreNavigationFooter from '../components/StoreNavigationFooter';
+import FullScreenImageViewer from '../components/FullScreenImageViewer';
 
 const OrderDetailScreen = ({ navigation, route }) => {
   const { orderId, sellerId: paramSellerId, sellerName: paramSellerName, customerId: paramCustomerId } = route?.params || {};
@@ -39,7 +40,61 @@ const OrderDetailScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState(null);
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [viewerImages, setViewerImages] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerTitle, setViewerTitle] = useState('');
   const webViewRef = useRef(null);
+
+  const openItemImageViewer = (tappedItem) => {
+    const items = order?.order_items || [];
+    const mediaList = [];
+    let initialIdx = 0;
+
+    items.forEach((oi) => {
+      const prod = oi?.product_variant_combinations?.products;
+      const pMedia = (prod?.product_media || []).filter((m) => m && (m.media_url || m.uri));
+      const isTarget = String(oi.id) === String(tappedItem?.id);
+      const prodName = prod?.product_name || 'Order Item';
+      const itemPrice = oi.price || prod?.amount;
+
+      if (pMedia.length > 0) {
+        pMedia.forEach((m, mIdx) => {
+          if (isTarget && mIdx === 0) {
+            initialIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `order-item-${oi.id}-m-${mIdx}`,
+            uri: m.media_url || m.uri,
+            type: m.media_type || 'image',
+            title: pMedia.length > 1 ? `${prodName} (${mIdx + 1}/${pMedia.length})` : prodName,
+            subtitle: itemPrice ? `₹${itemPrice}` : null,
+          });
+        });
+      } else {
+        const url = prod?.image_url;
+        if (url) {
+          if (isTarget) {
+            initialIdx = mediaList.length;
+          }
+          mediaList.push({
+            id: `order-item-${oi.id}-img`,
+            uri: url,
+            type: 'image',
+            title: prodName,
+            subtitle: itemPrice ? `₹${itemPrice}` : null,
+          });
+        }
+      }
+    });
+
+    if (mediaList.length > 0) {
+      setViewerImages(mediaList);
+      setViewerIndex(initialIdx);
+      setViewerTitle(order?.order_number ? `Order #${order.order_number}` : 'Order Item Images');
+      setIsViewerVisible(true);
+    }
+  };
 
   const fetchOrderDetails = async () => {
     try {
@@ -146,6 +201,32 @@ const OrderDetailScreen = ({ navigation, route }) => {
     }
   };
 
+  const handleTogglePayment = async () => {
+    const isPaid = (order?.payment_status === 'paid' || order?.status === 'completed' || order?.status === 'paid');
+    const nextStatus = isPaid ? 'pending' : 'paid';
+    const payRef = extractOrderNumbers(order).paymentReference || order?.payment_reference || order?.shipping_address?.payment_reference || 'N/A';
+
+    Alert.alert(
+      'Update Payment Status',
+      `Payment Reference: ${payRef}\n\nDo you want to mark payment as "${nextStatus === 'paid' ? 'DONE (PAID)' : 'PENDING'}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: nextStatus === 'paid' ? 'Mark Paid' : 'Mark Pending',
+          onPress: async () => {
+            const updated = await updateOrderPaymentStatus(orderId, nextStatus);
+            if (updated) {
+              setOrder(prev => ({ ...prev, payment_status: nextStatus }));
+              Alert.alert('Success', `Payment marked as ${nextStatus.toUpperCase()}.`);
+            } else {
+              Alert.alert('Error', 'Failed to update payment status.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleCallPartner = (phone) => {
     if (!phone) {
       Alert.alert('No Phone', 'No phone number available for delivery partner.');
@@ -174,7 +255,17 @@ const OrderDetailScreen = ({ navigation, route }) => {
     return (
       <View style={styles.orderItemDetail}>
         {mediaUrl ? (
-          <Image source={{ uri: mediaUrl }} style={styles.orderItemImage} resizeMode="cover" />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => openItemImageViewer(item)}
+            style={{ position: 'relative' }}
+            accessibilityLabel={`View full image for ${prod?.product_name || 'Product'}`}
+          >
+            <Image source={{ uri: mediaUrl }} style={styles.orderItemImage} resizeMode="cover" />
+            <View style={styles.itemZoomBadge}>
+              <Icon name="search-plus" size={10} color="#FFFFFF" />
+            </View>
+          </TouchableOpacity>
         ) : (
           <View style={styles.orderItemPlaceholder}>
             <Icon name="shopping-bag" size={20} color="#94a3b8" />
@@ -592,15 +683,143 @@ const OrderDetailScreen = ({ navigation, route }) => {
         )}
 
         {/* Total Amount & Payment */}
-        <View style={styles.detailCard}>
-          <View style={styles.amountRow}>
-            <Text style={styles.label}>Total Amount</Text>
-            <Text style={styles.amountValue}>₹{Number(order.total_amount || 0).toFixed(2)}</Text>
-          </View>
-          <Text style={styles.paymentMethodText}>
-            Payment Method: {(order.payment_method || 'Cash on Delivery').toUpperCase()}
-          </Text>
-        </View>
+        {(() => {
+          const orderBilling = (typeof shipping === 'object' && shipping?.billing)
+            ? shipping.billing
+            : (typeof order?.shipping_address === 'object' && order?.shipping_address?.billing)
+            ? order.shipping_address.billing
+            : null;
+
+          const orderItemsTotal = (order.order_items || []).reduce(
+            (sum, it) => sum + (Number(it.price || 0) * Number(it.quantity || 1)),
+            0
+          );
+          const detailSubtotal = order.subtotal !== undefined && order.subtotal !== null && Number(order.subtotal) > 0
+            ? Number(order.subtotal)
+            : orderBilling?.subtotal !== undefined && Number(orderBilling.subtotal) > 0
+            ? Number(orderBilling.subtotal)
+            : orderItemsTotal > 0
+            ? orderItemsTotal
+            : Number(order.total_amount || 0);
+
+          const detailCgst = Number(order.cgst_amount || orderBilling?.cgst_amount || 0);
+          const detailSgst = Number(order.sgst_amount || orderBilling?.sgst_amount || 0);
+          const detailService = Number(order.service_cost || orderBilling?.service_cost || 0);
+          const detailCgstRate = order.cgst_rate !== undefined ? order.cgst_rate : (orderBilling?.cgst_rate !== undefined ? orderBilling.cgst_rate : 2.5);
+          const detailSgstRate = order.sgst_rate !== undefined ? order.sgst_rate : (orderBilling?.sgst_rate !== undefined ? orderBilling.sgst_rate : 2.5);
+          const detailServiceRate = order.service_cost_rate !== undefined ? order.service_cost_rate : (orderBilling?.service_cost_rate !== undefined ? orderBilling.service_cost_rate : 0);
+          const hasTaxBreakdown = detailCgst > 0 || detailSgst > 0 || detailService > 0;
+
+          return (
+            <View style={styles.detailCard}>
+              {hasTaxBreakdown && (
+                <View style={{ marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#64748B' }}>Items Subtotal</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>₹{detailSubtotal.toFixed(2)}</Text>
+                  </View>
+                  {detailCgst > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>CGST ({detailCgstRate}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{detailCgst.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {detailSgst > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>SGST ({detailSgstRate}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{detailSgst.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {detailService > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Service Charge ({detailServiceRate}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>+₹{detailService.toFixed(2)}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+              <View style={styles.amountRow}>
+                <Text style={styles.label}>Total Amount</Text>
+                <Text style={styles.amountValue}>₹{Number(order.total_amount || 0).toFixed(2)}</Text>
+              </View>
+              {/* Payment Section & 6-Digit Code Verification */}
+              <View style={styles.paymentSectionBox}>
+                <View style={styles.paymentMetaRow}>
+                  <Text style={styles.paymentMethodText}>
+                    Mode: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{(order.payment_method || 'Cash on Delivery').toUpperCase()}</Text>
+                  </Text>
+                  <View style={[
+                    styles.paymentStatusPillDetail,
+                    (order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid')
+                      ? styles.paymentStatusPaidDetail
+                      : styles.paymentStatusPendingDetail
+                  ]}>
+                    <Icon
+                      name={(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? "check-circle" : "clock-o"}
+                      size={11}
+                      color={(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? "#16A34A" : "#D97706"}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={[
+                      styles.paymentStatusTextDetail,
+                      (order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? styles.textGreen : styles.textAmber
+                    ]}>
+                      {(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? 'Payment Done' : 'Payment Pending'}
+                    </Text>
+                  </View>
+                </View>
+
+                {(() => {
+                  const payRef = extractOrderNumbers(order).paymentReference ||
+                    order.payment_reference ||
+                    shipping?.payment_reference ||
+                    shipping?.billing?.payment_reference ||
+                    shipping?.payment_note;
+                  if (!payRef) return null;
+                  return (
+                    <View style={styles.payVerificationBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Icon name="tag" size={13} color="#4F46E5" style={{ marginRight: 6 }} />
+                          <Text style={styles.payRefLabel}>6-Digit Payment Code:</Text>
+                        </View>
+                        <Text style={styles.payRefValue}>{payRef}</Text>
+                      </View>
+                      <Text style={styles.payRefHelpText}>
+                        Reconciliation: Check this 6-digit code against your UPI or bank statement credits to confirm payment done properly.
+                      </Text>
+                    </View>
+                  );
+                })()}
+
+                {canUpdateStatus && (
+                  <TouchableOpacity
+                    style={[
+                      styles.togglePayBtn,
+                      (order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid')
+                        ? styles.togglePayBtnPending
+                        : styles.togglePayBtnPaid
+                    ]}
+                    onPress={handleTogglePayment}
+                    activeOpacity={0.85}
+                  >
+                    <Icon
+                      name={(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid') ? "undo" : "check-circle"}
+                      size={13}
+                      color="#FFFFFF"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.togglePayBtnText}>
+                      {(order.payment_status === 'paid' || order.status === 'completed' || order.status === 'paid')
+                        ? "Mark Payment as Pending"
+                        : "Mark Payment as Done (Received)"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          );
+        })()}
 
         {/* Shipping Address */}
         <View style={styles.detailCard}>
@@ -672,6 +891,14 @@ const OrderDetailScreen = ({ navigation, route }) => {
       <PrinterSettingsModal
         visible={showPrinterSettings}
         onClose={() => setShowPrinterSettings(false)}
+      />
+
+      <FullScreenImageViewer
+        visible={isViewerVisible}
+        mediaList={viewerImages}
+        initialIndex={viewerIndex}
+        onClose={() => setIsViewerVisible(false)}
+        title={viewerTitle || 'Order Items'}
       />
     </View>
   );
@@ -1054,6 +1281,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginRight: 12,
   },
+  itemZoomBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   orderItemPlaceholder: {
     width: 48,
     height: 48,
@@ -1086,6 +1324,92 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#94A3B8',
     marginVertical: 16,
+  },
+  paymentSectionBox: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  paymentMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  paymentStatusPillDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  paymentStatusPaidDetail: {
+    backgroundColor: '#DCFCE7',
+  },
+  paymentStatusPendingDetail: {
+    backgroundColor: '#FEF3C7',
+  },
+  paymentStatusTextDetail: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  textGreen: {
+    color: '#16A34A',
+  },
+  textAmber: {
+    color: '#D97706',
+  },
+  payVerificationBox: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    padding: 10,
+    marginVertical: 8,
+  },
+  payRefLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3730A3',
+  },
+  payRefValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#4338CA',
+    letterSpacing: 1,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  payRefHelpText: {
+    fontSize: 11,
+    color: '#4B5563',
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  togglePayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  togglePayBtnPaid: {
+    backgroundColor: '#16A34A',
+  },
+  togglePayBtnPending: {
+    backgroundColor: '#D97706',
+  },
+  togglePayBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

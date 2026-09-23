@@ -437,6 +437,12 @@ export default function AdminScreen({ navigation, user, userProfile }) {
             [
               { text: 'Cancel', style: 'cancel' },
               {
+                text: 'Seller',
+                onPress: async () => {
+                  await updateUserRole(userId, 'seller');
+                },
+              },
+              {
                 text: 'User',
                 onPress: async () => {
                   await updateUserRole(userId, 'user');
@@ -480,15 +486,15 @@ export default function AdminScreen({ navigation, user, userProfile }) {
   };
 
   const updateUserRole = async (userId, newRole) => {
-    // Ensure only superadmin can update user roles
-    if (userProfile?.user_type !== 'superadmin') {
-      Alert.alert('Permission Denied', 'Only superadmins can change user roles.');
+    // Allow superadmin and admin to update user roles
+    if (userProfile?.user_type !== 'superadmin' && userProfile?.user_type !== 'admin' && userProfile?.user_type !== 'app_admin') {
+      Alert.alert('Permission Denied', 'Only administrators can change user roles.');
       return;
     }
     try {
       const { error } = await supabase
         .from('users')
-        .update({ user_type: newRole })
+        .update({ user_type: newRole, updated_at: new Date().toISOString() })
         .eq('id', userId);
 
       if (error) {
@@ -496,7 +502,17 @@ export default function AdminScreen({ navigation, user, userProfile }) {
         return;
       }
 
-      Alert.alert('Success', 'User role updated successfully');
+      // Also sync role to profiles table so the entire app reflects the updated role
+      try {
+        await supabase
+          .from('profiles')
+          .update({ role: newRole, updated_at: new Date().toISOString() })
+          .eq('id', userId);
+      } catch (profErr) {
+        console.warn('Note: profiles table role sync notice:', profErr.message);
+      }
+
+      Alert.alert('Success', `User role updated successfully to ${newRole}`);
       loadUsers();
     } catch (error) {
       console.error('Error updating user role:', error);
@@ -2520,7 +2536,13 @@ export default function AdminScreen({ navigation, user, userProfile }) {
       case 'superadmin':
         return '#FF3B30';
       case 'admin':
+      case 'app_admin':
         return '#007AFF';
+      case 'seller':
+        return '#10B981';
+      case 'delivery_manager':
+      case 'delivery_partner':
+        return '#8B5CF6';
       default:
         return '#8E8E93';
     }

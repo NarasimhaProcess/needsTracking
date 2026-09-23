@@ -1,5 +1,32 @@
 import 'react-native-get-random-values'; // Polyfill for crypto.getRandomValues
-import React, { useState, useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
+
+// Defensive safeguard against browser translation / extension DOM mutations and React portal removeChild errors
+if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof Node === 'function' && Node.prototype) {
+  const origRemove = Node.prototype.removeChild;
+  Node.prototype.removeChild = function (child) {
+    if (!child || child.parentNode !== this) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Node.removeChild safely caught unparented child:', child);
+      }
+      return child;
+    }
+    return origRemove.apply(this, arguments);
+  };
+
+  const origInsert = Node.prototype.insertBefore;
+  Node.prototype.insertBefore = function (newNode, refNode) {
+    if (refNode && refNode.parentNode !== this) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Node.insertBefore safely appending unparented refNode:', newNode, refNode);
+      }
+      return this.appendChild(newNode);
+    }
+    return origInsert.apply(this, arguments);
+  };
+}
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Location from 'expo-location';
 import {
@@ -14,13 +41,13 @@ import {
   ActivityIndicator,
   Text,
   Linking,
+  TouchableOpacity,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { registerRootComponent } from 'expo';
-import { Platform } from 'react-native';
+
 
 // React Navigation imports
-import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 
 // Import screens
@@ -54,14 +81,16 @@ import ProductDetailScreen from './src/screens/ProductDetailScreen';
 // Import custom navigators
 import ProductTabNavigator from './src/navigation/ProductTabNavigator';
 
-// Import services
+// Import services & context
 import { supabase, ensureUserProfile } from './src/services/supabase';
+import { getPreferredStore, setPreferredStore } from './src/services/localStorageService';
 import { CartProvider } from './src/context/CartContext';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { announceNewOrder } from './src/services/speechService';
 
 const Stack = createStackNavigator();
 
-export default function App() {
+function AppInner() {
   const navigationRef = useNavigationContainerRef();
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -94,6 +123,18 @@ export default function App() {
           } else if (role === 'seller' || role === 'admin' || role === 'superadmin') {
             navigationRef.current?.navigate('ProductTabs', { session: currentSession, role });
           } else {
+            // Customer / Buyer: If currently shopping at a preferred store (via QR scan), open that store's Catalog!
+            try {
+              const prefStore = await getPreferredStore();
+              if (prefStore?.sellerId) {
+                navigationRef.current?.navigate('Catalog', {
+                  sellerId: prefStore.sellerId,
+                  sellerName: prefStore.sellerName || '',
+                  isDirectQr: Boolean(prefStore?.isDirectQr),
+                });
+                return;
+              }
+            } catch (_) {}
             navigationRef.current?.navigate('ProductTabs', { session: currentSession, role: 'customer' });
           }
         }
@@ -122,12 +163,12 @@ export default function App() {
 
     fetchAndSetSession(); // Initial fetch
 
-    // Fallback safety timeout: Never keep the user stuck on the loading spinner for more than 2.5s
+    // Fallback safety timeout: Never keep the user stuck on the loading spinner for more than 800ms
     const timeoutTimer = setTimeout(() => {
       if (isMounted) {
         setLoading(false);
       }
-    }, 2500);
+    }, 800);
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       if (isMounted) {
@@ -193,6 +234,26 @@ export default function App() {
             if (data.session.user) {
               navigateToRoleScreen(data.session.user, data.session);
             }
+          }
+        }
+        // Check for store QR deep link (e.g. needstracking://store?sellerId=... or web link)
+        if (url && (url.includes('sellerId=') || url.includes('seller='))) {
+          try {
+            const qs = url.includes('?') ? url.split('?')[1] : (url.includes('#') ? url.split('#')[1] : '');
+            const qParams = new URLSearchParams(qs);
+            const qSellerId = qParams.get('sellerId') || qParams.get('seller');
+            const qSellerName = qParams.get('sellerName') || qParams.get('name');
+            const isDirectQr = qParams.get('fromMap') !== 'true';
+            if (qSellerId) {
+              await setPreferredStore(qSellerId, qSellerName || '', isDirectQr);
+              navigationRef.current?.navigate('Catalog', {
+                sellerId: qSellerId,
+                sellerName: qSellerName || '',
+                isDirectQr,
+              });
+            }
+          } catch (qrErr) {
+            console.warn('[App] Error handling store QR deep link:', qrErr);
           }
         }
       } catch (sessionErr) {
@@ -445,20 +506,62 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
+  const { isDark, colors } = useTheme();
+
+  const navTheme = useMemo(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: colors.primary,
+        background: colors.background,
+        card: colors.surface,
+        text: colors.text,
+        border: colors.border,
+      },
+    };
+  }, [isDark, colors]);
+
+  const handleNavReady = async () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        const searchStr = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+        if (searchStr) {
+          const urlParams = new URLSearchParams(searchStr);
+          const qSellerId = urlParams.get('sellerId') || urlParams.get('seller');
+          const qSellerName = urlParams.get('sellerName') || urlParams.get('name');
+          const fromMap = urlParams.get('fromMap') === 'true';
+          const isDirectQr = !fromMap && (urlParams.get('directQr') === 'true' || urlParams.get('qr') === '1' || !!qSellerId);
+          if (qSellerId) {
+            await setPreferredStore(qSellerId, qSellerName || '', isDirectQr);
+            navigationRef.current?.navigate('Catalog', {
+              sellerId: qSellerId,
+              sellerName: qSellerName || '',
+              isDirectQr: isDirectQr,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[App] Error parsing web store URL params on ready:', err);
+      }
+    }
+  };
+
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.primary }]}>Loading...</Text>
       </View>
     );
   }
 
   return (
     <CartProvider>
-      <View style={styles.rootContainer}>
-        <NavigationContainer ref={navigationRef}>
-          <StatusBar style="auto" />
+      <View style={[styles.rootContainer, { backgroundColor: colors.background }]}>
+        <NavigationContainer ref={navigationRef} theme={navTheme} onReady={handleNavReady}>
+          <StatusBar style={isDark ? 'light' : 'dark'} />
           <Stack.Navigator initialRouteName="SellersMap" screenOptions={{ headerShown: false }}>
             <Stack.Screen name="SellersMap" component={SellersMapScreen} />
             <Stack.Screen name="Welcome" component={WelcomeScreen} initialParams={{ session }} />
@@ -500,6 +603,55 @@ export default function App() {
   );
 }
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('App ErrorBoundary caught error:', error, errorInfo);
+  }
+
+  handleReload = () => {
+    this.setState({ hasError: false, error: null });
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorSubtitle}>
+            {this.state.error?.message || 'An unexpected error occurred.'}
+          </Text>
+          <TouchableOpacity style={styles.retryButton} onPress={this.handleReload}>
+            <Text style={styles.retryButtonText}>Reload App</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AppInner />
+      </ThemeProvider>
+    </ErrorBoundary>
+  );
+}
+
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
@@ -517,6 +669,36 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#007AFF',
   },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#F8FAFC',
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 15,
+  },
 });
 
-registerRootComponent(App);

@@ -116,6 +116,19 @@ export const safeFormatNumber = (val, decimals = 2) => {
 };
 
 /**
+ * Escapes special HTML characters to prevent XSS or broken receipt rendering.
+ */
+export const escapeHtml = (str) => {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+/**
  * Sanitizes text specifically for ESC/POS thermal receipt printers.
  * Thermal POS printers use 8-bit ASCII / Code Pages (PC437) and do not support Unicode ₹ (U+20B9).
  * Multi-byte UTF-8 ₹ (0xE2 0x82 0xB9) causes Chinese-mode firmware to print Chinese glyphs
@@ -260,9 +273,28 @@ export const extractOrderNumbers = (order = {}) => {
     }
   }
 
+  // Extract 6-digit unique payment transaction reference if available
+  let paymentReference = order.payment_reference || null;
+  if (!paymentReference && order.shipping_address) {
+    let shipping = order.shipping_address;
+    if (typeof shipping === 'string') {
+      try {
+        shipping = JSON.parse(shipping);
+      } catch (_) {}
+    }
+    if (typeof shipping === 'object' && shipping !== null) {
+      paymentReference = shipping.payment_reference || shipping.billing?.payment_reference || null;
+      if (!paymentReference && shipping.payment_note) {
+        const match = String(shipping.payment_note).match(/\b(\d{6})\b/);
+        if (match) paymentReference = match[1];
+      }
+    }
+  }
+
   return {
     orderNumber: String(orderNum),
     dayOrderNo: dayOrderNo ? String(dayOrderNo) : null,
+    paymentReference: paymentReference ? String(paymentReference) : null,
   };
 };
 
@@ -441,14 +473,23 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
 
   const hasTaxesOrCharges = (config.printTaxBreakdown !== false) && (cgstAmount > 0 || sgstAmount > 0 || serviceCost > 0);
 
+  const expectedTotalWithTaxes =
+    safeParseNumber(data.subtotal, 0) +
+    safeParseNumber(data.deliveryFee, 0) -
+    safeParseNumber(data.discount, 0) +
+    cgstAmount +
+    sgstAmount +
+    serviceCost;
+
+  const parsedRawTotal = rawTotal !== null && rawTotal !== undefined ? safeParseNumber(rawTotal, -1) : -1;
   const computedTotal =
-    rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
-      ? safeParseNumber(rawTotal, 0)
-      : safeParseNumber(data.subtotal, 0) > 0
-      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0) + cgstAmount + sgstAmount + serviceCost
+    parsedRawTotal >= (expectedTotalWithTaxes - 0.05) && parsedRawTotal > 0
+      ? parsedRawTotal
+      : expectedTotalWithTaxes > 0
+      ? expectedTotalWithTaxes
       : data.items && Array.isArray(data.items) && data.items.length > 0
       ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0) + cgstAmount + sgstAmount + serviceCost
-      : 0;
+      : (parsedRawTotal > 0 ? parsedRawTotal : 0);
 
   const hasMetaTotals =
     (data.subtotal !== undefined && safeParseNumber(data.subtotal, 0) > 0) ||
@@ -489,6 +530,9 @@ export const generateEscPosBytes = (data, config = DEFAULT_PRINTER_CONFIG) => {
 
   if (data.paymentMethod) {
     addText(formatTwoColumns('Payment Mode:', String(data.paymentMethod).toUpperCase(), width));
+  }
+  if (data.paymentReference) {
+    addText(formatTwoColumns('UPI/Pay Ref:', String(data.paymentReference), width));
   }
   if (data.paymentStatus) {
     addText(formatTwoColumns('Payment Status:', String(data.paymentStatus).toUpperCase(), width));
@@ -549,14 +593,23 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
   const sgstAmount = safeParseNumber(data.sgstAmount, 0);
   const serviceCost = safeParseNumber(data.serviceCost, 0);
 
+  const expectedTotalWithTaxes =
+    safeParseNumber(data.subtotal, 0) +
+    safeParseNumber(data.deliveryFee, 0) -
+    safeParseNumber(data.discount, 0) +
+    cgstAmount +
+    sgstAmount +
+    serviceCost;
+
+  const parsedRawTotal = rawTotal !== null && rawTotal !== undefined ? safeParseNumber(rawTotal, -1) : -1;
   const computedTotal =
-    rawTotal !== null && safeParseNumber(rawTotal, -1) >= 0
-      ? safeParseNumber(rawTotal, 0)
-      : safeParseNumber(data.subtotal, 0) > 0
-      ? safeParseNumber(data.subtotal, 0) + safeParseNumber(data.deliveryFee, 0) - safeParseNumber(data.discount, 0) + cgstAmount + sgstAmount + serviceCost
+    parsedRawTotal >= (expectedTotalWithTaxes - 0.05) && parsedRawTotal > 0
+      ? parsedRawTotal
+      : expectedTotalWithTaxes > 0
+      ? expectedTotalWithTaxes
       : data.items && Array.isArray(data.items) && data.items.length > 0
       ? data.items.reduce((sum, it) => sum + safeParseNumber(it.total !== undefined ? it.total : (it.quantity * it.price), 0), 0) + cgstAmount + sgstAmount + serviceCost
-      : 0;
+      : (parsedRawTotal > 0 ? parsedRawTotal : 0);
 
   const dayOrder = data.dayOrderNo || data.dailyOrderNumber || data.dayWiseOrderNo;
   const shouldPrintDayWise = config.printDayWiseNumber !== false && dayOrder;
@@ -721,6 +774,7 @@ export const generateReceiptHtml = (data, config = DEFAULT_PRINTER_CONFIG) => {
           <div class="divider"></div>
 
           ${data.paymentMethod ? `<div class="meta-row"><span>Payment:</span><span class="bold">${String(data.paymentMethod).toUpperCase()}</span></div>` : ''}
+          ${data.paymentReference ? `<div class="meta-row"><span>UPI/Pay Ref:</span><span class="bold">${escapeHtml(data.paymentReference)}</span></div>` : ''}
           ${data.paymentStatus ? `<div class="meta-row"><span>Status:</span><span class="bold">${String(data.paymentStatus).toUpperCase()}</span></div>` : ''}
 
           <div class="center footer">
@@ -1095,9 +1149,14 @@ export const printReceipt = async (orderDetails, options = {}) => {
     const deliveryFee = Number(order.delivery_fee || order.deliveryFee || 0);
     const discount = Number(order.discount_amount || order.discount || 0);
 
+    // Extract billing metadata if present in shipping_address JSON
+    const shippingBilling = (typeof shippingObj === 'object' && shippingObj?.billing) ? shippingObj.billing : null;
+
     let subtotal = 0;
     if (order.subtotal !== undefined && order.subtotal !== null && Number(order.subtotal) > 0) {
       subtotal = Number(order.subtotal);
+    } else if (shippingBilling?.subtotal !== undefined && Number(shippingBilling.subtotal) > 0) {
+      subtotal = Number(shippingBilling.subtotal);
     } else if (itemsTotal > 0) {
       subtotal = itemsTotal;
     } else if (order.total_amount !== undefined && order.total_amount !== null && Number(order.total_amount) > 0) {
@@ -1106,26 +1165,13 @@ export const printReceipt = async (orderDetails, options = {}) => {
       subtotal = Number(order.total);
     }
 
-    let total = 0;
-    if (order.total_amount !== undefined && order.total_amount !== null && Number(order.total_amount) > 0) {
-      total = Number(order.total_amount);
-    } else if (order.total !== undefined && order.total !== null && Number(order.total) > 0) {
-      total = Number(order.total);
-    } else if (order.amount !== undefined && order.amount !== null && Number(order.amount) > 0) {
-      total = Number(order.amount);
-    } else if (subtotal > 0) {
-      total = subtotal + deliveryFee - discount;
-    } else if (itemsTotal > 0) {
-      total = itemsTotal + deliveryFee - discount;
-    }
-
     const config = await getPrinterConfig();
-    let cgstAmount = Number(order.cgst_amount || order.cgstAmount || 0);
-    let sgstAmount = Number(order.sgst_amount || order.sgstAmount || 0);
-    let serviceCost = Number(order.service_cost || order.serviceCost || 0);
-    const cgstRate = Number(order.cgst_rate !== undefined ? order.cgst_rate : (config.cgstRate || 2.5));
-    const sgstRate = Number(order.sgst_rate !== undefined ? order.sgst_rate : (config.sgstRate || 2.5));
-    const serviceCostRate = Number(order.service_cost_rate !== undefined ? order.service_cost_rate : (config.serviceCostRate || 0));
+    let cgstAmount = Number(order.cgst_amount || order.cgstAmount || shippingBilling?.cgst_amount || 0);
+    let sgstAmount = Number(order.sgst_amount || order.sgstAmount || shippingBilling?.sgst_amount || 0);
+    let serviceCost = Number(order.service_cost || order.serviceCost || shippingBilling?.service_cost || 0);
+    const cgstRate = Number(order.cgst_rate !== undefined ? order.cgst_rate : shippingBilling?.cgst_rate !== undefined ? shippingBilling.cgst_rate : (config.cgstRate || 2.5));
+    const sgstRate = Number(order.sgst_rate !== undefined ? order.sgst_rate : shippingBilling?.sgst_rate !== undefined ? shippingBilling.sgst_rate : (config.sgstRate || 2.5));
+    const serviceCostRate = Number(order.service_cost_rate !== undefined ? order.service_cost_rate : shippingBilling?.service_cost_rate !== undefined ? shippingBilling.service_cost_rate : (config.serviceCostRate || 0));
 
     if (cgstAmount === 0 && sgstAmount === 0 && config.enableTax && subtotal > 0) {
       cgstAmount = Math.round(subtotal * (cgstRate / 100) * 100) / 100;
@@ -1133,6 +1179,13 @@ export const printReceipt = async (orderDetails, options = {}) => {
     }
     if (serviceCost === 0 && config.enableServiceCost && subtotal > 0 && serviceCostRate > 0) {
       serviceCost = Math.round(subtotal * (serviceCostRate / 100) * 100) / 100;
+    }
+
+    const expectedTotalWithTaxes = subtotal + deliveryFee - discount + cgstAmount + sgstAmount + serviceCost;
+    const rawOrderTotal = Number(order.total_amount || order.total || order.amount || 0);
+    let total = expectedTotalWithTaxes;
+    if (rawOrderTotal >= (expectedTotalWithTaxes - 0.05) && rawOrderTotal > 0) {
+      total = rawOrderTotal;
     }
 
     const { orderNumber, dayOrderNo } = extractOrderNumbers(order);
@@ -1171,6 +1224,7 @@ export const printReceipt = async (orderDetails, options = {}) => {
       discount,
       total,
       paymentMethod: String(order.payment_method || 'CASH').toUpperCase(),
+      paymentReference: extractOrderNumbers(order).paymentReference,
       paymentStatus: String(order.payment_status || (order.status === 'completed' || order.status === 'paid' ? 'PAID' : 'PENDING')).toUpperCase(),
       storeName: options.storeName || undefined,
     };
@@ -1301,4 +1355,200 @@ export const printTestReceipt = async () => {
     Alert.alert('Test Print Error', err.message || 'Failed to print test slip.');
   }
 };
+
+/**
+ * Prints a customer-facing Store QR Standee / Poster for physical shop counter display.
+ */
+export const printStoreStandee = async ({
+  sellerName = 'Store',
+  sellerAddress = '',
+  sellerPhone = '',
+  storeUrl = '',
+  qrImageUrl = '',
+}) => {
+  const finalQrUrl =
+    qrImageUrl ||
+    `https://api.qrserver.com/v1/create-qr-code/?size=450x450&data=${encodeURIComponent(storeUrl)}`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${sellerName} - Store QR Code Standee</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 1.5cm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      color: #1e293b;
+      background-color: #ffffff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 90vh;
+    }
+    .standee-card {
+      border: 3px solid #007AFF;
+      border-radius: 24px;
+      padding: 36px 28px;
+      max-width: 520px;
+      width: 100%;
+      text-align: center;
+      background: #ffffff;
+      box-shadow: 0 10px 25px rgba(0, 122, 255, 0.08);
+    }
+    .badge {
+      display: inline-block;
+      background: #EFF6FF;
+      color: #007AFF;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 6px 16px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .store-name {
+      font-size: 32px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 8px 0;
+      line-height: 1.2;
+    }
+    .store-address {
+      font-size: 15px;
+      color: #64748b;
+      margin: 0 0 24px 0;
+    }
+    .qr-frame {
+      display: inline-block;
+      padding: 16px;
+      background: #ffffff;
+      border: 2px dashed #cbd5e1;
+      border-radius: 16px;
+      margin: 0 auto 20px auto;
+    }
+    .qr-image {
+      width: 260px;
+      height: 260px;
+      display: block;
+    }
+    .scan-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #007AFF;
+      margin: 0 0 8px 0;
+    }
+    .scan-subtitle {
+      font-size: 14px;
+      color: #475569;
+      margin: 0 0 24px 0;
+    }
+    .steps-container {
+      display: flex;
+      justify-content: space-around;
+      background: #F8FAFC;
+      border-radius: 12px;
+      padding: 16px 8px;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .step-item {
+      flex: 1;
+      padding: 0 4px;
+    }
+    .step-num {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      background: #007AFF;
+      color: #ffffff;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .step-text {
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      margin: 0;
+    }
+    .store-url-box {
+      background: #f1f5f9;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #334155;
+      word-break: break-all;
+      margin-bottom: 16px;
+      font-family: monospace;
+    }
+    .footer {
+      font-size: 12px;
+      color: #94a3b8;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="standee-card">
+    <div class="badge">Digital Store & Menu</div>
+    <h1 class="store-name">${sellerName}</h1>
+    ${sellerAddress ? `<p class="store-address">📍 ${sellerAddress}</p>` : ''}
+    ${sellerPhone ? `<p class="store-address" style="margin-top:-18px;">📞 ${sellerPhone}</p>` : ''}
+
+    <div class="qr-frame">
+      <img src="${finalQrUrl}" alt="Store QR Code" class="qr-image" />
+    </div>
+
+    <div class="scan-title">📱 Scan with Phone Camera</div>
+    <div class="scan-subtitle">Browse products, view prices, and order online directly!</div>
+
+    <div class="steps-container">
+      <div class="step-item">
+        <div class="step-num">1</div>
+        <p class="step-text">Open Phone Camera</p>
+      </div>
+      <div class="step-item">
+        <div class="step-num">2</div>
+        <p class="step-text">Scan QR Code</p>
+      </div>
+      <div class="step-item">
+        <div class="step-num">3</div>
+        <p class="step-text">Order & Pay Fast</p>
+      </div>
+    </div>
+
+    <div class="store-url-box">${storeUrl}</div>
+
+    <div class="footer">
+      Powered by Needs Tracker • Hyperlocal Marketplace
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+  try {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      return await printHtmlOnWeb(html);
+    } else {
+      await Print.printAsync({ html });
+      return { success: true, mode: 'system' };
+    }
+  } catch (err) {
+    console.error('[PrinterService] Error printing store standee:', err);
+    throw err;
+  }
+};
+
 

@@ -1,7 +1,7 @@
 {
   "name": "location-tracker-mobile",
   "version": "1.0.0",
-  "homepage": "https://NarasimhaProcess.github.io/needsTracking",
+  "homepage": "https://narasimhareddyaiapp2-localwala.github.io/needsTracking",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "npx expo start",
@@ -9,8 +9,8 @@
     "ios": "npx expo start --ios",
     "web": "npx expo start --web",
     "eject": "expo eject",
-    "predeploy": "npx expo export -p web && touch dist/.nojekyll",
-    "deploy": "gh-pages -t -d dist"
+    "predeploy": "npx expo export -p web && touch dist/.nojekyll && cp dist/index.html dist/404.html",
+    "deploy": "gh-pages -t -d dist -f"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",
@@ -45,6 +45,9 @@
     "expo-status-bar": "~2.2.3",
     "expo-task-manager": "~13.1.4",
     "expo-web-browser": "~14.2.0",
+    "jpeg-js": "^0.4.4",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-native": "0.79.6",
@@ -61,7 +64,8 @@
     "react-native-swiper": "^1.6.0",
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "~0.20.0",
-    "react-native-webview": "13.13.5"
+    "react-native-webview": "13.13.5",
+    "supabase": "^2.117.0"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
