@@ -7,10 +7,6 @@ jobs:
   migrate-schema:
     runs-on: ubuntu-latest
 
-    env:
-      SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
-      TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
-
     steps:
 
       # ==========================================================
@@ -39,6 +35,9 @@ jobs:
       # 4. SHOW CONFIGURATION
       # ==========================================================
       - name: Show Configuration
+        env:
+          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
         run: |
           echo "=========================================="
           echo "SUPABASE SCHEMA MIGRATION"
@@ -64,36 +63,63 @@ jobs:
             --token "$SOURCE_SUPABASE_ACCESS_TOKEN"
 
       # ==========================================================
-      # 6. BUILD SOURCE DATABASE URL
+      # 6. SET SOURCE DATABASE URL
+      #
+      # IMPORTANT:
+      # Use Supabase Transaction Pooler URL.
+      # Do NOT use db.<project>.supabase.co:5432
+      # because GitHub Actions may not have IPv6 connectivity.
+      #
+      # GitHub Secret:
+      # SOURCE_DB_URL
+      #
+      # Example format:
+      # postgresql://postgres.<project-ref>:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
       # ==========================================================
-      - name: Build SOURCE Database URL
+      - name: Set SOURCE Database URL
         env:
-          SOURCE_DB_PASSWORD: ${{ secrets.SOURCE_DB_PASSWORD }}
+          SOURCE_DB_URL_SECRET: ${{ secrets.SOURCE_DB_URL }}
         run: |
           set -e
 
-          echo "Creating SOURCE database connection..."
+          if [ -z "$SOURCE_DB_URL_SECRET" ]; then
+            echo "ERROR: SOURCE_DB_URL secret is empty."
+            exit 1
+          fi
 
-          echo "SOURCE_DB_URL=postgresql://postgres:${SOURCE_DB_PASSWORD}@db.${SOURCE_PROJECT_REF}.supabase.co:5432/postgres" >> "$GITHUB_ENV"
+          echo "SOURCE_DB_URL=$SOURCE_DB_URL_SECRET" >> "$GITHUB_ENV"
+
+          echo "SOURCE database URL configured."
 
       # ==========================================================
-      # 7. EXPORT SOURCE SCHEMA
+      # 7. TEST SOURCE CONNECTION
+      # ==========================================================
+      - name: Test SOURCE Database Connection
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TESTING SOURCE DATABASE CONNECTION"
+          echo "=========================================="
+
+          psql \
+            "$SOURCE_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT current_database(), current_user;"
+
+          echo ""
+          echo "SOURCE database connection successful."
+
+      # ==========================================================
+      # 8. EXPORT SOURCE SCHEMA
       #
       # IMPORTANT:
-      # This uses db dump instead of db pull.
-      # Therefore local migration history is NOT checked.
+      # This exports schema ONLY.
       #
-      # Schema only:
-      # - Tables
-      # - Columns
-      # - Indexes
-      # - Functions
-      # - Triggers
-      # - Views
-      # - RLS policies
-      # - Extensions
+      # NO table data is copied.
       #
-      # NO TABLE DATA IS COPIED.
+      # It does not use supabase db pull, so existing
+      # migration-history mismatch will NOT stop this export.
       # ==========================================================
       - name: Export SOURCE Schema
         run: |
@@ -103,6 +129,7 @@ jobs:
           echo "EXPORTING SOURCE SCHEMA"
           echo "=========================================="
 
+          rm -rf migration
           mkdir -p migration
 
           supabase db dump \
@@ -117,7 +144,7 @@ jobs:
           ls -lh migration/schema.sql
 
       # ==========================================================
-      # 8. INSPECT EXPORTED SCHEMA
+      # 9. INSPECT SOURCE SCHEMA
       # ==========================================================
       - name: Inspect Exported Schema
         run: |
@@ -128,7 +155,11 @@ jobs:
           echo "=========================================="
 
           echo ""
-          echo "Total SQL lines:"
+          echo "SQL FILE:"
+          ls -lh migration/schema.sql
+
+          echo ""
+          echo "TOTAL SQL LINES:"
           wc -l migration/schema.sql
 
           echo ""
@@ -162,7 +193,7 @@ jobs:
             migration/schema.sql || true
 
       # ==========================================================
-      # 9. LOGIN TO TARGET
+      # 10. LOGIN TO TARGET
       # ==========================================================
       - name: Login to TARGET
         env:
@@ -178,22 +209,32 @@ jobs:
             --token "$TARGET_SUPABASE_ACCESS_TOKEN"
 
       # ==========================================================
-      # 10. BUILD TARGET DATABASE URL
+      # 11. SET TARGET DATABASE URL
+      #
+      # GitHub Secret:
+      # TARGET_DB_URL
+      #
+      # Use Transaction Pooler connection string.
       # ==========================================================
-      - name: Build TARGET Database URL
+      - name: Set TARGET Database URL
         env:
-          TARGET_DB_PASSWORD: ${{ secrets.TARGET_DB_PASSWORD }}
+          TARGET_DB_URL_SECRET: ${{ secrets.TARGET_DB_URL }}
         run: |
           set -e
 
-          echo "Creating TARGET database connection..."
+          if [ -z "$TARGET_DB_URL_SECRET" ]; then
+            echo "ERROR: TARGET_DB_URL secret is empty."
+            exit 1
+          fi
 
-          echo "TARGET_DB_URL=postgresql://postgres:${TARGET_DB_PASSWORD}@db.${TARGET_PROJECT_REF}.supabase.co:5432/postgres" >> "$GITHUB_ENV"
+          echo "TARGET_DB_URL=$TARGET_DB_URL_SECRET" >> "$GITHUB_ENV"
+
+          echo "TARGET database URL configured."
 
       # ==========================================================
-      # 11. TEST TARGET CONNECTION
+      # 12. TEST TARGET CONNECTION
       # ==========================================================
-      - name: Test TARGET Connection
+      - name: Test TARGET Database Connection
         run: |
           set -e
 
@@ -207,25 +248,23 @@ jobs:
             -c "SELECT current_database(), current_user;"
 
           echo ""
-          echo "TARGET connection successful."
+          echo "TARGET database connection successful."
 
       # ==========================================================
-      # 12. RESTORE SCHEMA TO TARGET
+      # 13. RESTORE SCHEMA TO TARGET
       #
       # IMPORTANT:
       # Target is a NEW Supabase project.
       #
-      # This does NOT use:
-      # supabase db push
-      #
-      # Therefore target migration history does not matter.
+      # We intentionally use psql instead of supabase db push.
+      # This avoids migration-history conflicts.
       # ==========================================================
       - name: Restore Schema to TARGET
         run: |
           set -e
 
           echo "=========================================="
-          echo "RESTORING SOURCE SCHEMA TO TARGET"
+          echo "RESTORING SCHEMA TO TARGET"
           echo "=========================================="
 
           psql \
@@ -240,7 +279,7 @@ jobs:
           echo "=========================================="
 
       # ==========================================================
-      # 13. VERIFY TARGET TABLES
+      # 14. VERIFY TARGET TABLES
       # ==========================================================
       - name: Verify TARGET Tables
         run: |
@@ -262,11 +301,13 @@ jobs:
                 'pg_catalog',
                 'information_schema'
               )
-              ORDER BY schemaname, tablename;
+              ORDER BY
+                schemaname,
+                tablename;
             "
 
       # ==========================================================
-      # 14. VERIFY TARGET FUNCTIONS
+      # 15. VERIFY TARGET FUNCTIONS
       # ==========================================================
       - name: Verify TARGET Functions
         run: |
@@ -290,11 +331,13 @@ jobs:
                 'pg_catalog',
                 'information_schema'
               )
-              ORDER BY n.nspname, p.proname;
+              ORDER BY
+                n.nspname,
+                p.proname;
             "
 
       # ==========================================================
-      # 15. VERIFY TARGET TRIGGERS
+      # 16. VERIFY TARGET TRIGGERS
       # ==========================================================
       - name: Verify TARGET Triggers
         run: |
@@ -320,7 +363,7 @@ jobs:
             "
 
       # ==========================================================
-      # 16. VERIFY TARGET POLICIES
+      # 17. VERIFY TARGET RLS POLICIES
       # ==========================================================
       - name: Verify TARGET RLS Policies
         run: |
@@ -346,7 +389,35 @@ jobs:
             "
 
       # ==========================================================
-      # 17. SAVE SCHEMA AS GITHUB ARTIFACT
+      # 18. VERIFY TARGET VIEWS
+      # ==========================================================
+      - name: Verify TARGET Views
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "TARGET VIEWS"
+          echo "=========================================="
+
+          psql \
+            "$TARGET_DB_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "
+              SELECT
+                schemaname,
+                viewname
+              FROM pg_views
+              WHERE schemaname NOT IN (
+                'pg_catalog',
+                'information_schema'
+              )
+              ORDER BY
+                schemaname,
+                viewname;
+            "
+
+      # ==========================================================
+      # 19. UPLOAD SCHEMA ARTIFACT
       # ==========================================================
       - name: Upload Schema Artifact
         uses: actions/upload-artifact@v4
@@ -356,10 +427,13 @@ jobs:
           retention-days: 7
 
       # ==========================================================
-      # 18. FINAL SUMMARY
+      # 20. FINAL SUMMARY
       # ==========================================================
       - name: Migration Summary
         if: always()
+        env:
+          SOURCE_PROJECT_REF: ${{ vars.SOURCE_PROJECT_REF }}
+          TARGET_PROJECT_REF: ${{ vars.TARGET_PROJECT_REF }}
         run: |
           echo ""
           echo "=========================================="
@@ -373,30 +447,29 @@ jobs:
           echo "$TARGET_PROJECT_REF"
           echo ""
           echo "Migrated:"
-          echo "  - Database schema"
-          echo "  - Tables"
-          echo "  - Views"
-          echo "  - Functions"
-          echo "  - Triggers"
-          echo "  - Indexes"
-          echo "  - RLS policies"
-          echo "  - Schema-level objects"
+          echo "  [OK] Database schema"
+          echo "  [OK] Tables"
+          echo "  [OK] Views"
+          echo "  [OK] PostgreSQL functions"
+          echo "  [OK] Triggers"
+          echo "  [OK] Indexes"
+          echo "  [OK] RLS policies"
           echo ""
           echo "NOT migrated:"
-          echo "  - Table data"
-          echo "  - Storage files"
-          echo "  - Edge Functions"
-          echo "  - Edge Function secrets"
+          echo "  [--] Table data"
+          echo "  [--] Storage files"
+          echo "  [--] Edge Functions"
+          echo "  [--] Edge Function secrets"
           echo ""
           echo "=========================================="
 
       # ==========================================================
-      # 19. CLEANUP
+      # 21. CLEANUP
       # ==========================================================
       - name: Cleanup
         if: always()
         run: |
           rm -rf .supabase
-          rm -f "$GITHUB_ENV" 2>/dev/null || true
+          rm -rf migration
 
           echo "Cleanup completed."
